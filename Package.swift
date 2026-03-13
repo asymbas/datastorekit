@@ -12,10 +12,7 @@ let package = Package(
         .watchOS(.v11)
     ],
     products: [
-        .library(
-            name: "DataStoreKit",
-            targets: ["DataStoreKit"]
-        ),
+        .library(name: "DataStoreKit", targets: ["DataStoreKit"])
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-async-algorithms", .upToNextMajor(from: "1.0.0")),
@@ -28,8 +25,8 @@ let package = Package(
             name: "DataStoreKit",
             dependencies: [
                 "_DatabaseStore",
-                "DataStoreRuntime",
                 "DataStoreCore",
+                "DataStoreRuntime",
                 "DataStoreSupport",
                 "SQLiteHandle",
                 "SQLiteStatement",
@@ -45,8 +42,8 @@ let package = Package(
         .target(
             name: "_DatabaseStore",
             dependencies: [
-                "DataStoreRuntime",
                 "DataStoreCore",
+                "DataStoreRuntime",
                 "DataStoreSupport",
                 "SQLiteHandle",
                 "SQLiteStatement",
@@ -152,6 +149,6 @@ let package = Package(
             swiftSettings: [
                 .unsafeFlags(["-package-name", "DataStoreKit"])
             ]
-        ),
+        )
     ]
 )
