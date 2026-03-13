@@ -11,8 +11,9 @@ A SwiftData custom data store implementation that supports SQLite as its primary
 - [Preview](#preview)
 - [Documentation](#documentation)
 - [Compatibility](#compatibility)
-- [Roadmap](#roadmap)
 - [Limitations](#limitations)
+- [Known Issues](#known-issues)
+- [Roadmap](#roadmap)
 - [FAQ](#faq)
 - [Changelog](#changelog)
 - [License](#license)
@@ -130,16 +131,6 @@ For questions, feedback, or suggestions, please use [GitHub Discussions](https:/
   - A workaround fix has been applied to how snapshots are encoded/decoded.
   - Apple responded to the report and mentioned that this should be resolved in OS 26.3.
 
-## Roadmap
-
-Expect significant changes to the API and documentation.
-
-Planned:
-- [ ] Comparable feature parity with SwiftData's `DefaultStore`.
-- [ ] Migration for SwiftData and SQLite schema.
-- [ ] CloudKit support.
-- [ ] Inheritance support.
-
 ## Limitations
 
 ### APIs are not ready for mutating the database
@@ -150,6 +141,31 @@ Using `DatabaseQueue` and `DatabaseConnection` to mutate the database rather tha
 - Unhandled external storage.
 
 In order to save changes manually while ensuring completeness, you can use the same method SwiftData calls when it makes a save request by supplying it with a `DatabaseSaveChanges` type. You must correctly assign which snapshots to insert, update, or delete. This should also include any affected relationships, which may need to be fetched beforehand.
+
+## Known Issues
+
+- **Required one-to-one relationships can form dependency cycles**<br>
+  Cyclic non-optional to-one relationships are currently not supported during a single insert pass. Newly inserted models that reference each other through a bidirectional non-optional one-to-one relationship can fail to save in the same operation, because DataStoreKit resolves required to-one dependencies before inserting a snapshot. A required to-one dependency blocks insertion when its related identifier is still uncommitted. When both sides require the other side to already exist, no valid insertion order can be established. As a result, both inserts may be repeatedly deferred until the save operation reaches its maximum retry count.<br>
+  - **Workaround:** Make one side optional during insertion.
+- **Tombstones cannot be instantiated**<br>
+  SwiftData does not provide a way to create `HistoryTombstone` for preserved values.<br>
+  - **Workaround:** Use the subscript on the `DatabaseHistoryDelete` instance rather than its `tombstone` property.
+- **Generic or protocol-constrained key paths can't be matched to schema metadata**<br>
+  When a model is accessed through a protocol or generic constraint rather than its concrete type, the key path identity changes enough that the key path dictionary lookup misses. The parse-based fallback helps in some cases, but isn't reliable across all shapes.
+- **Key paths that traverse an optional value cannot be resolved**<br>
+  `AnyKeyPath.appending(path:)` returns `nil` when the left-hand side produces an optional value type and the right-hand side expects the unwrapped type. It is currently unknown how to dynamically append through an optional boundary. Any predicate or sort descriptor that chains through an optional intermediate cannot be reconstructed into a key path for SQL generation.
+- **`SortDescriptor` on a relationship's attribute requires a predicate referencing that relationship**<br>
+  Sort descriptors that traverse a relationship path, such as `\Model.relationship.name`, require a predicate that also references the relationship. DataStoreKit derives relationship traversal information for SQL generation from `#Predicate`. Without a predicate touching that relationship, no `JOIN` is generated, and the sort clause references a table that isn't in the `FROM` clause. The sort is silently omitted.
+
+## Roadmap
+
+Expect significant changes to the API and documentation.
+
+Planned:
+- [ ] Comparable feature parity with SwiftData's `DefaultStore`.
+- [ ] Migration for SwiftData and SQLite schema.
+- [ ] CloudKit support.
+- [ ] Inheritance support.
 
 ## FAQ
 
