@@ -9,6 +9,7 @@
 
 import DataStoreCore
 import DataStoreSupport
+import Foundation
 import SwiftData
 import Synchronization
 
@@ -50,7 +51,7 @@ extension ModelContext {
         _ descriptor: FetchDescriptor<T>,
         for editingState: EditingState
     ) async throws where T: PersistentModel {
-        guard let store = await DataStoreContainer.load(editingState: editingState),
+        guard let store = DataStoreContainer.load(editingState: editingState),
               let store = store as? DatabaseStore else {
             fatalError("Expected a DatabaseStore")
         }
@@ -59,10 +60,7 @@ extension ModelContext {
             isUnchecked: false,
             modifier: nil,
             descriptor: descriptor,
-            editingState: .init(
-                id: editingState.id,
-                author: editingState.author
-            )
+            editingState: .init(id: editingState.id, author: editingState.author)
         ))
     }
     
@@ -78,81 +76,54 @@ extension ModelContext {
     }
 }
 
-
-
-#if false
-public struct SectionedFetchResults<SectionID, Element>: Sendable
-where SectionID: Hashable & Sendable, Element: PersistentModel {
-    public var sections: [Section]
-    
-    public struct Section: Sendable {
-        public var id: SectionID
-        public var count: Int
-        public var elements: [Element]
-    }
-}
-public struct SectionedFetchDescriptor<T, SectionID>: Sendable
-where T: PersistentModel, SectionID: Hashable & Sendable {
-    public var fetchDescriptor: FetchDescriptor<T>
-    public var sectionIdentifier: KeyPath<T, SectionID>
-    public var sectionSort: SortOrder
-    public var fetchLimitPerSection: Int?
-    public var includesEmptySections: Bool
-    
-    public init(
-        _ fetchDescriptor: FetchDescriptor<T> = .init(),
-        sectionIdentifier: KeyPath<T, SectionID>,
-        sectionSort: SortOrder = .forward,
-        fetchLimitPerSection: Int? = nil,
-        includesEmptySections: Bool = false
-    ) {
-        self.fetchDescriptor = fetchDescriptor
-        self.sectionIdentifier = sectionIdentifier
-        self.sectionSort = sectionSort
-        self.fetchLimitPerSection = fetchLimitPerSection
-        self.includesEmptySections = includesEmptySections
-    }
-}
-
 extension ModelContext {
-    nonisolated public static func preloadSectioned<T, SectionID>(
-        _ descriptor: SectionedFetchDescriptor<T, SectionID>,
-        for editingState: EditingState
-    ) async throws
-    where T: PersistentModel, SectionID: Hashable & Sendable {
-        guard let store = await DataStoreContainer.load(editingState: editingState),
-              let store = store as? DatabaseStore else {
-            fatalError("Expected a DatabaseStore")
-        }
-        try Task.checkCancellation()
-        try await store.preloadSectioned(
-            PreloadSectionedFetchRequest(
-                descriptor: descriptor,
-                editingState: .init(id: editingState.id, author: editingState.author)
-            )
-        )
-    }
-}
-extension ModelContext {
-    public func sectionedFetch<T, SectionID>(
-        _ descriptor: SectionedFetchDescriptor<T, SectionID>,
-        isolate: isolated Actor = #isolation
+    public func preloadedSectionedFetch<T, SectionID>(
+        _ sectionedDescriptor: SectionedFetchDescriptor<T, SectionID>,
+        isolation: isolated (any Actor)? = #isolation
     ) async throws -> SectionedFetchResults<SectionID, T>
     where T: PersistentModel, SectionID: Hashable & Sendable {
         let editingState = self.editingState
         try await Task { @concurrent in
-            try await ModelContext.preloadSectioned(descriptor, for: editingState)
+            try await ModelContext.preload(sectionedDescriptor.descriptor, for: editingState)
         }.value
-        return try fetchSectioned(descriptor)
+        return try fetchSectioned(sectionedDescriptor)
     }
 }
 
 extension ModelContext {
-    public func fetchSectioned<T, SectionID>(
-        _ descriptor: SectionedFetchDescriptor<T, SectionID>
-    ) throws -> SectionedFetchResults<SectionID, T>
-    where T: PersistentModel, SectionID: Hashable & Sendable {
-        fatalError("Backed by your custom store implementation")
+    public func fetchSectioned<T, SectionID>(_ descriptor: SectionedFetchDescriptor<T, SectionID>)
+    throws -> SectionedFetchResults<SectionID, T> where T: PersistentModel, SectionID: Hashable & Sendable {
+        guard !descriptor.includesEmptySections else {
+            throw DataStoreError.unsupportedFeature
+        }
+        let fetchedElements = try fetch(descriptor.descriptor)
+        let count = fetchedElements.count
+        var sections = [SectionedFetchResults<SectionID, T>.Section]()
+        sections.reserveCapacity(count)
+        var sectionIndexes = [SectionID: Int]()
+        sectionIndexes.reserveCapacity(count)
+        let fetchLimitPerSection = descriptor.limitPerSection
+        for element in fetchedElements {
+            let sectionID = element[keyPath: descriptor.sectionKeyPath]
+            if let index = sectionIndexes[sectionID] {
+                sections[index].count += 1
+                if let fetchLimitPerSection,
+                   sections[index].elements.count >= fetchLimitPerSection {
+                    continue
+                }
+                sections[index].elements.append(element)
+            } else {
+                let elements: [T]
+                if let fetchLimitPerSection, fetchLimitPerSection <= 0 {
+                    elements = []
+                } else {
+                    elements = [element]
+                }
+                sectionIndexes[sectionID] = sections.endIndex
+                sections.append(.init(id: sectionID, count: 1, elements: elements))
+            }
+        }
+        if descriptor.sectionSortBy == .reverse { sections.reverse() }
+        return .init(sections: sections)
     }
 }
-#endif
