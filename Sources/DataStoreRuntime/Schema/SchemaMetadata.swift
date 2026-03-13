@@ -163,13 +163,13 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
             ) else {
                 fatalError("Unable to find inherited property metadata: \(description)")
             }
-            registerKeyPath(property.keyPath)
+            _ = registerKeyPath(property.keyPath)
         case false:
             logger.trace("Property is not inherited: \(description)")
             guard let property = schemaMetadata[entity]?.first(where: { $0.name == property.name }) else {
                 fatalError("Unable to find property metadata: \(description)")
             }
-            registerKeyPath(property.keyPath)
+            _ = registerKeyPath(property.keyPath)
         }
         /// Compares to the previous `keyPath` to a preferred `KeyPath` that will be the canonical one.
         func registerKeyPath(_ otherKeyPath: AnyKeyPath?) -> Bool {
@@ -450,7 +450,7 @@ nonisolated internal func createNestedPropertyMetadata<Model>(
             logger.trace("Unable to provide key path for composite attribute: \(description)")
         }
     case let relationship as Schema.Relationship where relationship.isToOneRelationship:
-        guard let destinationEntity = schema.entitiesByName[relationship.destination] else {
+        guard let _ = schema.entitiesByName[relationship.destination] else {
             fatalError()
         }
         guard let destinationType = Schema.type(for: relationship.destination) else {
@@ -465,7 +465,6 @@ nonisolated internal func createNestedPropertyMetadata<Model>(
             let innerRelationshipProperties = Relationship.databaseSchemaMetadata
             for var subAttribute in innerRelationshipProperties  {
                 subAttribute.enclosing = relationship
-                let subDescription = "\(destinationEntity.name).\(subAttribute.name)"
                 let subKeyPath = subAttribute.keyPath
                 try buildNestedRelationshipKeyPath(type: subAttribute.valueType)
                 func buildNestedRelationshipKeyPath<Value>(type: Value.Type) throws {

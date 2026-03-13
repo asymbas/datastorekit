@@ -7,8 +7,6 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import SQLSupport
-
 nonisolated public func diff(
     columns: [String],
     old oldValues: [any Sendable],

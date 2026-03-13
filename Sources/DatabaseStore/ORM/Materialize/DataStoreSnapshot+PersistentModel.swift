@@ -38,7 +38,7 @@ extension PersistentModel where Self: AnyObject {
               let store = store as? DatabaseStore else {
             throw DataStoreError.unsupportedFeature
         }
-        if let matchedSnapshot = try store.queue.withConnection { try $0.match(snapshot: snapshot) } {
+        if let matchedSnapshot = try store.queue.withConnection(nil, { try $0.match(snapshot: snapshot) }) {
             self.persistentBackingData.persistentModelID = matchedSnapshot.persistentIdentifier
             relatedSnapshots[matchedSnapshot.persistentIdentifier] = matchedSnapshot
             if snapshot.persistentIdentifier != matchedSnapshot.persistentIdentifier {
@@ -394,8 +394,10 @@ extension DatabaseSnapshot {
             createPersistentModel(type)
             nonisolated func createPersistentModel<Model>(_ modelType: Model.Type)
             where Model: PersistentModel {
+                #if false
                 relatedModels[persistentIdentifier] = Model.init(with: snapshot)
                 logger.debug("Created \(Model.self) model for \(persistentIdentifier.primaryKey())")
+                #endif
             }
         }
         for (persistentIdentifier, model) in relatedModels {

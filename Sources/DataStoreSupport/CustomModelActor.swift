@@ -64,7 +64,7 @@ public actor CustomModelActor {
     nonisolated public final let modelContainer: ModelContainer
     nonisolated public final let executor: CustomModelSerialExecutor
     
-    @inlinable nonisolated(unsafe) public final var modelContext: ModelContext {
+    @inlinable nonisolated public final var modelContext: ModelContext {
         executor.modelContext
     }
     

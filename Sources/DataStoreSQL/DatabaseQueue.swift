@@ -145,22 +145,14 @@ extension DatabaseQueue {
             }
         }()
         let handle: Store.Handle
-        let acquiredRole: String
-        let fallback: Bool
         switch role {
         case .some(.writer):
             handle = try self.writerPool.acquire(timeout: timeout)
-            acquiredRole = "writer"
-            fallback = false
         case .some(.reader), .none:
             if let readerPool = self.readerPool {
                 handle = try readerPool.acquire(timeout: timeout)
-                acquiredRole = "reader"
-                fallback = false
             } else {
                 handle = try self.writerPool.acquire(timeout: timeout)
-                acquiredRole = "writer"
-                fallback = true
             }
         }
         logger.debug("DatabaseConnection acquired: \(handle.id)")

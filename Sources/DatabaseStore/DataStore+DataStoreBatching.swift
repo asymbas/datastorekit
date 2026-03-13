@@ -24,7 +24,11 @@ extension DatabaseStore: DataStoreBatching {
         let entityName = Schema.entityName(for: T.self)
         var relatedIdentifiers = Set<PersistentIdentifier>()
         var deletedIdentifiers = Set<PersistentIdentifier>()
+        #if swift(>=6.2) && !SwiftPlaygrounds
+        let connection = try queue.connection(.writer, for: request.editingState)
+        #else
         var connection = try queue.connection(.writer, for: request.editingState)
+        #endif
         try connection.withTransaction(nil) {
             var relatedSnapshots = [PersistentIdentifier: Snapshot]()
             for row in try connection.fetch(translation.statement) {

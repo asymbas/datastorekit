@@ -152,7 +152,7 @@ public struct PreparedStatement: ~Copyable, Sendable {
         switch SQLite.Result(rawValue: code) {
         case .ok: return .ok
         case _ where self.pointer == nil: return .ok
-        case let resultCode: throw SQLite.Error(sqlite: code)
+        default: throw SQLite.Error(sqlite: code)
         }
     }
     
@@ -371,8 +371,6 @@ public struct PreparedStatement: ~Copyable, Sendable {
                         SQLITE_TRANSIENT
                     )
                 }
-            default:
-                fatalError()
             }
         }
     }

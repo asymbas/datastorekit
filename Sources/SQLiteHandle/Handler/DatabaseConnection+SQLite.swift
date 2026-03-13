@@ -138,7 +138,7 @@ extension DatabaseConnection where Store.Handle == SQLite {
             try commit()
         } catch {
             onTransactionFailure(self)
-            logger.error("\(transactionMode) was rolled back by an error: \(error)")
+            logger.error("\(transactionMode, default: "nil") was rolled back by an error: \(error)")
             try rollback()
             throw error
         }
@@ -154,7 +154,7 @@ extension DatabaseConnection where Store.Handle == SQLite {
             try commit()
         } catch {
             onTransactionFailure(self)
-            logger.error("\(transactionMode) was rolled back by an error: \(error)")
+            logger.error("\(transactionMode, default: "nil") was rolled back by an error: \(error)")
             try rollback()
             throw error
         }

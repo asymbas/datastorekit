@@ -200,10 +200,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                     guard options.contains(.disablePersistentHistoryTracking) == false else {
                         return Optional<Store.Transaction>.none
                     }
-                    guard let attachment = attachment as? ModelManager else {
-                        return nil
-                    }
-                    guard let identifier = attachment.store?.identifier else {
+                    guard let attachment, let identifier = attachment.store?.identifier else {
                         logger.warning("No store for transaction attachment")
                         return nil
                     }
@@ -537,7 +534,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     }
     
     nonisolated internal func bind(container: DataStoreContainer) {
-        storage.container.storeIfNil(container)
+        _ = storage.container.storeIfNil(container)
     }
     
     fileprivate final class Storage: Sendable {

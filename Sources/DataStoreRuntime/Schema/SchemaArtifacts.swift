@@ -50,7 +50,7 @@ nonisolated package func createTableIndexes<T>(
         case .binary(let propertyGroups):
             keyPaths = propertyGroups
         case .rtree(let propertyGroups):
-            fatalError("Translating indices as an rtree type is not supported.")
+            fatalError("Translating indices as an rtree type is not supported: \(propertyGroups)")
         @unknown default:
             fatalError(DataStoreError.unsupportedFeature.localizedDescription)
         }

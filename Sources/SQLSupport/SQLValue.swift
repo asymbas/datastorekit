@@ -350,8 +350,6 @@ extension SQLValue: Codable {
             }
             try container.encode("blob", forKey: .type)
             try container.encode(value, forKey: .value)
-        default:
-            fatalError()
         }
     }
 }
@@ -671,7 +669,7 @@ extension SQLValue {
         }
         var decoded = [String: any Sendable](minimumCapacity: object.count)
         for (column, fragment) in object {
-            if let type = columnTypes[column] as? any (Decodable & Sendable).Type {
+            if let type = columnTypes[column] {
                 decoded[column] = try row(fragment: fragment, as: type)
             } else {
                 decoded[column] = sendable(cast: fragment) ?? SQLNull()
@@ -743,34 +741,26 @@ extension SQLValue {
 }
 
 extension SQLValue {
-    nonisolated private static func convertIntegerValue<T: Decodable>(
-        _ value: Int64,
-        as type: T.Type
-    ) -> T? {
-        let fn: (Int64, T.Type) -> T? = SQLValue.convert
-        return fn(value, type)
+    nonisolated private static func convertIntegerValue<T>(_ value: Int64, as type: T.Type)
+    -> T? where T: Decodable & Sendable {
+        let function: (Int64, T.Type) -> T? = SQLValue.convert
+        return function(value, type)
     }
     
-    nonisolated private static func convertRealValue<T: Decodable>(
-        _ value: Double,
-        as type: T.Type
-    ) -> T? {
-        let fn: (Double, T.Type) -> T? = SQLValue.convert
-        return fn(value, type)
+    nonisolated private static func convertRealValue<T>(_ value: Double, as type: T.Type)
+    -> T? where T: Decodable & Sendable {
+        let function: (Double, T.Type) -> T? = SQLValue.convert
+        return function(value, type)
     }
     
-    nonisolated private static func convertTextValue<T: Decodable>(
-        _ value: String,
-        as type: T.Type
-    ) -> T? {
-        let fn: (String, T.Type) -> T? = SQLValue.convert
-        return fn(value, type)
+    nonisolated private static func convertTextValue<T>(_ value: String, as type: T.Type)
+    -> T? where T: Decodable & Sendable {
+        let function: (String, T.Type) -> T? = SQLValue.convert
+        return function(value, type)
     }
     
-    nonisolated private static func rowConvertInteger<T: Decodable & Sendable>(
-        _ value: Int64,
-        as type: T.Type
-    ) -> (any Sendable)? {
+    nonisolated private static func rowConvertInteger<T>(_ value: Int64, as type: T.Type)
+    -> (any Sendable)? where T: Decodable & Sendable {
         switch type {
         case is Bool.Type:
             convertIntegerValue(value, as: Bool.self)
@@ -821,10 +811,8 @@ extension SQLValue {
         }
     }
     
-    nonisolated private static func rowConvertReal<T: Decodable & Sendable>(
-        _ value: Double,
-        as type: T.Type
-    ) -> (any Sendable)? {
+    nonisolated private static func rowConvertReal<T>(_ value: Double, as type: T.Type)
+    -> (any Sendable)? where T: Decodable & Sendable {
         switch type {
         case is Float.Type:
             convertRealValue(value, as: Float.self)
@@ -855,10 +843,8 @@ extension SQLValue {
         }
     }
     
-    nonisolated private static func rowConvertText<T: Decodable & Sendable>(
-        _ value: String,
-        as type: T.Type
-    ) -> (any Sendable)? {
+    nonisolated private static func rowConvertText<T>(_ value: String, as type: T.Type)
+    -> (any Sendable)? where T: Decodable & Sendable {
         switch type {
         case is String.Type:
             value

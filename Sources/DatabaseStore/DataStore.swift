@@ -207,11 +207,6 @@ public final class DatabaseStore: DataStore, Sendable {
         }()
         let entityName = Schema.entityName(for: Model.self)
         var translator = SQLPredicateTranslator<Model>(configuration: configuration)
-        #if DEBUG && !SwiftPlaygrounds
-        var logger = _DatabaseStore.logger
-        logger[metadataKey: "editing_state"] = "\(request.editingState.id)"
-        logger[metadataKey: "author"] = "\(request.editingState.author ?? "nil")"
-        #endif
         do {
             var preloadedResult: PreloadFetchResult<Model, Snapshot>?
             if let result = self.manager.preload(for: request.editingState, as: Result.self) {
@@ -652,14 +647,18 @@ public final class DatabaseStore: DataStore, Sendable {
         var invalidatedIdentifiers: Set<PersistentIdentifier> = []
         var operation: [DataStoreOperation: [PersistentIdentifier]] = [:]
         var upsertedUpdatedIdentifiers: Set<PersistentIdentifier> = .init()
+        #if swift(>=6.2) && !SwiftPlaygrounds
+        let connection = try queue.connection(.writer, for: request.editingState)
+        #else
         var connection = try queue.connection(.writer, for: request.editingState)
+        #endif
         try connection.withTransaction(nil) {
             var inheritedIdentifiers = Set<UUID>()
             var inserted = Deque(request.inserted.map { Payload(snapshot: $0) })
             let maxInsertAttempts = 10
             while let insert = inserted.popFirst() {
                 var snapshot = insert.snapshot
-//                try transaction.checkCancellation()
+                try connection.checkCancellation()
                 do {
                     let temporaryIdentifier = snapshot.persistentIdentifier
                     let permanentIdentifier = try remappedIdentifiers[temporaryIdentifier]
@@ -731,7 +730,6 @@ public final class DatabaseStore: DataStore, Sendable {
                         // Do not continue until all related identifiers has been remapped.
                         throw Snapshot.Error.referencesInvalidPersistentIdentifier
                     }
-                    try connection.checkCancellation()
                     remappedIdentifiers[temporaryIdentifier] = permanentIdentifier
                     if !export.inheritedDependencies.isEmpty,
                        inheritedIdentifiers.insert(insert.id).inserted,
@@ -852,6 +850,7 @@ public final class DatabaseStore: DataStore, Sendable {
             var updated = Deque(request.updated.map { Payload(snapshot: $0) })
             while let update = updated.popFirst() {
                 var snapshot = update.snapshot
+                try connection.checkCancellation()
                 if !request.inserted.isEmpty {
                     snapshot = snapshot.copy(
                         persistentIdentifier: snapshot.persistentIdentifier,
@@ -860,7 +859,6 @@ public final class DatabaseStore: DataStore, Sendable {
                 }
                 let cachedSnapshot = connection.context?.snapshot(for: snapshot.persistentIdentifier)
                 let export = snapshot.export
-                try connection.checkCancellation()
                 try connection.update(from: cachedSnapshot, to: snapshot)
                 if !export.toManyDependencies.isEmpty {
                     dependencies[snapshot.persistentIdentifier, default: []]
@@ -871,6 +869,7 @@ public final class DatabaseStore: DataStore, Sendable {
                 logger.info("Updated snapshot: \(snapshot.persistentIdentifier)")
             }
             for (persistentIdentifier, indices) in dependencies {
+                try connection.checkCancellation()
                 guard var snapshot = snapshots[persistentIdentifier] else {
                     fatalError("Updated snapshot not found: \(persistentIdentifier)")
                 }
@@ -936,7 +935,7 @@ public final class DatabaseStore: DataStore, Sendable {
                     snapshotsToReregister[snapshot.persistentIdentifier] = snapshot
                     logger.notice(
                         "Deleted snapshot: \(snapshot.persistentIdentifier)",
-                        metadata: ["preserved": "\(export.values)"]
+                        metadata: ["preserved_values": "\(export.values)"]
                     )
                 } catch {
                     if invalidatedIdentifiers.insert(snapshot.persistentIdentifier).inserted {
@@ -978,9 +977,9 @@ public final class DatabaseStore: DataStore, Sendable {
         logger.info(
             "Saved \(remappedIdentifiers.count) new snapshots.",
             metadata: [
-                "editingstate": "\(request.editingState.id)",
+                "editing_state": "\(request.editingState.id)",
                 "author": "\(request.editingState.author ?? "nil")",
-                "snapshots to reregister": "\(snapshotsToReregister.count)"
+                "snapshots_to_reregister": "\(snapshotsToReregister.count)"
             ]
         )
         let operationCopy = operation

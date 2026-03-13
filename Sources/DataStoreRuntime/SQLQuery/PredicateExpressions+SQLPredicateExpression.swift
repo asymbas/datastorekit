@@ -1395,7 +1395,6 @@ where Wrapped: SQLPredicateExpression, Key: SQLPredicateExpression {
             case .integer, .real, .text, .blob:
                 expression = "CAST(\(expression) AS \(outputType.description))"
             case .null: break
-            default: fatalError()
             }
         }
         if context.shouldMarkStartOfPredicateExpression {

@@ -381,7 +381,7 @@ where T: PersistentModel & SendableMetatype {
                 let context = "\(tag).\(function)"
                 print(
                     "\(logLevel) \(position) \(context) \(output)",
-                    "metadata: \(metadata)"
+                    "metadata: \(String(describing: metadata))"
                 )
             } else {
                 var metadata = metadata ?? .init()

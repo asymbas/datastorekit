@@ -651,11 +651,6 @@ where T: PersistentModel & SendableMetatype {
             }
             insert(value)
             func insert<Value: DataStoreSnapshotValue>(_ value: Value) {
-                if let _ = temporaryModel as? HistoryTombstone<T>.Element {
-                    print("Pass")
-                } else {
-                    print("Fail")
-                }
                 if let keyPath = keyPath as? ReferenceWritableKeyPath<Model, Value> {
                     temporaryModel.persistentBackingData.setValue(forKey: keyPath, to: value)
                     temporaryModel.setValue(forKey: keyPath, to: value)

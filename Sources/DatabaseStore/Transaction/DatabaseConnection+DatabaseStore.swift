@@ -131,8 +131,8 @@ extension DatabaseConnection where Store == DatabaseStore {
         }
         let entityName = newSnapshot.entityName
         let primaryKey = newSnapshot.primaryKey
-        var oldSnapshot: DatabaseSnapshot? = oldSnapshot ?? {
-            guard let attachment = self.attachment else {
+        let oldSnapshot: DatabaseSnapshot? = oldSnapshot ?? {
+            guard self.attachment != nil else {
                 return nil
             }
             if let snapshot = self.context?.snapshot(for: newSnapshot.persistentIdentifier) {
@@ -263,7 +263,7 @@ extension DatabaseConnection where Store == DatabaseStore {
             }
             if let existingPrimaryKey = existingRow?.first as? String {
                 var targetPrimaryKey = snapshot.primaryKey
-                if snapshot.primaryKey != existingPrimaryKey {
+                if targetPrimaryKey != existingPrimaryKey {
                     logger.debug(
                         "Resolving upsert conflict...",
                         metadata: [

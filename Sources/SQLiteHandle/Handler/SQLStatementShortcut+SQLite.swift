@@ -354,12 +354,6 @@ extension SQLStatementShortcut where Handle == SQLite {
             }
             do {
                 let sql = statement.sql
-                let existingRow = try fetchExistingRow(
-                    in: table,
-                    columns: columns,
-                    values: values,
-                    uniquenessConstraint: uniquenessConstraint
-                )
                 let result = try handle.withPreparedStatement(sql, bindings: values) {
                     switch try $0.step {
                     case .row:
@@ -413,32 +407,6 @@ extension SQLStatementShortcut where Handle == SQLite {
                         )
                     }
                 }
-                let oldValues: [any Sendable] = columns.map { key in
-                    existingRow?[key] ?? NSNull()
-                }
-                let previousPrimaryKey: String? = {
-                    let preferredKey = columnsToIgnore.contains("pk") ? "pk" : columnsToIgnore.first
-                    guard let preferredKey else { return nil }
-                    guard let value = existingRow?[preferredKey] else { return nil }
-                    if value is NSNull { return nil }
-                    return String(describing: value)
-                }()
-                let changedColumns: [String] = {
-                    guard result.changes != 0 else { return [] }
-                    guard let existingRow else { return eligibleKeys }
-                    var changed = [String]()
-                    changed.reserveCapacity(eligibleKeys.count)
-                    for key in eligibleKeys {
-                        guard let index = columns.firstIndex(of: key) else { continue }
-                        let oldValue = existingRow[key] ?? NSNull()
-                        let newValue = values[index]
-                        if !(SQLValue(any: oldValue) == SQLValue(any: newValue)) {
-                            changed.append(key)
-                        }
-                    }
-                    return changed
-                }()
-                
                 return result
             } catch {
                 lastError = error
@@ -615,7 +583,7 @@ extension SQLStatementShortcut where Handle == SQLite {
             bindings: [primaryKey]
         )
         if let oldValues,
-           let primaryKey = primaryKey ?? sendable(cast: newValues.first) {
+           let primaryKey = primaryKey ?? sendable(cast: newValues.first as Any) {
             transaction?.informDidUpdateRow(
                 for: primaryKey,
                 in: table,
@@ -635,7 +603,7 @@ extension SQLStatementShortcut where Handle == SQLite {
         bindings: [any Sendable] = []
     ) throws -> Int32 {
         let assignments = columns.map { "\(quote($0)) = ?" }.joined(separator: ", ")
-        let sql = assignments == nil
+        let sql = predicate == nil
         ? "UPDATE \(quote(table)) SET \(assignments)"
         : "UPDATE \(quote(table)) SET \(assignments) WHERE \(predicate.unsafelyUnwrapped)"
         let allBindings = values + bindings
