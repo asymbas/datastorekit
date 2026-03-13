@@ -22,33 +22,36 @@ A SwiftData custom data store implementation that supports SQLite as its primary
 ## Features
 
 - SwiftData integration.
-- Provides `DatabaseStore` as SwiftData's SQLite storage backend and is set up using `DatabaseConfiguration` through `ModelContainer`.
+- Provides `DatabaseStore` as SwiftData's SQLite storage backend, configured through `DatabaseConfiguration` in `ModelContainer`.
 - View all supported predicate expressions in `/Sources/DataStoreRuntime/SQLQuery/PredicateExpressions+SQLPredicateExpression.swift`.
-- Extended SwiftData features and conveniences.
-- Automatic persistence handling for custom value types that conform to `RawRepresentable` and `OptionSet`.
-- Conforming types will be stored as raw values.
-- Allows you to use typed cases and constants in `#Predicate` (you are still required to capture their value as expected by the macro).
-- Use `#Predicate` to query attributes that are Swift collection types, such as `Dictionary`, `Set`, and `Array`.
-- Supports caching references, snapshots, and queries.
-- References between entities are managed by the `ReferenceGraph` to reduce fetching overhead from the database.
-- Snapshots for the model's backing data are cached by one or more associated `ModelContext` instances.
-- Queries cache and rebuild results based on matching hash keys.
-- Implicit prefetching for relationships (e.g., preferring to include already cached snapshots in the fetch result).
-- Supports SwiftData and custom fetch/save request/result types.
-- `PreloadFetchRequest` warms up an upcoming fetch by offloading the work asynchronously.
-- `ModelContext.preload(_:for:)` is used to manually fetch and process the result ahead of time on a background actor using the `async`/`await` syntax. Follow up by switching to the desired actor to fetch the prepared results.
-- `ModelContext.preloadedFetch(_:)` is an instance method that conveniently wraps the actor switching for you using the `@concurrent` attribute.
-- `@Fetch` is a new property wrapper that behaves similarly to SwiftData’s built-in `@Query`, but moves the expensive work onto a background actor. The `@MainActor` then only applies the prepared results, which significantly reduces UI stutters on large databases.
-- Represent your models as snapshots or rows (array or dictionary).
-- Continue to use your SwiftData `PersistentModel` models as an observable reference with the `ModelContext`.
-- Use `DatabaseSnapshot` as a DTO or as a value-type representation of your model. This object conforms to `Codable` and `Sendable`.
-- Create a snapshot from a model using `DatabaseSnapshot(_:)`.
-- Create a model from a snapshot using `PersistentModel(snapshot:modelContext:)`.
-- Use `[any Sendable]` and `[String: any Sendable]` when fetching row data.
+- Extended SwiftData features and conveniences:
+  - Use `#Predicate` to query attributes that are Swift collection types, such as `Dictionary`, `Set`, and `Array`.
+  - Automatic persistence handling for custom value types that conform to `RawRepresentable` and `OptionSet`.
+    - Conforming types will be stored as raw values.
+    - Allows you to use typed cases and constants in `#Predicate` (you are still required to capture their value as expected by the macro).
+- Caches references, snapshots, and queries:
+  - References between entities are managed by the `ReferenceGraph` to reduce fetching overhead from the database.
+  - Snapshots for the model's backing data are cached by one or more associated `ModelContext` instances.
+  - Queries cache and rebuild results based on matching hash keys.
+  - Implicit prefetching for relationships (e.g., preferring to include already cached snapshots in the fetch result).
+- Allows SwiftData and custom fetch/save request/result types:
+  - `PreloadFetchRequest` warms up an upcoming fetch by offloading the work asynchronously.
+    - `ModelContext.preload(_:for:)` is used to manually fetch and process the result ahead of time on a background actor using the `async`/`await` syntax. Follow up by switching to the desired actor to fetch the prepared results.
+    - `ModelContext.preloadedFetch(_:isolation:)` is an instance method that conveniently wraps the actor switching for you using the `@concurrent` attribute.
+    - `@Fetch` is a new property wrapper that builds on preloaded fetching and behaves similarly to SwiftData’s built-in `@Query`, but moves the expensive work onto a background actor. The `@MainActor` then only applies the prepared results, which significantly reduces UI stutters on large databases.
+- Persistent history tracking:
+  - History is stored inline for the current year.
+  - Supports archiving older history into external databases.
+  - Archived history can be attached separately when fetching history.
 - Combine ORM and SQL workflow/patterns.
+  - Represent your models as snapshots or rows (array or dictionary).
+    - Continue using your SwiftData `PersistentModel` types as observable reference models with `ModelContext`.
+    - Use `DatabaseSnapshot` as a DTO or as a value-type representation of your model. This object conforms to `Codable` and `Sendable`.
+  - Create a snapshot from a model using `DatabaseSnapshot(_:)`.
+  - Create a model from a snapshot using `PersistentModel(snapshot:modelContext:)`.
+- Use `[any Sendable]` and `[String: any Sendable]` when fetching row data.
 - Provides access to `DatabaseStore` to manually make requests for fetching and saving.
 - Provides shared resource access to `DatabaseQueue`, where you can lease a noncopyable `DatabaseConnection` instance.
-- View more features that are in development or planned in the documentation, roadmap, or tasks.
 
 ## Installation
 
@@ -58,15 +61,13 @@ Add to a Swift package in `Package.swift`:
 
 ```swift
 dependencies: [
-.package(url: "https://github.com/asymbas/datastorekit.git", from: "0.0.1")
+    .package(url: "https://github.com/asymbas/datastorekit.git", from: "0.0.1")
 ],
 targets: [
-.target(
-name: "Target",
-dependencies: [
-.product(name: "DataStoreKit", package: "datastorekit")
-]
-)
+    .target(
+        name: "Target",
+        dependencies: [.product(name: "DataStoreKit", package: "datastorekit")]
+    )
 ]
 ```
 
@@ -87,10 +88,14 @@ let modelContainer = try ModelContainer(for: schema, configurations: configurati
 Request a noncopyable `DatabaseConnection` from the `DatabaseQueue`.
 
 ```swift
-try store.queue.withConnection { connection in
-try connection.fetch(Model.self)
+let rows = try store.queue.withConnection { connection in
+    try connection.fetch("SELECT * FROM Entity")
 }
 ```
+
+Specify a connection type explicitly, or use the convenience methods.
+
+By default, `withConnection(_:for:_:)` uses `nil` for the connection type, which prefers a reader and may fall back to a writer if no reader is available. Be careful with this behavior in code paths that may already depend on writer access, since an implicit writer fallback can introduce deadlock risk.
 
 ```swift
 try store.queue.withConnection(nil) { connection in ... }
@@ -107,20 +112,23 @@ See the documentation for details on mapping row data back to SwiftData models u
 
 ## Preview
 
-- Editor application: `https://github.com/asymbas/editor`
-- Check out the Xcode project or the original Swift Playground used to develop this library.
-- Demonstrates SwiftData and DataStoreKit features.
-- The application is intended to be a tool for this library when it completes.
+Explore the [Editor](https://github.com/asymbas/editor) repository. It is a companion Xcode project used to develop and demonstrate DataStoreKit.
+
+It showcases SwiftData and DataStoreKit features and is intended to become a dedicated tool for the library as development continues.
 
 ## Documentation
 
-- API documentation: `https://www.asymbas.com/documentation/datastorekit`
+The documentation is currently being revised and is hosted separately from this repository.
+
+Read the latest version here: [DataStoreKit Documentation](https://www.asymbas.com/datastorekit/documentation/datastorekit/)
+
+For questions, feedback, or suggestions, please use [GitHub Discussions](https://github.com/asymbas/datastorekit/discussions).
 
 ## Compatibility
 
-- OS 26.1 and OS 26.2 causes an issue with `Schema` where it would unintentionally define Swift collections as transformable attributes when the elements contain simple types. This causes ModelCoders to incorrectly handle the data, resulting in a fatal error.
-- A workaround fix has been applied to how snapshots are encoded/decoded.
-- Apple responded to the report and mentioned that this should be resolved in OS 26.3.
+- OS 26.1 and OS 26.2 have an issue with `Schema`, where Swift collections can be unintentionally defined as transformable attributes when their elements contain simple types. This causes ModelCoders to incorrectly handle the data, resulting in a fatal error.
+  - A workaround fix has been applied to how snapshots are encoded/decoded.
+  - Apple responded to the report and mentioned that this should be resolved in OS 26.3.
 
 ## Roadmap
 
@@ -152,16 +160,19 @@ A: No, the schema is incompatible. A runtime error should be thrown if the file 
 A: Yes.
 
 **Q: Can you access the underlying SQL database directly?**<br>
-A: Yes and refer to the mapping reference in the documentation.
+A: Yes. Refer to the mapping reference in the documentation.
 
 **Q: Is the database format compatible with other SQLite tools?**<br>
-A: Yes, it should be able to read fine. The schema doesn't do anything special to the actual store.
+A: Yes. It should be readable by other SQLite tools. The schema doesn't do anything special to the actual store.
 
-**Q: How does caching work and can I control its behavior?**<br>
-A: ---
+**Q: Does `@Fetch` support the same descriptors and predicates as `@Query`?**<br>
+A: Yes, they should be "plug-and-play".
 
-**Q: Does `@Fetch` support the same sort descriptors and predicates as `@Query`?**<br>
-A: Yes, they should be basically 'plug-and-play'.
+**Q: When should `DatabaseQueue` and `DatabaseConnection` be used instead of `ModelContext`?**<br>
+A: You use it if you want to customize the SQL engine's behavior or perform maintenance. You can simply use it to get specific values without having to rebuild a model snapshot. You can have more dynamism when you need it.
+
+**Q: Is inheritance supported and how is it implemented?**<br>
+A: No. It's not fully implemented yet. But the current implementation uses Class Table Inheritance.
 
 ## Changelog
 See [CHANGELOG.md](CHANGELOG.md).
@@ -169,4 +180,4 @@ See [CHANGELOG.md](CHANGELOG.md).
 ## License
 This project is licensed under the **Apache 2.0** License. See [LICENSE](LICENSE).
 
-2026-03-01
+2026-03-12
