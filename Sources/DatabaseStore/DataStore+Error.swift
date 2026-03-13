@@ -19,7 +19,5 @@ extension DatabaseStore {
         case invalidStoreIdentifier
         case storeFileTypeIsNotCompatible
         case storeFileVersionIsNotCompatible
-        
-        
     }
 }
