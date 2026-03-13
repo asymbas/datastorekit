@@ -20,35 +20,3 @@ where ModelType: PersistentModel, EditingStateType: EditingStateProviding {
 }
 
 extension DataStoreFetchRequest: FetchRequest {}
-
-public struct DatabaseFetchRequest<T>: FetchRequest where T: PersistentModel {
-    nonisolated public var descriptor: FetchDescriptor<T>
-    nonisolated public var editingState: DatabaseEditingState
-    
-    nonisolated public init(
-        descriptor: FetchDescriptor<T>,
-        editingState: DatabaseEditingState
-    ) {
-        self.descriptor = descriptor
-        self.editingState = editingState
-    }
-}
-
-public struct PreloadFetchRequest<T>: FetchRequest where T: PersistentModel {
-    nonisolated public var isUnchecked: Bool
-    nonisolated public var modifier: (any Hashable & Sendable)?
-    nonisolated public var descriptor: FetchDescriptor<T>
-    nonisolated public var editingState: DatabaseEditingState
-    
-    nonisolated public init(
-        isUnchecked: Bool,
-        modifier: (any Hashable & Sendable)?,
-        descriptor: FetchDescriptor<T>,
-        editingState: DatabaseEditingState
-    ) {
-        self.isUnchecked = isUnchecked
-        self.modifier = modifier
-        self.descriptor = descriptor
-        self.editingState = editingState
-    }
-}
