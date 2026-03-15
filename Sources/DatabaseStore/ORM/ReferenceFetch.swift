@@ -17,7 +17,7 @@ import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
-nonisolated public func ensureRelationshipValue<T>(
+nonisolated package func ensureRelationshipValue<T>(
     _ value: T,
     in relationship: Schema.Relationship
 ) throws -> any DataStoreSnapshotValue where
@@ -42,7 +42,7 @@ T.Element: DataStoreSnapshotValue {
 }
 
 /// Fetches rows that requires an intermediary table for a many-to-many relationship.
-nonisolated public func fetchManyToManyReference<Result>(
+nonisolated package func fetchManyToManyReference<Result>(
     _ primaryKey: String,
     _ foreignKey: String,
     for property: PropertyMetadata,
@@ -64,7 +64,7 @@ nonisolated public func fetchManyToManyReference<Result>(
 }
 
 /// Fetches rows that references from a non-owning to-many relationship (e.g. one-to-many).
-nonisolated public func fetchToManyReference<Result>(
+nonisolated package func fetchToManyReference<Result>(
     _ childForeignKey: String,
     for property: PropertyMetadata,
     into initial: Result,
@@ -85,7 +85,7 @@ nonisolated public func fetchToManyReference<Result>(
 }
 
 /// Fetches rows that references from an owning to-one relationship (e.g. many-to one or one-to-one).
-nonisolated public func fetchToOneReference<Result>(
+nonisolated package func fetchToOneReference<Result>(
     _ parentForeignKey: String,
     for property: PropertyMetadata,
     into initial: Result,
@@ -106,7 +106,7 @@ nonisolated public func fetchToOneReference<Result>(
     )
 }
 
-nonisolated public func fetchExternalReferences(
+nonisolated package func fetchExternalReferences(
     for persistentIdentifier: PersistentIdentifier,
     in property: PropertyMetadata,
     graph: ReferenceGraph? = nil,
@@ -172,7 +172,7 @@ nonisolated public func fetchExternalReferences(
     return try ensureRelationshipValue(relatedIdentifiers, in: relationship)
 }
 
-nonisolated public func fetchExternalRows(
+nonisolated package func fetchExternalRows(
     for persistentIdentifier: PersistentIdentifier,
     in property: PropertyMetadata,
     connection: borrowing DatabaseConnection<DatabaseStore>
@@ -239,7 +239,7 @@ nonisolated public func fetchExternalRows(
     return results
 }
 
-nonisolated public func fetchExternalRowsBatched(
+nonisolated package func fetchExternalRowsBatched(
     for ownerPrimaryKeys: [String],
     in property: PropertyMetadata,
     connection: borrowing DatabaseConnection<DatabaseStore>,
@@ -313,7 +313,7 @@ nonisolated public func fetchExternalRowsBatched(
     return result
 }
 
-nonisolated public func fetchExternalReferenceKeysBatched(
+nonisolated package func fetchExternalReferenceKeysBatched(
     ownerPrimaryKeys: [String],
     ownerPersistentIdentifiers: [PersistentIdentifier],
     ownerIndexByPrimaryKey: [String: Int],
@@ -435,7 +435,7 @@ nonisolated public func fetchExternalReferenceKeysBatched(
     return result
 }
 
-nonisolated public func fetchRowsByPrimaryKeys(
+nonisolated package func fetchRowsByPrimaryKeys(
     entityName: String,
     columns: [String],
     primaryKeys: [String],
