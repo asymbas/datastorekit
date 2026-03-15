@@ -673,6 +673,7 @@ extension DatabaseSnapshot {
             }
             func append(_ oldIdentifier: PersistentIdentifier) -> PersistentIdentifier {
                 if let newIdentifier = remappedIdentifiers?[oldIdentifier] {
+                    #if DEBUG
                     count += 1
                     if useDetailedLogging {
                         mappings.append(.init(
@@ -681,6 +682,7 @@ extension DatabaseSnapshot {
                             newIdentifier: newIdentifier
                         ))
                     }
+                    #endif
                     return newIdentifier
                 } else {
                     return oldIdentifier
