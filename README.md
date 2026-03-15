@@ -156,6 +156,8 @@ In order to save changes manually while ensuring completeness, you can use the s
   `AnyKeyPath.appending(path:)` returns `nil` when the left-hand side produces an optional value type and the right-hand side expects the unwrapped type. It is currently unknown how to dynamically append through an optional boundary. Any predicate or sort descriptor that chains through an optional intermediate cannot be reconstructed into a key path for SQL generation.
 - **`SortDescriptor` on a relationship's attribute requires a predicate referencing that relationship**<br>
   Sort descriptors that traverse a relationship path, such as `\Model.relationship.name`, require a predicate that also references the relationship. DataStoreKit derives relationship traversal information for SQL generation from `#Predicate`. Without a predicate touching that relationship, no `JOIN` is generated, and the sort clause references a table that isn't in the `FROM` clause. The sort is silently omitted.
+- **`SchemaMigrationPlan` cannot be officially supported**<br>
+  `ModelContainer` does not allow a `DataStoreConfiguration` to be provided with a `SchemaMigrationPlan`. `DataStore.init(_:migrationPlan:)` still exposes a migration plan parameter, but this cannot be passed through `ModelContainer`.
 
 ## Roadmap
 
