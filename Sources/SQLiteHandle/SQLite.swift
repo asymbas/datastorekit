@@ -31,7 +31,7 @@ public final class SQLite: Sendable {
                 newValue.map(Int.init(bitPattern:)) ?? 0,
                 ordering: .sequentiallyConsistent
             )
-            logger.notice(
+            logger.debug(
                 "SQLite handle set: \(newValue, default: "nil")",
                 metadata: [
                     "id": "\(self.id)",
