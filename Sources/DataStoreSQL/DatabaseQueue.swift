@@ -129,6 +129,16 @@ public final class DatabaseQueue<Store>: Sendable where Store: DatabaseProtocol 
 }
 
 extension DatabaseQueue {
+    /// Acquires a database connection for the requested role.
+    ///
+    /// - Parameters:
+    ///   - role:
+    ///     The preferred connection role. The default value is `nil`.
+    ///     When a role is not specified, the queue prefers a reader connection when one is available.
+    ///   - editingState:
+    ///     The identifier associated objects use to locate a managed context and related state.
+    /// - Returns:
+    ///   A database connection.
     nonisolated public final func connection(
         _ role: DataStoreRole? = nil,
         for editingState: (any EditingStateProviding)? = nil
@@ -165,6 +175,15 @@ extension DatabaseQueue {
         )
     }
     
+    /// Requests a connection for a specific data store role.
+    ///
+    /// - Parameters:
+    ///   - role:
+    ///     The required connection role.
+    ///   - editingState:
+    ///     The identifier associated objects use to locate a managed context and related state.
+    /// - Returns:
+    ///   A database connection.
     nonisolated public final func request(
         _ role: DataStoreRole,
         for editingState: (any EditingStateProviding)? = nil
@@ -172,6 +191,9 @@ extension DatabaseQueue {
         try self.connection(role, for: editingState)
     }
     
+    /// Releases a previously acquired database connection back to the queue.
+    ///
+    /// - Parameter connection: The connection to release.
     nonisolated public final func release(_ connection: consuming DatabaseConnection<Store>) {
         let transaction = connection.transaction.take()
         self.release(connection.release(), transaction: transaction)
@@ -221,6 +243,18 @@ extension DatabaseQueue {
         }
     }
     
+    /// Performs an operation using a managed connection that is automatically released afterward.
+    ///
+    /// - Parameters:
+    ///   - role:
+    ///     The preferred connection role. The default value is `nil`.
+    ///     When a role is not specified, the queue prefers a reader connection when one is available.
+    ///   - editingState:
+    ///     The identifier associated objects use to locate a managed context and related state.
+    ///   - operation:
+    ///     The operation to perform with the connection.
+    /// - Returns:
+    ///   The result of the operation.
     nonisolated public final func withConnection<Result>(
         _ role: DataStoreRole? = nil,
         for editingState: (any EditingStateProviding)? = nil,
@@ -237,6 +271,15 @@ extension DatabaseQueue {
         }
     }
     
+    /// Performs an operation using a reader connection.
+    ///
+    /// - Parameters:
+    ///   - editingState:
+    ///     The identifier associated objects use to locate a managed context and related state.
+    ///   - operation:
+    ///     The operation to perform with the connection.
+    /// - Returns:
+    ///   The result of the operation.
     nonisolated public final func reader<Result>(
         for editingState: (any EditingStateProviding)? = nil,
         _ operation: (inout sending DatabaseConnection<Store>) throws -> sending Result
@@ -244,6 +287,15 @@ extension DatabaseQueue {
         try withConnection(readerPool == nil ? .writer : .reader, for: editingState, operation)
     }
     
+    /// Performs an operation using a writer connection.
+    ///
+    /// - Parameters:
+    ///   - editingState:
+    ///     The identifier associated objects use to locate a managed context and related state.
+    ///   - operation:
+    ///     The operation to perform with the connection.
+    /// - Returns:
+    ///   The result of the operation.
     nonisolated public final func writer<Result>(
         for editingState: (any EditingStateProviding)? = nil,
         _ operation: (inout sending DatabaseConnection<Store>) throws -> sending Result
