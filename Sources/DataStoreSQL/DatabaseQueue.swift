@@ -29,11 +29,13 @@ public final class DatabaseQueue<Store>: Sendable where Store: DatabaseProtocol 
     nonisolated internal final let onTransactionFailure:
     @Sendable (borrowing DatabaseConnection<Store>) -> Void
     
+    /// The most recent time the queue was marked as updated.
     nonisolated public final var lastUpdated: DispatchTime {
         get { .init(uptimeNanoseconds: _lastUpdated.load(ordering: .relaxed)) }
         set { _lastUpdated.store(newValue.uptimeNanoseconds, ordering: .relaxed) }
     }
     
+    /// The number of currently available connections in the queue.
     nonisolated public final var count: Int {
         let readersAvailable = self.readerPool?.availableCount ?? 0
         let writersAvailable = self.writerPool.availableCount
@@ -89,7 +91,11 @@ public final class DatabaseQueue<Store>: Sendable where Store: DatabaseProtocol 
         )
     }
     
-    nonisolated public final func update(ifOlderThan threshold: DispatchTime? = nil) {
+    /// Updates the queue's last updated time.
+    ///
+    /// - Parameter threshold:
+    ///   A threshold time that the current value must be older than before it is updated.
+    nonisolated internal final func update(ifOlderThan threshold: DispatchTime? = nil) {
         let newValue = DispatchTime.now().uptimeNanoseconds
         if let threshold {
             if _lastUpdated.load(ordering: .relaxed) < threshold.uptimeNanoseconds {
@@ -100,6 +106,7 @@ public final class DatabaseQueue<Store>: Sendable where Store: DatabaseProtocol 
         }
     }
     
+    /// Closes the queue and shuts down all connection pools.
     nonisolated public final func close() throws {
         try closeLock.withLock { _ in
             let state = lifecycle.load(ordering: .sequentiallyConsistent)
