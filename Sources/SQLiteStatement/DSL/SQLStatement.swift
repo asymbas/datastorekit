@@ -45,6 +45,24 @@ public struct SQL: SQLFragment {
     }
 }
 
+// `Codable` conformance is required to be used in `#Predicate`.
+extension SQL: Codable {
+    /// Inherited from `Decodable.init(from:)`.
+    nonisolated public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let sql = try container.decode(String.self)
+        self.fragments = []
+        self.storage = nil
+        self.sql = sql
+    }
+    
+    /// Inherited from `Encodable.encode(to:)`.
+    nonisolated public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(sql)
+    }
+}
+
 extension SQL: CustomStringConvertible {
     nonisolated public var description: String {
         "Bindings:\n\(bindings)\nSQL:\n\(sql)"
