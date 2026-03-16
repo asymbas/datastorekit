@@ -53,15 +53,15 @@ extension PersistentModel where Self: AnyObject {
         return storage.entries[index]
     }
     
-    nonisolated public static var schemaMetadataIndexByKeyPath: [AnyKeyPath: Int] {
+    nonisolated package static var schemaMetadataIndexByKeyPath: [AnyKeyPath: Int] {
         _getOrInitializeSnapshot(for: Self.self, make: { [] }).indexByKeyPath
     }
     
-    nonisolated public static var schemaMetadataIndexByName: [String: Int] {
+    nonisolated package static var schemaMetadataIndexByName: [String: Int] {
         _getOrInitializeSnapshot(for: Self.self, make: { [] }).indexByName
     }
     
-    nonisolated public static func schemaMetadataByKeyPath() -> [AnyKeyPath & Sendable: PropertyMetadata] {
+    nonisolated package static func schemaMetadataByKeyPath() -> [AnyKeyPath & Sendable: PropertyMetadata] {
         _withPropertyMetadata { buffer in
             var dictionary = Dictionary<AnyKeyPath & Sendable, PropertyMetadata>(minimumCapacity: buffer.count)
             guard let baseAddress = buffer.baseAddress else {
@@ -82,7 +82,7 @@ extension PersistentModel where Self: AnyObject {
     /// described by `propertyMetadata` within the given `class`.
     ///
     /// This uses `propertyMetadata.keyPath` as the canonical root key path.
-    nonisolated public static func addKeyPathVariantToPropertyMetadata(
+    nonisolated package static func addKeyPathVariantToPropertyMetadata(
         _ variant: AnyKeyPath & Sendable,
         for property: PropertyMetadata
     ) {
@@ -95,7 +95,7 @@ extension PersistentModel where Self: AnyObject {
         logger.debug("Added a key path alias: \(Self.self).\(property.name) -> \(canonical) = \(variant)")
     }
     
-    nonisolated public static func addKeyPathVariantToPropertyMetadata(
+    nonisolated package static func addKeyPathVariantToPropertyMetadata(
         _ variant: AnyKeyPath & Sendable,
         canonical canonicalKeyPath: AnyKeyPath & Sendable
     ) {
@@ -108,18 +108,18 @@ extension PersistentModel where Self: AnyObject {
         logger.trace("Added a key path alias: \(Self.self) -> \(canonical) = \(variant)")
     }
     
-    nonisolated public static func appendPropertyMetadata(_ property: PropertyMetadata) {
+    nonisolated package static func appendPropertyMetadata(_ property: PropertyMetadata) {
         var snapshotCopy = Self.databaseSchemaMetadata
         snapshotCopy.append(property)
         Self.overwritePropertyMetadata(consume snapshotCopy)
         logger.debug("Appended a new PropertyMetadata: \(property)")
     }
     
-    nonisolated public static func overwritePropertyMetadata(_ newProperties: [PropertyMetadata]) {
+    nonisolated package static func overwritePropertyMetadata(_ newProperties: [PropertyMetadata]) {
         _overwriteSnapshot(newProperties, in: Self.self)
     }
     
-    nonisolated public static func clearPropertyMetadataCache() {
+    nonisolated package static func clearPropertyMetadataCache() {
         _clearSnapshot(for: Self.self)
     }
 }
