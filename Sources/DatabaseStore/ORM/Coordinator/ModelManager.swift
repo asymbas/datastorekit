@@ -24,8 +24,8 @@ public final class ModelManager: Sendable {
     nonisolated public let graph: ReferenceGraph = .init()
     nonisolated private let preloadedFetches: Mutex<[EditingState.ID: any Sendable]> = .init([:])
     nonisolated private let storage: Mutex<[PersistentIdentifier: DatabaseBackingData]> = .init([:])
-    nonisolated public let editingStates: Mutex<[PersistentIdentifier: OrderedSet<EditingState.ID>]> = .init([:])
-    nonisolated public let registries: Mutex<[EditingState.ID: SnapshotRegistry]> = .init([:])
+    nonisolated package let editingStates: Mutex<[PersistentIdentifier: OrderedSet<EditingState.ID>]> = .init([:])
+    nonisolated package let registries: Mutex<[EditingState.ID: SnapshotRegistry]> = .init([:])
     nonisolated internal let isCachingSnapshots: Bool
     nonisolated internal let state: Atomic<State> = .init(.idle)
     nonisolated internal let globalCacheRevision: Atomic<UInt64> = .init(0)

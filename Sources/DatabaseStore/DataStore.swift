@@ -483,7 +483,7 @@ public final class DatabaseStore: DataStore, Sendable {
     ///   - values: The result values that were selected.
     ///   - registry: The associated registry.
     /// - Returns: Related snapshots.
-    nonisolated public final func prefetch(
+    nonisolated package final func prefetch(
         entityName: String,
         properties: [PropertyMetadata],
         values: [[any Sendable]],
