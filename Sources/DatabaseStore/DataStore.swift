@@ -50,7 +50,7 @@ public final class DatabaseStore: DataStore, Sendable {
     nonisolated public final let manager: ModelManager
     
     /// The attachment assigned when this object was created.
-    nonisolated public final var attachment: (any DataStoreDelegate)? {
+    nonisolated package final var attachment: (any DataStoreDelegate)? {
         configuration.attachment
     }
     
@@ -608,7 +608,7 @@ public final class DatabaseStore: DataStore, Sendable {
     /// Fetches the backing data asynchronously as a preload warm-up for the `EditingState` expected to request for it.
     /// - Parameter request: A specific preloading fetch request.
     @concurrent @discardableResult
-    public final func preload<Model>(_ request: PreloadFetchRequest<Model>)
+    package final func preload<Model>(_ request: PreloadFetchRequest<Model>)
     async throws -> any Hashable & Sendable {
         let result: PreloadFetchResult = try fetch(request)
         try Task.checkCancellation()

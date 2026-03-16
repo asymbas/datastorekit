@@ -114,7 +114,7 @@ extension ModelManager {
     }
     
     /// Retrieves a `SnapshotRegistry` instance that is associated with a `ModelContext`.
-    nonisolated public func registry<T>(for editingState: T) -> SnapshotRegistry?
+    nonisolated package func registry<T>(for editingState: T) -> SnapshotRegistry?
     where T: EditingStateProviding {
         registry(for: editingState, isTransaction: false)
     }
