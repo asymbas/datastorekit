@@ -831,6 +831,7 @@ public final class DatabaseStore: DataStore, Sendable {
                     comparingTo: nil,
                     indices: indices,
                     shouldAddOnly: isUpsertUpdate,
+                    graph: connection.context?.graph,
                     connection: connection
                 )
                 invalidatedIdentifiers.formUnion(results.unlinked)
@@ -886,6 +887,7 @@ public final class DatabaseStore: DataStore, Sendable {
                     ),
                     indices: indices,
                     shouldAddOnly: false,
+                    graph: connection.context?.graph,
                     connection: connection
                 )
                 invalidatedIdentifiers.formUnion(results.unlinked)
