@@ -22,7 +22,7 @@ public struct DataStoreOptions: OptionSet, Sendable {
 }
 
 extension DataStoreOptions {
-    nonisolated private static var allowedMask: Int { (1 << 19) - 1 } // bits 0...18
+    nonisolated private static var allowedMask: Int { (1 << 20) - 1 } // bits 0...19
     
     nonisolated private init(uncheckedRawValue: Int) {
         self.rawValue = uncheckedRawValue
@@ -105,5 +105,9 @@ public extension DataStoreOptions {
     /// Checks if `PRAGMA foreign_keys` is enabled and runs `PRAGMA foreign_key_check` for each table on setup.
     nonisolated static var verifyForeignKeysOnSetup: Self {
         .init(uncheckedRawValue: 1 << 18)
+    }
+    /// Prevents throwing any errors when the configuration is being validated.
+    nonisolated static var ignoreStoreValidationErrors: Self {
+        .init(uncheckedRawValue: 1 << 19)
     }
 }
