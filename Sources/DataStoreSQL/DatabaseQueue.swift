@@ -250,7 +250,7 @@ extension DatabaseQueue {
         }
     }
     
-    /// Performs an operation using a managed connection that is automatically released afterward.
+    /// Performs an operation using a database connection that is automatically released afterward.
     ///
     /// - Parameters:
     ///   - role:
