@@ -30,6 +30,7 @@ A SwiftData custom data store implementation that supports SQLite as its primary
   - Automatic persistence handling for custom value types that conform to `RawRepresentable` and `OptionSet`.
     - Conforming types will be stored as raw values.
     - Allows you to use typed cases and constants in `#Predicate` (you are still required to capture their value as expected by the macro).
+    - Provide a URL to specify a custom directory for external storage.
 - Caches references, snapshots, and queries:
   - References between entities are managed by the `ReferenceGraph` to reduce fetching overhead from the database.
   - Snapshots for the model's backing data are cached by one or more associated `ModelContext` instances.
