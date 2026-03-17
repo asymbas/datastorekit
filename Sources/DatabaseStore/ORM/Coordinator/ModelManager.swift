@@ -35,6 +35,10 @@ public final class ModelManager: Sendable {
         configuration.store
     }
     
+    nonisolated public var persistentIdentifiers: [PersistentIdentifier] {
+        .init(editingStates.withLock(\.keys))
+    }
+    
     nonisolated internal init(configuration: DatabaseConfiguration) {
         self.configuration = configuration
         self.isCachingSnapshots = !configuration.options.contains(.disableSnapshotCaching)
