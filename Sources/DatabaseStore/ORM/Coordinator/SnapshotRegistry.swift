@@ -53,7 +53,7 @@ public final class SnapshotRegistry: ObjectContextProtocol {
     
     /// All `PersistentIdentifier` bound to this registry.
     nonisolated internal var persistentIdentifiers: [PersistentIdentifier] {
-        Array(trackedIdentifiers.withLock(\.self))
+        .init(trackedIdentifiers.withLock(\.self))
     }
     
     /// The reference graph for tracking relationships between models using their `PersistentIdentifier`.
