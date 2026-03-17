@@ -88,12 +88,21 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     
     /// The location of the data store.
     nonisolated public var url: URL? {
-        URL(filePath: location.description)
+        switch location {
+        case .file(let path): URL(filePath: path)
+        default: nil
+        }
     }
     
     /// The auxiliary location of attributes that are configured to use external storage.
     nonisolated public var externalStorageURL: URL {
         storage.externalStorageURL
+    }
+    
+    /// Indicates whether the data store is writable.
+    nonisolated internal var allowsSave: Bool {
+        get { storage.allowsSave.withLock(\.self) }
+        set { ensureUniqueStorage(); storage.allowsSave.withLock { $0 = newValue } }
     }
     
     /// The options that configure additional flags related to the data store runtime.
@@ -123,14 +132,29 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         flags: SQLite.Flags,
         location: SQLite.StoreType,
         externalStorageURL: URL? = nil,
+        allowsSave: Bool,
         size: Int,
         mode: DataStoreDebugging = .default,
         cachePolicy: CachePolicy = .default,
         attachment: (any DataStoreDelegate)? = nil,
         cloudKit: CloudKitConfiguration? = nil
     ) {
+        let location: SQLite.StoreType = {
+            guard case .file(let path) = location else {
+                return location
+            }
+            let url = URL(filePath: path)
+            guard url.hasDirectoryPath else {
+                return location
+            }
+            let storeURL = url.appending(
+                component: name + ".store",
+                directoryHint: .notDirectory
+            )
+            return .file(path: storeURL.path)
+        }()
         let externalStorageURL: URL = {
-            let externalStorageName = ".Storage" // "_Storage"
+            let externalStorageName = ".Storage"
             func validateDirectoryIfExists(_ url: URL) -> URL {
                 var isDirectory: ObjCBool = false
                 if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) {
@@ -150,17 +174,11 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                     .appending(path: externalStorageName, directoryHint: .isDirectory)
             }
             let url = URL(filePath: path)
-            if url.hasDirectoryPath {
-                return validateDirectoryIfExists(
-                    url.appending(path: externalStorageName, directoryHint: .isDirectory)
-                )
-            } else {
-                return validateDirectoryIfExists(
-                    url
-                        .deletingLastPathComponent()
-                        .appending(path: externalStorageName, directoryHint: .isDirectory)
-                )
-            }
+            return validateDirectoryIfExists(
+                url
+                    .deletingLastPathComponent()
+                    .appending(path: externalStorageName, directoryHint: .isDirectory)
+            )
         }()
         if mode == .trace || options.contains(._internal) { DataStoreDebugging.mode = .trace }
         let schema = schema ?? (!types.isEmpty ? Schema(types) : nil)
@@ -262,6 +280,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             options: options,
             location: location,
             externalStorageURL: externalStorageURL,
+            allowsSave: allowsSave,
             cachePolicy: cachePolicy,
             attachment: attachment,
             cloudKit: cloudKit,
@@ -274,30 +293,30 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     ///
     /// - Parameters:
     ///   - name:
-    ///     The name for the data store configuration, which also becomes the store's identifier.
-    ///     It will default to using the filename if none is provided.
-    ///   - schema:
-    ///     A schema that maps model classes to the associated data in the persistent storage.
+    ///     The name of the data store configuration, which also becomes the store's identifier.
+    ///     If `nil`, the filename is used.
     ///   - types:
-    ///     Model types to manually register into the data store.
+    ///     Model types to manually register in the data store.
+    ///   - schema:
+    ///     A schema that maps model classes to the associated data in persistent storage.
     ///   - migrationPlan:
     ///     A plan that describes how the schema migrates between specific versions.
     ///   - url:
     ///     The on-disk location of the schema's persistent storage.
-    ///     It will default to the user's Application Support directory as `Data.store`.
+    ///     If `nil`, it defaults to `Data.store` in the user's Application Support directory.
     ///   - externalStorageURL:
     ///     The on-disk location that contains the schema's external storage.
-    ///     It will default to residing in the same directory as the store (in a hidden directory).
+    ///     If `nil`, it defaults to a hidden directory alongside the store.
     ///   - allowsSave:
-    ///     Opens the database with read/write or read-only capabilities.
+    ///     A Boolean value that determines whether the database is opened with read/write or read-only capabilities.
     ///   - size:
-    ///     The number of database connections to add into the database queue. Only one of them is a writer.
+    ///     The number of database connections to add to the database queue. Only one connection is a writer.
     ///   - options:
-    ///     Configures additional flags related to the data store runtime.
+    ///     Additional flags related to the data store runtime.
     ///   - attachment:
-    ///     Assign a type that conforms to `DataStoreDelegate` and `DataStoreObservable`.
-    ///   - cloudKitSyncConfiguration:
-    ///     A configuration to set up a CloudKit database.
+    ///     An attachment object that conforms to `DataStoreDelegate`.
+    ///   - cloudKit:
+    ///     A configuration for setting up CloudKit synchronization.
     nonisolated public init(
         name: String? = nil,
         types: [any (PersistentModel & SendableMetatype).Type] = [],
@@ -345,10 +364,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                 directoryHint: .notDirectory
             )
         }
-        precondition(
-            resolvedURL.isFileURL,
-            "Store URL must be a file URL: \(resolvedURL)"
-        )
+        precondition(resolvedURL.isFileURL, "Store URL must be a file URL: \(resolvedURL)")
         self.init(
             name: resolvedName,
             types: types,
@@ -357,9 +373,10 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             options: options,
             flags: allowsSave
             ? [.readWrite, .create, .fullMutex]
-            : [.readOnly, .create, .fullMutex],
+            : [.readOnly, .fullMutex],
             location: .file(path: resolvedURL.path),
             externalStorageURL: externalStorageURL,
+            allowsSave: allowsSave,
             size: size,
             attachment: attachment,
             cloudKit: cloudKit
@@ -375,8 +392,6 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     ///     Model types to manually register into the data store.
     ///   - schema:
     ///     A schema that maps model classes to the associated data in the persistent storage.
-    ///   - allowsSave:
-    ///     Opens the database with read/write or read-only capabilities.
     ///   - options:
     ///     Configures additional flags related to the data store runtime.
     ///   - attachment:
@@ -385,7 +400,6 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         transient: Void,
         types: [any (PersistentModel & SendableMetatype).Type] = [],
         schema: Schema? = nil,
-        allowsSave: Bool = true,
         options: DataStoreOptions = [],
         attachment: (any DataStoreDelegate)? = nil
     ) {
@@ -394,11 +408,10 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             types: types,
             schema: schema,
             options: options,
-            flags: allowsSave
-            ? [.memory, .readWrite, .create, .fullMutex]
-            : [.memory, .readOnly, .create, .fullMutex],
+            flags: [.memory, .readWrite, .create, .fullMutex],
             location: .inMemory,
             externalStorageURL: nil,
+            allowsSave: true,
             size: 1,
             attachment: attachment
         )
@@ -410,6 +423,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             name: UUID().uuidString,
             flags: [.memory, .readWrite],
             location: .inMemory,
+            allowsSave: true,
             size: 1 // Cannot be more than 1, because each handle is its own database.
         )
     }
@@ -431,10 +445,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         })
     }
     
-    nonisolated public static func == (
-        lhs: Store.Configuration,
-        rhs: Store.Configuration
-    ) -> Bool {
+    nonisolated public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.name == rhs.name && lhs.url == rhs.url
     }
     
@@ -450,84 +461,95 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         #if false
         try schema.save(to: .temporaryDirectory)
         #endif
-        if var storeURL = self.url {
-            if storeURL.hasDirectoryPath {
-                storeURL.append(component: name + ".store", directoryHint: .notDirectory)
-                self.storage.location.withLock { $0 = .file(path: storeURL.path) }
+        guard let storeURL = self.url else {
+            return
+        }
+        let component = storeURL.lastPathComponent
+        let allowedCharacters = CharacterSet.urlPathAllowed.union(.whitespaces)
+        guard component.rangeOfCharacter(from: allowedCharacters.inverted) == nil else {
+            throw SwiftDataError.configurationFileNameContainsInvalidCharacters
+        }
+        guard component.count <= 255 else {
+            throw SwiftDataError.configurationFileNameTooLong
+        }
+        guard storeURL.isFileURL else {
+            throw URLError(.unsupportedURL)
+        }
+        let directoryURL = storeURL.deletingLastPathComponent()
+        if !FileManager.default.fileExists(atPath: directoryURL.path) {
+            guard allowsSave else {
+                throw CocoaError(.fileReadNoSuchFile)
             }
-            let component = storeURL.lastPathComponent
-            let allowedCharacters = CharacterSet.urlPathAllowed.union(.whitespaces)
-            guard component.rangeOfCharacter(from: allowedCharacters.inverted) == nil else {
-                throw SwiftDataError.configurationFileNameContainsInvalidCharacters
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        } else {
+            guard FileManager.default.isReadableFile(atPath: directoryURL.path) else {
+                throw CocoaError(.fileReadNoPermission)
             }
-            guard component.count <= 255 else {
-                throw SwiftDataError.configurationFileNameTooLong
+            if allowsSave {
+                guard FileManager.default.isWritableFile(atPath: directoryURL.path) else {
+                    throw CocoaError(.fileWriteNoPermission)
+                }
             }
-            guard storeURL.isFileURL else {
-                throw URLError(.unsupportedURL)
-            }
-            let directoryURL = storeURL.deletingLastPathComponent()
-            if !FileManager.default.fileExists(atPath: directoryURL.path) {
-                try FileManager.default.createDirectory(
-                    at: directoryURL,
-                    withIntermediateDirectories: true
-                )
-            } else {
-                // FIXME: Do not check for in-memory stores.
-//                guard FileManager.default.isReadableFile(atPath: directoryURL.path) else {
-//                    fatalError()
-//                }
-//                guard FileManager.default.isWritableFile(atPath: directoryURL.path) else {
-//                    fatalError()
-//                }
-            }
+        }
+        if !allowsSave && !FileManager.default.fileExists(atPath: storeURL.path) {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        if allowsSave {
             if !FileManager.default.fileExists(atPath: externalStorageURL.path) {
                 try FileManager.default.createDirectory(
                     at: externalStorageURL,
                     withIntermediateDirectories: true
                 )
             } else {
-//                guard FileManager.default.isReadableFile(atPath: externalStorageURL.path) else {
-//                    fatalError()
-//                }
-//                guard FileManager.default.isWritableFile(atPath: externalStorageURL.path) else {
-//                    fatalError()
-//                }
+                guard FileManager.default.isReadableFile(atPath: externalStorageURL.path) else {
+                    throw CocoaError(.fileReadNoPermission)
+                }
+                guard FileManager.default.isWritableFile(atPath: externalStorageURL.path) else {
+                    throw CocoaError(.fileWriteNoPermission)
+                }
             }
-            if options.contains(.eraseDatabaseOnSetup),
-               FileManager.default.fileExists(atPath: storeURL.path) {
+        } else if FileManager.default.fileExists(atPath: externalStorageURL.path) {
+            guard FileManager.default.isReadableFile(atPath: externalStorageURL.path) else {
+                throw CocoaError(.fileReadNoPermission)
+            }
+        }
+        if options.contains(.eraseDatabaseOnSetup) {
+            guard allowsSave else {
+                throw CocoaError(.fileWriteNoPermission)
+            }
+            if FileManager.default.fileExists(atPath: storeURL.path) {
                 try Store.Handle.remove(storeURL: storeURL)
                 logger.notice(
                     "Database deleted on initialization.",
                     metadata: ["url": .stringConvertible(storeURL)]
                 )
             }
-            if FileManager.default.fileExists(atPath: storeURL.path) {
-                do {
-                    let connection = try Store.Handle(
-                        at: .file(path: storeURL.path),
-                        flags: .readOnly,
-                        role: .reader
-                    )
-                    let applicationID = try execute(sql: "PRAGMA application_id;")
-                    let userVersion = try execute(sql: "PRAGMA user_version;")
-                    logger.trace(
-                        "Validating store file.",
-                        metadata: ["applicationID": "\(applicationID)", "userVersion": "\(userVersion)"]
-                    )
-                    func execute(sql: String) throws -> Int32 {
-                        let statement = try PreparedStatement(sql: sql, handle: connection)
-                        var iterator = statement.rows.makeIterator()
-                        let result = iterator.next()?[0, as: Int32.self] ?? 0
-                        try statement.finalize()
-                        return result
-                    }
-                    if applicationID != 0 && applicationID != Store.applicationID {
-                        throw Store.Error.invalidStoreConfiguration
-                    }
-                    try connection.close()
-                } catch {
+        }
+        if FileManager.default.fileExists(atPath: storeURL.path) {
+            do {
+                let connection = try Store.Handle(at: .file(path: storeURL.path), flags: .readOnly, role: .reader)
+                let applicationID = try execute(sql: "PRAGMA application_id;")
+                let userVersion = try execute(sql: "PRAGMA user_version;")
+                logger.trace(
+                    "Validating store file.",
+                    metadata: ["applicationID": "\(applicationID)", "userVersion": "\(userVersion)"]
+                )
+                func execute(sql: String) throws -> Int32 {
+                    let statement = try PreparedStatement(sql: sql, handle: connection)
+                    var iterator = statement.rows.makeIterator()
+                    let result = iterator.next()?[0, as: Int32.self] ?? 0
+                    try statement.finalize()
+                    return result
+                }
+                if applicationID != 0 && applicationID != Store.applicationID {
+                    throw Store.Error.invalidStoreConfiguration
+                }
+                try connection.close()
+            } catch {
+                if options.contains(.ignoreStoreValidationErrors) {
                     logger.notice("Error while reading store file: \(error)")
+                } else {
+                    throw error
                 }
             }
         }
@@ -545,6 +567,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         nonisolated fileprivate final let options: Mutex<DataStoreOptions>
         nonisolated fileprivate final let location: Mutex<SQLite.StoreType>
         nonisolated fileprivate final let externalStorageURL: URL
+        nonisolated fileprivate final let allowsSave: Mutex<Bool>
         nonisolated fileprivate final let cachePolicy: Mutex<CachePolicy>
         nonisolated fileprivate final let attachment: (any DataStoreDelegate)?
         nonisolated fileprivate final let cloudKit: Mutex<CloudKitConfiguration?>
@@ -560,6 +583,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             options: DataStoreOptions,
             location: SQLite.StoreType,
             externalStorageURL: URL,
+            allowsSave: Bool,
             cachePolicy: CachePolicy,
             attachment: (any DataStoreDelegate)?,
             cloudKit: CloudKitConfiguration?,
@@ -574,6 +598,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             self.options = .init(options)
             self.location = .init(location)
             self.externalStorageURL = externalStorageURL
+            self.allowsSave = .init(allowsSave)
             self.attachment = attachment
             self.cachePolicy = .init(cachePolicy)
             self.cloudKit = .init(cloudKit)
@@ -592,6 +617,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                 options: options.withLock(\.self),
                 location: location.withLock(\.self),
                 externalStorageURL: externalStorageURL,
+                allowsSave: allowsSave.withLock(\.self),
                 cachePolicy: cachePolicy.withLock(\.self),
                 attachment: attachment,
                 cloudKit: cloudKit.withLock(\.self),
