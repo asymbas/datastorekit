@@ -15,10 +15,10 @@ let package = Package(
         .library(name: "DataStoreKit", targets: ["DataStoreKit"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-async-algorithms", .upToNextMajor(from: "1.0.0")),
+        .package(url: "https://github.com/apple/swift-async-algorithms", "1.0.0"..<"1.0.1"),
         .package(url: "https://github.com/apple/swift-collections.git", "1.2.0"..<"1.3.0"),
-        .package(url: "https://github.com/apple/swift-log.git", "1.0.0"..<"2.0.0"),
-        .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.1.0")
+        .package(url: "https://github.com/apple/swift-log.git", "1.8.0"..<"1.9.0"),
+        .package(url: "https://github.com/swiftlang/swift-docc-plugin", "1.1.0"..<"1.2.0")
     ],
     targets: [
         .target(
