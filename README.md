@@ -97,7 +97,7 @@ let rows = try store.queue.withConnection { connection in
 
 Specify a connection type explicitly, or use the convenience methods.
 
-By default, `withConnection(_:for:_:)` uses `nil` for the connection type, which prefers a reader and may fall back to a writer if no reader is available. Be careful with this behavior in code paths that may already depend on writer access, since an implicit writer fallback can introduce deadlock risk.
+By default, `withConnection(_:for:_:)` uses `nil` for the connection type, which prefers a reader and may fall back to a writer if no reader is available.
 
 ```swift
 try store.queue.withConnection(nil) { connection in ... }
@@ -128,9 +128,10 @@ For questions, feedback, or suggestions, please use [GitHub Discussions](https:/
 
 ## Compatibility
 
-- OS 26.1 and OS 26.2 have an issue with `Schema`, where Swift collections can be unintentionally defined as transformable attributes when their elements contain simple types. This causes ModelCoders to incorrectly handle the data, resulting in a fatal error.
+- OS 26.1, OS 26.2, and OS 26.3 have an issue with `Schema`, where Swift collections can be unintentionally defined as transformable attributes when their elements contain simple types. This causes ModelCoders to incorrectly handle the data, resulting in a fatal error.
   - A workaround fix has been applied to how snapshots are encoded/decoded.
   - Apple responded to the report and mentioned that this should be resolved in OS 26.3.
+    - Update: This has not been resolved.
 
 ## Limitations
 
