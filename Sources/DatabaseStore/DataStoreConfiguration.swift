@@ -47,7 +47,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     
     /// The `DataStore` instantiated by the `ModelContainer`.
     nonisolated public var store: Store? {
-        self.storage.container.load()?.store as? Store
+        try! storage.container.load()?.load() as? Store
     }
     
     /// The attachment assigned when this object was created.
