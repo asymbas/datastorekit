@@ -17,168 +17,237 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
 extension DataStore where Self: Sendable {
     @discardableResult nonisolated package func initialize() -> DataStoreContainer {
         let container = DataStoreContainer(store: self)
-        DataStoreContainer.add(container, storeIdentifier: self.identifier)
+        DataStoreAggregate.add(container, storeIdentifier: self.identifier)
         return container
     }
     
     nonisolated package func deinitialize() {
-        DataStoreContainer.remove(storeIdentifier: self.identifier)
+        DataStoreAggregate.remove(storeIdentifier: self.identifier)
     }
     
-    nonisolated public static func load(for storeIdentifier: String) -> Self? {
-        DataStoreContainer.load(for: storeIdentifier) as? Self
+    nonisolated public static func load(for storeIdentifier: String) throws -> Self? {
+        try DataStoreAggregate.load(for: storeIdentifier) as? Self
     }
 }
 
-extension DataStoreContainer {
-    nonisolated fileprivate static let instances: Mutex<[String: DataStoreContainer]> = .init([:])
-    
-    nonisolated fileprivate static func add(_ container: DataStoreContainer, storeIdentifier: String) {
-        Self.instances.withLock { containers in
-            guard container.store != nil else {
-                logger.notice("DataStoreContainer store is already nil: \(storeIdentifier)")
+extension DataStoreAggregate {
+    nonisolated fileprivate static func add(
+        _ container: DataStoreContainer,
+        storeIdentifier: String
+    ) {
+        Self.withLock { aggregate in
+            guard container.isInitialized else {
+                logger.notice("Skipping registration for deallocated DataStoreContainer: \(storeIdentifier)")
                 return
             }
-            containers[storeIdentifier] = container
+            if let container = aggregate.containers.updateValue(container, forKey: storeIdentifier) {
+                aggregate.invalidate(in: container)
+            }
             #if DEBUG
             logger.debug(
                 "Added DataStoreContainer: \(storeIdentifier)",
-                metadata: ["active": "\(containers.keys.joined(separator: ", "))"]
+                metadata: ["active": "\(aggregate.containers.keys.joined(separator: ", "))"]
             )
             #endif
         }
     }
     
     nonisolated fileprivate static func remove(storeIdentifier: String) {
-        let container = Self.instances.withLock { containers in
-            containers.removeValue(forKey: storeIdentifier)
-        }
-        switch container {
-        case let container?:
-            let identifiers = container.disconnectAll()
-            if !identifiers.isEmpty {
-                Self.connectedStores.withLock { containers in
-                    for editingStateID in identifiers {
-                        containers[editingStateID] = nil
-                        #if DEBUG
-                        logger.debug(
-                            "Disconnected EditingState from DataStoreContainer.",
-                            metadata: [
-                                "editing_state_id": "\(editingStateID)",
-                                "store_identifier": "\(storeIdentifier)"
-                            ]
-                        )
-                        #endif
-                    }
-                }
+        Self.withLock { aggregate in
+            let container = aggregate.containers.removeValue(forKey: storeIdentifier)
+            switch container {
+            case let container?:
+                aggregate.invalidate(in: container)
+                #if DEBUG
+                let active = aggregate.containers.keys.joined(separator: ", ")
+                logger.debug(
+                    "Removed DataStoreContainer: \(storeIdentifier)",
+                    metadata: ["active": "\(active)"]
+                )
+                #endif
+            case nil:
+                #if DEBUG
+                let active = aggregate.containers.keys.joined(separator: ", ")
+                logger.notice(
+                    "Unable to remove missing DataStoreContainer: \(storeIdentifier)",
+                    metadata: ["active": "\(active)"]
+                )
+                #else
+                logger.notice("Unable to remove missing DataStoreContainer: \(storeIdentifier)")
+                #endif
             }
-            #if DEBUG
-            let active = Self.instances.withLock { $0.keys.joined(separator: ", ") }
-            logger.debug(
-                "Removed DataStoreContainer: \(storeIdentifier)",
-                metadata: ["active": "\(active)"]
-            )
-            #endif
-        case nil:
-            #if DEBUG
-            let active = Self.instances.withLock { $0.keys.joined(separator: ", ") }
-            logger.notice(
-                "Unable to find and remove DataStoreContainer: \(storeIdentifier)",
-                metadata: ["active": "\(active)"]
-            )
-            #else
-            logger.notice("Unable to find and remove DataStoreContainer: \(storeIdentifier)")
-            #endif
         }
     }
     
-    nonisolated public static func load(for storeIdentifier: String) -> (any DataStore & Sendable)? {
-        switch Self.instances.withLock({ $0[storeIdentifier] }) {
+    nonisolated public static func load(for storeIdentifier: String) throws -> (any DataStore & Sendable)? {
+        switch Self.withLock({ $0.containers[storeIdentifier] }) {
         case let container?:
-            guard let store = container.store else {
-                logger.notice("DataStoreContainer store is nil and cannot be loaded: \(storeIdentifier)")
-                Self.remove(storeIdentifier: storeIdentifier)
-                fallthrough
+            do {
+                let store = try container.load()
+                #if DEBUG
+                logger.debug("Loaded DataStoreContainer: \(storeIdentifier)")
+                #endif
+                return store
+            } catch {
+                logger.notice("DataStoreContainer could not be loaded: \(storeIdentifier)")
+                Self.withLock { $0.invalidateAndRemoveIfCurrent(container) }
+                throw error
             }
-            #if DEBUG
-            logger.debug("Loaded DataStoreContainer: \(storeIdentifier)")
-            #endif
-            return store
         case nil:
             #if DEBUG
-            logger.debug("Unable to find and load DataStoreContainer: \(storeIdentifier)")
+            logger.debug("Unable to find DataStoreContainer: \(storeIdentifier)")
             #endif
             return nil
         }
     }
 }
 
-extension DataStoreContainer {
-    nonisolated private static let connectedStores: Mutex<[EditingState.ID: DataStoreContainer]> = .init([:])
-    
+extension DataStoreAggregate {
     package static func initializeState(for editingState: EditingState, store: some DataStore & Sendable) {
-        guard let container = Self.instances.withLock({ $0[store.identifier] }) else {
-            fatalError()
-        }
-        guard container.insert(editingState.id) else {
-            fatalError()
-        }
-        Self.connectedStores.withLock {
-            $0[editingState.id] = container
-        }
-        guard container.isConnected(to: editingState) else {
-            fatalError()
-        }
-        #if DEBUG
-        logger.debug(
-            "Connected DataStoreContainer for initialized EditingState.",
-            metadata: ["editing_state_id": "\(editingState.id)"]
-        )
-        #endif
-    }
-    
-    package static func invalidateState(for editingState: EditingState) {
-        let container = Self.connectedStores.withLock { containers in
-            containers.removeValue(forKey: editingState.id)
-        }
-        
-        switch container {
-        case let container?:
-            if container.remove(editingState.id) {
+        Self.withLock { aggregate in
+            guard let container = aggregate.containers[store.identifier] else {
+                preconditionFailure("Do not initialize state before the DataStore was registered.")
+            }
+            do {
+                if try !container.insert(editingState.id) {
+                    assertionFailure("The EditingState was connected to the DataStoreContainer more than once.")
+                }
+                aggregate.connectedStores[editingState.id] = container
                 #if DEBUG
                 logger.debug(
-                    "Disconnected DataStoreContainer from invalidated EditingState.",
+                    "Connected EditingState to DataStoreContainer.",
                     metadata: ["editing_state_id": "\(editingState.id)"]
                 )
                 #endif
-            } else {
-                logger.debug(
-                    "Invalidated EditingState not found in DataStoreContainer.",
-                    metadata: ["editing_state_id": "\(editingState.id)"]
-                )
+            } catch {
+                logger.error("Unable to connect EditingState to DataStoreContainer: \(error)")
             }
-        case nil:
-            logger.debug(
-                "Invalidated EditingState is not referencing a DataStoreContainer.",
-                metadata: ["editing_state_id": "\(editingState.id)"]
-            )
         }
     }
     
-    package static func load(editingState: some EditingStateProviding) -> (any DataStore & Sendable)? {
-        let container = Self.connectedStores.withLock { $0[editingState.id] }
-        return container?.store
+    package static func invalidateState(for editingState: EditingState) {
+        Self.withLock { aggregate in
+            switch aggregate.connectedStores.removeValue(forKey: editingState.id) {
+            case let container?:
+                if container.remove(editingState.id) {
+                    #if DEBUG
+                    logger.debug(
+                        "Disconnected EditingState from DataStoreContainer.",
+                        metadata: ["editing_state_id": "\(editingState.id)"]
+                    )
+                    #endif
+                } else {
+                    logger.debug(
+                        "EditingState was not found in DataStoreContainer during invalidation.",
+                        metadata: ["editing_state_id": "\(editingState.id)"]
+                    )
+                }
+            case nil:
+                logger.debug(
+                    "EditingState was not connected to a DataStoreContainer.",
+                    metadata: ["editing_state_id": "\(editingState.id)"]
+                )
+            }
+        }
+    }
+    
+    package static func load(editingState: EditingState) throws(Error) -> (any DataStore & Sendable)? {
+        switch Self.withLock({ $0.connectedStores[editingState.id] }) {
+        case let container?:
+            do {
+                return try container.load()
+            } catch {
+                Self.withLock { $0.invalidateAndRemoveIfCurrent(container) }
+                throw error
+            }
+        case nil:
+            return nil
+        }
     }
 }
 
-extension DataStoreContainer {
-    nonisolated fileprivate func insert(_ id: EditingState.ID) -> Bool {
-        editingStateIDs.withLock { editingStateIDs in
+package struct DataStoreAggregate: ~Copyable, Sendable {
+    nonisolated private static let shared: Mutex<Self> = .init(.init())
+    nonisolated fileprivate var containers: [String: DataStoreContainer] = [:]
+    nonisolated fileprivate var connectedStores: [EditingState.ID: DataStoreContainer] = [:]
+    
+    nonisolated internal static func snapshot() -> Self {
+        .shared.withLock { .init(containers: $0.containers, connectedStores: $0.connectedStores) }
+    }
+    
+    nonisolated internal static func withLock<Result>(_ body: (inout Self) throws -> Result)
+    rethrows -> Result where Result: ~Copyable {
+        try Self.shared.withLock { try body(&$0) }
+    }
+    
+    nonisolated fileprivate mutating func invalidate(in container: DataStoreContainer) {
+        let identifiers = container.disconnectAll()
+        if !identifiers.isEmpty {
+            for editingStateID in identifiers {
+                connectedStores[editingStateID] = nil
+                #if DEBUG
+                logger.debug(
+                    "Disconnected EditingState from DataStoreContainer.",
+                    metadata: [
+                        "editing_state_id": "\(editingStateID)",
+                        "store_identifier": "\(container.storeIdentifier ?? "nil")"
+                    ]
+                )
+                #endif
+            }
+        }
+    }
+    
+    nonisolated fileprivate mutating func invalidateAndRemoveIfCurrent(_ container: DataStoreContainer) {
+        invalidate(in: container)
+        guard let storeIdentifier = container.storeIdentifier else { return }
+        guard containers[storeIdentifier] === container else { return }
+        containers[storeIdentifier] = nil
+    }
+}
+
+package final class DataStoreContainer: Sendable {
+    #if swift(>=6.2)
+    nonisolated private weak let store: (any DataStore & Sendable)?
+    #else
+    nonisolated(unsafe) private weak var store: (any DataStore & Sendable)?
+    #endif
+    nonisolated fileprivate let storeIdentifier: String?
+    nonisolated fileprivate let editingStateIDs: Mutex<Set<EditingState.ID>> = .init([])
+    nonisolated fileprivate let isActive: Atomic<Bool> = .init(true)
+    
+    nonisolated package init(store: (any DataStore & Sendable)?) {
+        self.store = store
+        self.storeIdentifier = store?.identifier
+    }
+    
+    nonisolated package var isInitialized: Bool {
+        store != nil
+    }
+    
+    nonisolated package func load() throws(Error) -> any DataStore & Sendable {
+        guard isActive.load(ordering: .relaxed) else {
+            throw Self.Error.notActive
+        }
+        guard let store = self.store else {
+            throw Self.Error.storeHasBeenDeallocated
+        }
+        return store
+    }
+    
+    nonisolated fileprivate func insert(_ id: EditingState.ID) throws(Error) -> Bool {
+        let result: Bool? = self.editingStateIDs.withLock { editingStateIDs in
             guard isActive.load(ordering: .relaxed) else {
-                return false
+                logger.debug(
+                    "Attempted to connect EditingState to an inactive DataStoreContainer.",
+                    metadata: ["editing_state_id": "\(id)"]
+                )
+                return nil
             }
             return editingStateIDs.insert(id).inserted
         }
+        guard let result else { throw Self.Error.notActive }
+        return result
     }
     
     nonisolated fileprivate func remove(_ id: EditingState.ID) -> Bool {
@@ -197,34 +266,17 @@ extension DataStoreContainer {
     }
     
     nonisolated package func isConnected(to editingState: some EditingStateProviding) -> Bool {
-        editingStateIDs.withLock { editingStateIDs in
-            editingStateIDs.contains(editingState.id)
-        }
-    }
-}
-
-package final class DataStoreContainer: Sendable {
-    #if swift(>=6.2)
-    nonisolated package weak let store: (any DataStore & Sendable)?
-    #else
-    nonisolated(unsafe) package weak var store: (any DataStore & Sendable)?
-    #endif
-    nonisolated fileprivate let editingStateIDs: Mutex<Set<EditingState.ID>> = .init([])
-    nonisolated fileprivate let isActive: Atomic<Bool> = .init(true)
-    
-    nonisolated package init(store: (any DataStore & Sendable)?) {
-        self.store = store
+        editingStateIDs.withLock { $0.contains(editingState.id) }
     }
     
     deinit {
         #if DEBUG
         logger.debug("Deinitialized DataStoreContainer.")
         #endif
-        
-        nonisolated fileprivate init(store: (any DataStore & Sendable)? = nil) {
-            self.store = store
-        }
     }
     
-    #endif
+    package enum Error: Swift.Error {
+        case notActive
+        case storeHasBeenDeallocated
+    }
 }

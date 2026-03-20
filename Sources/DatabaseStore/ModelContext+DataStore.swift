@@ -15,7 +15,7 @@ import Synchronization
 
 extension ModelContext {
     package var store: DatabaseStore {
-        guard let store = DataStoreContainer.load(editingState: editingState),
+        guard let store = try? DataStoreAggregate.load(editingState: editingState),
               let store = store as? DatabaseStore else {
             fatalError("Expected a DatabaseStore")
         }
@@ -50,13 +50,13 @@ extension ModelContext {
     nonisolated public static func preload<T>(
         _ descriptor: FetchDescriptor<T>,
         for editingState: EditingState
-    ) async throws where T: PersistentModel {
-        guard let store = DataStoreContainer.load(editingState: editingState),
+    ) async throws -> any Hashable & Sendable where T: PersistentModel {
+        guard let store = try? DataStoreAggregate.load(editingState: editingState),
               let store = store as? DatabaseStore else {
             fatalError("Expected a DatabaseStore")
         }
         try Task.checkCancellation()
-        try await store.preload(PreloadFetchRequest(
+        return try await store.preload(PreloadFetchRequest(
             isUnchecked: false,
             modifier: nil,
             descriptor: descriptor,
@@ -69,10 +69,13 @@ extension ModelContext {
         isolation: isolated (any Actor)? = #isolation
     ) async throws -> [T] where T: PersistentModel {
         let editingState = self.editingState
-        try await Task { @concurrent in
+        let modifier = try await Task { @concurrent in
             try await ModelContext.preload(descriptor, for: editingState)
         }.value
-        return try fetch(descriptor)
+        self.editingState.author = "\(modifier.hashValue)"
+        let result = try fetch(descriptor)
+        self.editingState.author = editingState.author
+        return result
     }
 }
 
