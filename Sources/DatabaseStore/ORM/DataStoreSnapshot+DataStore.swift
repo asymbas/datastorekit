@@ -347,7 +347,7 @@ extension DatabaseSnapshot {
     }
     
     /// Sets the attribute value indexed at the result row.
-    nonisolated private mutating func setValue(
+    nonisolated internal mutating func setValue(
         _ attribute: Schema.Attribute,
         _ value: any Sendable,
         at index: Int,
@@ -398,7 +398,7 @@ extension DatabaseSnapshot {
     }
     
     /// Sets the relationship value indexed at the result row.
-    nonisolated private mutating func setValue(
+    nonisolated internal mutating func setValue(
         _ relationship: Schema.Relationship,
         _ value: any Sendable,
         at index: Int,
