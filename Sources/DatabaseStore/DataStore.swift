@@ -1033,7 +1033,7 @@ extension DatabaseStore {
             metadata: ["thread": .string(threadDescription)]
         )
         manager.initializeState(for: editingState)
-        DataStoreContainer.initializeState(for: editingState, store: self)
+        DataStoreAggregate.initializeState(for: editingState, store: self)
     }
     
     /// Inherited from `DataStore.invalidateState(for:)`.
@@ -1046,7 +1046,7 @@ extension DatabaseStore {
             metadata: ["thread": .string(threadDescription)]
         )
         manager.invalidateState(for: editingState)
-        DataStoreContainer.invalidateState(for: editingState)
+        DataStoreAggregate.invalidateState(for: editingState)
     }
     
     /// Inherited from `DataStore.cachedSnapshots(for:editingState:)`.
