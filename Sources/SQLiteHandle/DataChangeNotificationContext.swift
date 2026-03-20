@@ -82,7 +82,7 @@ extension DataStoreOperation {
         case SQLITE_INSERT: self = .insert
         case SQLITE_UPDATE: self = .update
         case SQLITE_DELETE: self = .delete
-        default: fatalError()
+        default: preconditionFailure("The raw value is not a valid SQLite operation code: \(operationCode)")
         }
     }
 }

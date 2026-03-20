@@ -173,7 +173,9 @@ extension DatabaseConnection where Store.Handle == SQLite {
     }
     
     nonisolated public func transaction(_ transactionMode: Store.Handle.TransactionMode? = nil) throws {
-        guard let editingState = self.editingState else { fatalError() }
+        guard let editingState = self.editingState else {
+            throw Self.Error.noEditingStateProvided
+        }
         guard transaction == nil else { return }
         self.transaction = queue?.makeTransaction(editingState, handle)
         do {

@@ -18,7 +18,7 @@ extension SQLType {
         case SQLITE_FLOAT: self = .real
         case SQLITE_TEXT: self = .text
         case SQLITE_BLOB: self = .blob
-        default: fatalError()
+        default: preconditionFailure("The raw value is not a valid SQLite type: \(rawValue)")
         }
     }
 }

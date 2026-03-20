@@ -234,8 +234,8 @@ public struct PreparedStatement: ~Copyable, Sendable {
             names.reserveCapacity(Int(columnCount))
             var exact = [String: Int32]()
             for index in 0..<columnCount {
-                guard let name = columnName(at: index) else {
-                    fatalError()
+                guard let name = self.columnName(at: index) else {
+                    preconditionFailure("There should be a valid column name at this index.")
                 }
                 names.append(name)
                 if exact[name] == nil { exact[name] = index }

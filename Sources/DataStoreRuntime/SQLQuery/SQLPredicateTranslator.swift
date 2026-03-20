@@ -436,7 +436,8 @@ where T: PersistentModel & SendableMetatype {
                     foreignKeyColumns.append(property)
                 }
             default:
-                fatalError()
+                log(.notice, "Unhandled property metadata", metadata: ["property": "\(property)"])
+                continue
             }
         }
         guard includeJoins else {

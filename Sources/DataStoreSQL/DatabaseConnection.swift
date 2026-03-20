@@ -118,4 +118,8 @@ extension DatabaseConnection {
             self.transaction = transaction
         }
     }
+    
+    public enum Error: Swift.Error {
+        case noEditingStateProvided
+    }
 }

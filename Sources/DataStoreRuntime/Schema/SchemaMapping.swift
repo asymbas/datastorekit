@@ -48,10 +48,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                 name: discriminator.name,
                 valueType: String.self,
                 constraints: .primaryKey, .notNull
-            ) { result in
-                guard case .success(_) = result else {
-                    fatalError()
-                }
+            ) { _ in
                 logger.trace("Creating primary key column: \(entity.name).\(discriminator.name)")
             }
             for property in properties where entity.inheritedPropertiesByName[property.name] == nil {
@@ -84,7 +81,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                         ]
                     ) { result in
                         guard case .success(_) = result else {
-                            fatalError()
+                            preconditionFailure("ColumnDefinition should never fail.")
                         }
                         logger.trace("Creating relationship column: \(description)")
                     }
@@ -103,7 +100,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                         ]
                     ) { result in
                         guard case .success(let column) = result else {
-                            fatalError()
+                            preconditionFailure("ColumnDefinition should never fail.")
                         }
                         validatePropertyOptions(attribute: compositeAttribute, column: column)
                         logger.trace("Creating composite attribute column: \(description)")
@@ -118,7 +115,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                                 ]
                             ) { result in
                                 guard case .success(let column) = result else {
-                                    fatalError()
+                                    preconditionFailure("ColumnDefinition should never fail.")
                                 }
                                 validatePropertyOptions(attribute: attribute, column: column)
                                 let description = "\(description).\(attribute.name)"
@@ -141,7 +138,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                         ]
                     ) { result in
                         guard case .success(let column) = result else {
-                            fatalError()
+                            preconditionFailure("ColumnDefinition should never fail.")
                         }
                         validatePropertyOptions(attribute: attribute, column: column)
                         logger.trace("Creating attribute column: \(description)")
@@ -193,20 +190,14 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                 valueType: String.self,
                 constraints: .notNull,
                 references: reference[0]
-            ) { result in
-                guard case .success(_) = result else {
-                    fatalError()
-                }
+            ) { _ in
             }
             SQLColumn(
                 name: reference[1].sourceColumn,
                 valueType: String.self,
                 constraints: .notNull,
                 references: reference[1]
-            ) { result in
-                guard case .success(_) = result else {
-                    fatalError()
-                }
+            ) { _ in
             }
         }
     }

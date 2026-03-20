@@ -779,7 +779,7 @@ public final class DatabaseStore: DataStore, Sendable {
                             return candidate
                         }
                         guard let candidate else {
-                            fatalError()
+                            preconditionFailure()
                         }
                         snapshot = candidate
                         export = snapshot.export

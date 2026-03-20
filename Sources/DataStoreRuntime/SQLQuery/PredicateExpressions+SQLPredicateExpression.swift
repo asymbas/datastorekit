@@ -1146,8 +1146,8 @@ where Input: SQLPredicateExpression, Desired: SQLPredicateExpression {
                     kind: .expression
                 )
             }
-            guard let type = desiredType as? any (PersistentModel & SendableMetatype).Type else {
-                fatalError()
+            guard let type = desiredType as? any PersistentModel.Type else {
+                preconditionFailure("Type is not a PersistentModel.Type.")
             }
             context.loadSchemaMetadata(for: type, key: input.key)
             return input.copy(

@@ -292,18 +292,14 @@ public final class SQLite: Sendable {
         _ sql: String,
         bindings: consuming [any Sendable] = [],
         body: (borrowing PreparedStatement) throws -> sending T
-    ) throws/*(SQLError)*/ -> sending T {
+    ) throws -> sending T {
         let statement = try PreparedStatement(sql: sql, bindings: bindings, handle: self)
         do {
-            let results = try body(statement)
+            let result = try body(statement)
             try statement.finalize()
-            return results
-        } catch let error as Error {
-            throw error
-        } catch let error as SQLError {
-            throw error
+            return result
         } catch {
-            fatalError()
+            throw error
         }
     }
 }

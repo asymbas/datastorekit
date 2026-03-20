@@ -261,7 +261,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
                     toManyDependencies.append(property.index)
                     logger.trace("To-many relationship will be deferred: \(description)")
                 default:
-                    fatalError()
+                    preconditionFailure()
                 }
             }
         }
@@ -815,7 +815,7 @@ extension DatabaseSnapshot {
                 logger.debug("Diffing against old snapshot value: \(property.name) = \(oldValue)")
             } else {
                 guard let relationship = property.metadata as? Schema.Relationship else {
-                    fatalError()
+                    preconditionFailure("Property should have been a relationship: \(property)")
                 }
                 if let graph, let cachedTargets = graph.cachedReferencesIfPresent(
                     for: persistentIdentifier,
@@ -866,10 +866,10 @@ extension DatabaseSnapshot {
     ) throws -> (linked: Set<PersistentIdentifier>, unlinked: Set<PersistentIdentifier>) {
         let description = "\(persistentIdentifier) - \(entityName).\(property.name)"
         guard let relationship = property.metadata as? Schema.Relationship else {
-            fatalError()
+            preconditionFailure("The property must be a relationship: \(description)")
         }
         guard let reference = property.reference else {
-            fatalError()
+            preconditionFailure("The relationship must have a reference: \(description)")
         }
         var linkedIdentifiers = Set<PersistentIdentifier>()
         var unlinkedIdentifiers = Set<PersistentIdentifier>()
@@ -1049,10 +1049,10 @@ extension DatabaseSnapshot {
             let property = self.properties[index]
             let description = "\(primaryKey) - \(entityName).\(property.name)"
             guard let relationship = property.metadata as? Schema.Relationship else {
-                fatalError()
+                preconditionFailure("The property must be a relationship: \(description)")
             }
             guard let reference = property.reference else {
-                fatalError()
+                preconditionFailure("The relationship must have a reference: \(description)")
             }
             let value = try fetchReference(in: property, connection: connection)
             if property.isManyToManyRelationship {
@@ -1164,10 +1164,10 @@ extension DatabaseSnapshot {
         connection: borrowing DatabaseConnection<Store>
     ) throws {
         guard let relationship = property.metadata as? Schema.Relationship else {
-            fatalError()
+            preconditionFailure("The property must be a relationship: \(property)")
         }
         guard let reference = property.reference else {
-            fatalError()
+            preconditionFailure("The relationship must have a reference: \(property)")
         }
         precondition(
             relationship.destination == relatedIdentifier.entityName,
@@ -1207,10 +1207,10 @@ extension DatabaseSnapshot {
         connection: borrowing DatabaseConnection<Store>
     ) throws {
         guard let relationship = property.metadata as? Schema.Relationship else {
-            fatalError()
+            preconditionFailure("The property must be a relationship: \(property)")
         }
         guard let reference = property.reference else {
-            fatalError()
+            preconditionFailure("The relationship must have a reference: \(property)")
         }
         precondition(
             relationship.destination == relatedIdentifier.entityName,
@@ -1249,10 +1249,10 @@ extension DatabaseSnapshot {
         connection: borrowing DatabaseConnection<Store>
     ) throws {
         guard let relationship = property.metadata as? Schema.Relationship else {
-            fatalError()
+            preconditionFailure("The property must be a relationship: \(property)")
         }
         guard let reference = property.reference else {
-            fatalError()
+            preconditionFailure("The relationship must have a reference: \(property)")
         }
         let primaryKey = relatedIdentifier.primaryKey()
         let foreignKey = self.primaryKey
@@ -1292,10 +1292,10 @@ extension DatabaseSnapshot {
         connection: borrowing DatabaseConnection<Store>
     ) throws {
         guard let relationship = property.metadata as? Schema.Relationship else {
-            fatalError()
+            preconditionFailure("The property must be a relationship: \(property)")
         }
         guard let reference = property.reference else {
-            fatalError()
+            preconditionFailure("The relationship must have a reference: \(property)")
         }
         precondition(
             relationship.destination == relatedIdentifier.entityName,
@@ -1351,10 +1351,10 @@ extension DatabaseSnapshot {
         connection: borrowing DatabaseConnection<Store>
     ) throws {
         guard let relationship = property.metadata as? Schema.Relationship else {
-            fatalError()
+            preconditionFailure("The property must be a relationship: \(property)")
         }
         guard let reference = property.reference else {
-            fatalError()
+            preconditionFailure("The relationship must have a reference: \(property)")
         }
         precondition(relationship.isToOneRelationship)
         let orientation = reference[0].isOwningReference()
@@ -1388,10 +1388,10 @@ extension DatabaseSnapshot {
         connection: borrowing DatabaseConnection<Store>
     ) throws {
         guard let relationship = property.metadata as? Schema.Relationship else {
-            fatalError()
+            preconditionFailure("The property must be a relationship: \(property)")
         }
         guard let reference = property.reference else {
-            fatalError()
+            preconditionFailure("The relationship must have a reference: \(property)")
         }
         let orientation = reference[0].isOwningReference()
         let foreignKeyTable = orientation ? reference[0].lhsTable : reference[0].rhsTable
@@ -1450,10 +1450,10 @@ extension DatabaseSnapshot {
             throw Error.identifierNotAssociatedToStore
         }
         guard let relationship = property.metadata as? Schema.Relationship else {
-            fatalError()
+            preconditionFailure("The property must be a relationship: \(property)")
         }
         guard let reference = property.reference else {
-            fatalError()
+            preconditionFailure("The relationship must have a reference: \(property)")
         }
         if reference.count == 2 {
             let destination = reference[1].rhsTable
@@ -1720,7 +1720,7 @@ extension DatabaseSnapshot {
             switch property.metadata {
             case let attribute as Schema.Attribute: try setValue(attribute, at: index)
             case let relationship as Schema.Relationship: try setValue(relationship, at: index)
-            default: fatalError()
+            default: continue
             }
         }
         func setValue(_ attribute: Schema.Attribute, at index: Int) throws {
@@ -2003,20 +2003,20 @@ extension DatabaseSnapshot {
                 T.self is NSNull.Type ||
                 T.self is Optional<T>.Type
             ) else {
-                fatalError()
+                preconditionFailure("Type violation: \(T.self) is not Optional<T>")
             }
         }
         switch property.metadata {
         case let relationship as Schema.Relationship:
             if relationship.isToOneRelationship, value is PersistentIdentifier == false {
-                fatalError("Type violation: \(T.self) is not PersistentIdentifier.")
+                preconditionFailure("Type violation: \(T.self) is not PersistentIdentifier")
             }
             if !relationship.isToOneRelationship, value is [PersistentIdentifier] == false {
-                fatalError("Type violation: \(T.self) is not Array<PersistentIdentifier>.")
+                preconditionFailure("Type violation: \(T.self) is not Array<PersistentIdentifier>")
             }
         case let attribute as Schema.Attribute:
             if attribute.valueType is T.Type == false {
-                fatalError("Type violation: \(T.self) is not \(attribute.valueType).")
+                preconditionFailure("Type violation: \(T.self) is not \(attribute.valueType)")
             }
         default:
             break
@@ -2114,10 +2114,10 @@ extension DatabaseSnapshot {
         connection: borrowing DatabaseConnection<Store>
     ) throws {
         guard let relationship = property.metadata as? Schema.Relationship else {
-            fatalError()
+            preconditionFailure("The property must be a relationship: \(property)")
         }
         guard let reference = property.reference else {
-            fatalError()
+            preconditionFailure("The relationship must have a reference: \(property)")
         }
         let description = "\(entityName).\(property.name) \(persistentIdentifier)"
         let identifiers: [PersistentIdentifier]

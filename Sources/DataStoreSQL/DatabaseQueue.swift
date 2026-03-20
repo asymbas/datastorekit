@@ -353,7 +353,7 @@ extension DatabaseQueue {
                 if let index = connections.firstIndex(where: { $0.role == role }) {
                     return connections.remove(at: index)
                 } else {
-                    fatalError()
+                    preconditionFailure("Semaphore was signaled, but no \(role) connection was available.")
                 }
             }
         }

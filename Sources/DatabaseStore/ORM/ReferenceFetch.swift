@@ -178,13 +178,13 @@ nonisolated package func fetchExternalRows(
     connection: borrowing DatabaseConnection<DatabaseStore>
 ) throws -> any Sendable {
     guard let relationship = property.metadata as? Schema.Relationship else {
-        fatalError()
+        preconditionFailure("Property should have been a relationship: \(property)")
     }
     var type = relationship.valueType
     if !relationship.isToOneRelationship { type = unwrapArrayMetatype(type) }
     if !relationship.isOptional { type = unwrapOptionalMetatype(type) }
     guard let type = type as? any PersistentModel.Type else {
-        fatalError()
+        preconditionFailure("The relationship value type should be a PersistentModel.Type: \(property)")
     }
     let primaryKey = persistentIdentifier.primaryKey()
     let destinationColumns = type.databaseSchemaMetadata.columns
@@ -234,7 +234,7 @@ nonisolated package func fetchExternalRows(
             Limit(1)
         }
     default:
-        fatalError()
+        preconditionFailure("The relationship must have a reference: \(property)")
     }
     return results
 }
@@ -247,15 +247,15 @@ nonisolated package func fetchExternalRowsBatched(
 ) throws -> [String: [[any Sendable]]] {
     guard !ownerPrimaryKeys.isEmpty else { return [:] }
     guard let relationship = property.metadata as? Schema.Relationship else {
-        fatalError()
+        preconditionFailure("Property should have been a relationship: \(property)")
     }
     guard !relationship.isToOneRelationship else {
-        fatalError("This batched function is intended for to-many/many-to-many.")
+        preconditionFailure("This batched function is intended for to-many/many-to-many.")
     }
     var type = unwrapArrayMetatype(relationship.valueType)
     if !relationship.isOptional { type = unwrapOptionalMetatype(type) }
     guard let type = type as? any PersistentModel.Type else {
-        fatalError()
+        preconditionFailure("The relationship value type should be a PersistentModel.Type: \(property)")
     }
     let destinationColumns = type.databaseSchemaMetadata.columns
     let ownerAlias = "owner_pk"
@@ -324,11 +324,11 @@ nonisolated package func fetchExternalReferenceKeysBatched(
 ) throws -> [PersistentIdentifier: [PersistentIdentifier]] {
     guard !ownerPrimaryKeys.isEmpty else { return [:] }
     guard let relationship = property.metadata as? Schema.Relationship else {
-        fatalError()
+        preconditionFailure("Property should have been a relationship: \(property)")
     }
-    let storeIdentifier = ownerPersistentIdentifiers.first?.storeIdentifier
-    guard let storeIdentifier else {
-        fatalError()
+    // TODO: Use store identifier from `DatabaseQueue`.
+    guard let storeIdentifier = ownerPersistentIdentifiers.first?.storeIdentifier else {
+        preconditionFailure()
     }
     var result = [PersistentIdentifier: [PersistentIdentifier]]()
     result.reserveCapacity(ownerPersistentIdentifiers.count)
@@ -400,7 +400,7 @@ nonisolated package func fetchExternalReferenceKeysBatched(
                 WHERE "\(sourceTable)"."\(ownerPrimaryKeyColumnInSource)" IN (\(inList))
                 """
         default:
-            fatalError()
+            preconditionFailure("The relationship must have a reference: \(property)")
         }
         for row in try connection.fetch(sql, bindings: bindings) {
             guard let ownerPrimaryKey = row[0] as? String else {

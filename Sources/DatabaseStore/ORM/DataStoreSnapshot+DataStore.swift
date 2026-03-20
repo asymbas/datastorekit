@@ -326,7 +326,7 @@ extension DatabaseSnapshot {
             let storeIdentifier = store.identifier
             try setValue(relationship, value, at: property.index, storeIdentifier: storeIdentifier)
         default:
-            fatalError()
+            preconditionFailure("Property is not an attribute or a relationship: \(Swift.type(of: property.metadata))")
         }
     }
     
@@ -342,7 +342,7 @@ extension DatabaseSnapshot {
         case let relationship as Schema.Relationship:
             try setValue(relationship, value, at: property.index, storeIdentifier: storeIdentifier)
         default:
-            fatalError()
+            preconditionFailure("Property is not an attribute or a relationship: \(Swift.type(of: property.metadata))")
         }
     }
     
@@ -356,7 +356,7 @@ extension DatabaseSnapshot {
         let description = "\(entityName).\(attribute.name) as \(attribute.valueType).self"
         let valueType = unwrapOptionalMetatype(attribute.valueType)
         guard let valueType = valueType as? any DataStoreSnapshotValue.Type else {
-            fatalError("Attribute must conform to DataStoreSnapshotValue: \(description)")
+            preconditionFailure("Attribute must conform to DataStoreSnapshotValue: \(description)")
         }
         switch value {
         case let value where attribute.options.contains(.externalStorage):

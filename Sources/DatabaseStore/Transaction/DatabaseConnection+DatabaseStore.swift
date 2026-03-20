@@ -27,13 +27,13 @@ extension DatabaseConnection where Store == DatabaseStore {
         bindings: [any Sendable] = []
     ) throws -> [DatabaseSnapshot] where Result: PersistentModel {
         guard let storeIdentifier = self.attachment?.store?.identifier else {
-            fatalError()
+            preconditionFailure("\(Store.Attachment.self) must have a store identifier.")
         }
         guard let configuration = self.attachment?.configuration else {
-            fatalError()
+            preconditionFailure("\(Store.Attachment.self) must have a configuration.")
         }
         guard let queue = self.queue else {
-            fatalError()
+            preconditionFailure("The queue was unexpectedly nil.")
         }
         let entityName = Schema.entityName(for: Result.self)
         let propertiesCollected = keyPaths.reduce(into: [PropertyMetadata]()) { partialResult, keyPath in
@@ -220,13 +220,13 @@ extension DatabaseConnection where Store == DatabaseStore {
     
     nonisolated public mutating func match(snapshot: consuming Store.Snapshot) throws -> Store.Snapshot? {
         guard let storeIdentifier = self.attachment?.store?.identifier else {
-            fatalError()
+            preconditionFailure("\(Store.Attachment.self) must have a store identifier.")
         }
         guard let configuration = self.attachment?.configuration else {
-            fatalError()
+            preconditionFailure("\(Store.Attachment.self) must have a configuration.")
         }
         guard let queue = self.queue else {
-            fatalError()
+            preconditionFailure("The queue was unexpectedly nil.")
         }
         let persistentIdentifier = snapshot.persistentIdentifier
         var export = snapshot.export
@@ -367,15 +367,14 @@ extension DatabaseConnection where Store == DatabaseStore {
         var snapshot = snapshot
         let export = snapshot.export
         guard let storeIdentifier = permanentIdentifier.storeIdentifier else {
-            fatalError()
+            preconditionFailure("\(Store.Attachment.self) must have a store identifier.")
         }
         guard let configuration = self.attachment?.configuration else {
-            fatalError()
+            preconditionFailure("\(Store.Attachment.self) must have a configuration.")
         }
         guard let queue = self.queue else {
-            fatalError()
+            preconditionFailure("The queue was unexpectedly nil.")
         }
-
         switch uniquenessConstraints ?? configuration.constraints[permanentIdentifier.entityName] {
         case let uniquenessConstraints? where !uniquenessConstraints.isEmpty:
             var existingRow: [any Sendable]?
