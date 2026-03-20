@@ -856,8 +856,6 @@ extension DatabaseSnapshot {
         return (linkedIdentifiers, unlinkedIdentifiers)
     }
     
-    /// - Note:
-    ///   The relationship min and max values are optional, but defaults to `0` for unset values.
     nonisolated internal mutating func processExternalReference(
         comparingTo oldValue: any DataStoreSnapshotValue,
         in property: consuming PropertyMetadata,
@@ -873,6 +871,7 @@ extension DatabaseSnapshot {
         }
         var linkedIdentifiers = Set<PersistentIdentifier>()
         var unlinkedIdentifiers = Set<PersistentIdentifier>()
+        // The relationship min and max values are optional, but defaults to `0` for unset values.
         func checkRelationshipCountConstraint(_ newIdentifiers: [PersistentIdentifier]) throws {
             let count = newIdentifiers.count
             if let minimum = relationship.minimumModelCount, minimum > 0, count < minimum {

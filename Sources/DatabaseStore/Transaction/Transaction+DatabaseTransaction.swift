@@ -57,7 +57,6 @@ public final class TransactionObject: DatabaseTransaction {
         storeIdentifier: String,
         externalStorageURL: URL,
         editingState: any EditingStateProviding
-        
     ) {
         self.handle = handle
         self.timestamp = Date()

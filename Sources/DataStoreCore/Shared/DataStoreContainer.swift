@@ -14,8 +14,6 @@ import Synchronization
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.shared")
 
-// TODO: Use `nonisolated weak let` instead of `AtomicLazyReference`.
-
 extension DataStore where Self: Sendable {
     @discardableResult nonisolated package func initialize() -> DataStoreContainer {
         let container = DataStoreContainer(store: self)
@@ -220,66 +218,7 @@ package final class DataStoreContainer: Sendable {
     
     deinit {
         #if DEBUG
-        logger.debug("DataStoreContainer deinit.")
-        #endif
-    }
-}
-
-@available(*, unavailable, message: "")
-package final class _DataStoreContainer: Sendable {
-    nonisolated package init() {}
-    
-    #if !SwiftPlaygrounds
-    
-    nonisolated private let storage: AtomicLazyReference<Storage> = .init()
-    
-    nonisolated package func load() -> (any DataStore & Sendable)? {
-        storage.load()?.store
-    }
-    
-    nonisolated package func bind(store: some DataStore & Sendable) {
-        let new = Storage(store: store)
-        let actual = self.storage.storeIfNil(new)
-        let didInitialize = (actual === new)
-        precondition(actual.store === store)
-        _ = didInitialize
-    }
-    
-    fileprivate final class Storage: Sendable {
-        #if swift(>=6.2)
-        nonisolated fileprivate weak let store: (any DataStore & Sendable)?
-        #else
-        nonisolated(unsafe) fileprivate weak var store: (any DataStore & Sendable)?
-        #endif
-        
-        nonisolated fileprivate init(store: (any DataStore & Sendable)? = nil) {
-            self.store = store
-        }
-    }
-    
-    #else
-    
-    nonisolated private let storage: Mutex<Storage> = .init(.init())
-    
-    nonisolated package func load() -> (any DataStore & Sendable)? {
-        storage.withLock(\.store)
-    }
-    
-    nonisolated package func bind(store: some DataStore & Sendable) {
-        storage.withLock { storage in
-            if let existing = storage.store {
-                precondition(existing === store)
-                return
-            }
-            storage.store = store
-        }
-    }
-    
-    fileprivate final class Storage {
-        #if swift(>=6.2)
-        nonisolated fileprivate weak var store: (any DataStore & Sendable)?
-        #else
-        nonisolated(unsafe) fileprivate weak var store: (any DataStore & Sendable)?
+        logger.debug("Deinitialized DataStoreContainer.")
         #endif
         
         nonisolated fileprivate init(store: (any DataStore & Sendable)? = nil) {

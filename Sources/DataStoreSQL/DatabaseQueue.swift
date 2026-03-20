@@ -129,7 +129,7 @@ public final class DatabaseQueue<Store>: Sendable where Store: DatabaseProtocol 
     public enum Error: Equatable, Swift.Error {
         case isClosing
         case isClosed
-        case acquireTimeout
+        case connectionRequestTimedOut
         case connectionPoolIsClosed
         case invalidHandleRole
     }
@@ -165,21 +165,25 @@ extension DatabaseQueue {
         switch role {
         case .some(.writer):
             handle = try self.writerPool.acquire(timeout: timeout)
-        case .some(.reader), .none:
+        case .some(.reader):
             if let readerPool = self.readerPool {
                 handle = try readerPool.acquire(timeout: timeout)
             } else {
                 handle = try self.writerPool.acquire(timeout: timeout)
             }
+        case .none:
+            if let readerPool = self.readerPool {
+                do {
+                    handle = try readerPool.acquire(timeout: timeout)
+                } catch DatabaseQueue.Error.connectionRequestTimedOut {
+                    handle = try self.writerPool.acquire(timeout: timeout)
+                }
+            } else {
+                handle = try self.writerPool.acquire(timeout: timeout)
+            }
         }
         logger.debug("DatabaseConnection acquired: \(handle.id)")
-        return .init(
-            for: editingState,
-            queue: self,
-            handle: handle,
-            context: context,
-            transaction: nil
-        )
+        return .init(for: editingState, queue: self, handle: handle, context: context)
     }
     
     /// Requests a connection for a specific data store role.
@@ -343,7 +347,7 @@ extension DatabaseQueue {
             }
             let deadline = DispatchTime.now() + timeout
             guard semaphore.wait(timeout: deadline) == .success else {
-                throw DatabaseQueue.Error.acquireTimeout
+                throw DatabaseQueue.Error.connectionRequestTimedOut
             }
             if isClosed.load(ordering: .sequentiallyConsistent) {
                 semaphore.signal()

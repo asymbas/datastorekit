@@ -1056,6 +1056,7 @@ extension DatabaseStore {
     ) throws -> [PersistentIdentifier: Snapshot] {
         #if DEBUG
         if configuration.options.contains(._internal) {
+            // TODO: No known case where SwiftData calls this method.
             fatalError("\(#function) - called")
         }
         #endif
@@ -1073,6 +1074,7 @@ extension DatabaseStore {
     /// - Parameters:
     ///   - key: The key to retrieve from the database.
     ///   - type: The value type to be decoded back into.
+    /// - Returns: The value at the specified key.
     nonisolated public final func getValue<T>(
         forKey key: String,
         as type: T.Type
@@ -1081,6 +1083,13 @@ extension DatabaseStore {
         return try getValue(forKey: key, as: type, connection: connection)
     }
     
+    /// Returns the value associated with the specified key from the data store's internal table.
+    ///
+    /// - Parameters:
+    ///   - key: The key to retrieve from the database.
+    ///   - type: The value type to be decoded back into.
+    ///   - connection: A reader or writer database connection.
+    /// - Returns: The value at the specified key.
     nonisolated public final func getValue<T>(
         forKey key: String,
         as type: T.Type,
@@ -1113,6 +1122,12 @@ extension DatabaseStore {
         try setValue(value, forKey: key, connection: connection)
     }
     
+    /// Sets the value of the specified key to the data store's internal table.
+    ///
+    /// - Parameters:
+    ///   - value: The value to store in the database.
+    ///   - key: The key to store the value into.
+    ///   - connection: A writer database connection.
     nonisolated public final func setValue<T>(
         _ value: T,
         forKey key: String,
@@ -1135,7 +1150,20 @@ extension DatabaseStore {
     ///
     /// - Parameter key: The key with the value to remove.
     nonisolated public final func removeValue(forKey key: String) throws {
-        try self.queue.connection(.writer).execute.delete(
+        let connection = try self.queue.connection(.writer)
+        try removeValue(forKey: key, connection: connection)
+    }
+    
+    /// Removes the value for the specified key from the data store's internal table.
+    ///
+    /// - Parameters:
+    ///   - key: The key with the value to remove.
+    ///   - connection: A writer database connection.
+    nonisolated public final func removeValue(
+        forKey key: String,
+        connection: borrowing DatabaseConnection<DatabaseStore>
+    ) throws {
+        try connection.execute.delete(
             from: InternalTable.tableName,
             where: "\(InternalTable.key.rawValue) = ?",
             bindings: [key]
