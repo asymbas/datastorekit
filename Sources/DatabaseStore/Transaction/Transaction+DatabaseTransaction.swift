@@ -23,7 +23,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
 public final class TransactionObject: DatabaseTransaction {
     public typealias Store = DatabaseStore
     public typealias Handle = DatabaseStore.Handle
-    #if swift(>=6.2)
+    #if swift(>=6.2.3) && !SwiftPlaygrounds
     nonisolated public weak let handle: Handle?
     #else
     nonisolated(unsafe) public weak var handle: Handle?

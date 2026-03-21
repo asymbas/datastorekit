@@ -48,7 +48,7 @@ package final class DatabaseBackingData: Sendable {
     nonisolated internal let values: Mutex<ContiguousArray<any DataStoreSnapshotValue>>
     nonisolated internal let subscription: Mutex<Subscription?>
     
-    #if swift(>=6.2) && !SwiftPlaygrounds
+    #if swift(>=6.2.3) && !SwiftPlaygrounds
     nonisolated internal weak let registry: SnapshotRegistry?
     #else
     nonisolated(unsafe) internal weak var registry: SnapshotRegistry?
