@@ -207,7 +207,7 @@ package struct DataStoreAggregate: ~Copyable, Sendable {
 }
 
 package final class DataStoreContainer: Sendable {
-    #if swift(>=6.2)
+    #if swift(>=6.2.3)
     nonisolated private weak let store: (any DataStore & Sendable)?
     #else
     nonisolated(unsafe) private weak var store: (any DataStore & Sendable)?
