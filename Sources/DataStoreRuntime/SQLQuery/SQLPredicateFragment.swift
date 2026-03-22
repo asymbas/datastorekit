@@ -18,7 +18,7 @@ import Synchronization
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.query")
 
-#if swift(>=6.2)
+#if swift(>=6.2) && !SwiftPlaygrounds
 nonisolated internal struct SQLPredicateFragment: ~Copyable {
     nonisolated internal static let shouldDebug: Bool = {
         DataStoreDebugging.mode == .trace
