@@ -16,14 +16,14 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
 
 @SQLTableBuilder nonisolated package func makeTableDefinitions(
     schema: Schema,
-    metadata: (Schema.Entity) -> (
+    metadata makeSchemaMetadata: (Schema.Entity) -> (
         discriminator: PropertyMetadata,
         properties: [PropertyMetadata],
         uniqueTableConstraints: [TableConstraint]
     )?
 ) -> [any TableDefinition] {
     for entity in schema.entities {
-        makeTableDefinition(schema: schema, entity: entity, metadata: metadata)
+        makeTableDefinition(schema: schema, entity: entity, metadata: makeSchemaMetadata)
     }
     for entity in schema.entities {
         let type = Schema.type(for: entity.name).unsafelyUnwrapped
@@ -36,13 +36,13 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
 @SQLTableBuilder nonisolated package func makeTableDefinition(
     schema: Schema,
     entity: Schema.Entity,
-    metadata: (Schema.Entity) -> (
+    metadata makeSchemaMetadata: (Schema.Entity) -> (
         discriminator: PropertyMetadata,
         properties: [PropertyMetadata],
         uniqueTableConstraints: [TableConstraint]
     )?
 ) -> [any TableDefinition] {
-    if let (discriminator, properties, uniqueTableConstraints) = metadata(entity) {
+    if let (discriminator, properties, uniqueTableConstraints) = makeSchemaMetadata(entity) {
         SQLTable(name: entity.name, constraints: uniqueTableConstraints) {
             SQLAttributeColumn(
                 name: discriminator.name,

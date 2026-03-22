@@ -66,7 +66,9 @@ nonisolated internal struct SQLPredicateFragment: ~Copyable {
 }
 #else
 internal final class SQLPredicateFragment {
-    nonisolated internal static let debug: Bool = false
+    nonisolated internal static let shouldDebug: Bool = {
+        DataStoreDebugging.mode == .trace
+    }()
     nonisolated internal let id: String
     internal let clause: String
     internal var bindings: [Any]
