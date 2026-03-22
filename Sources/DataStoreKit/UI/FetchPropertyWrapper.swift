@@ -240,7 +240,7 @@ public struct Fetch<Model: PersistentModel>: @preconcurrency DynamicProperty, Se
             if self.contextID != contextID {
                 self.contextID = contextID
                 task?.cancel()
-                #if swift(>=6.2)
+                #if swift(>=6.2) && !SwiftPlaygrounds
                 self.task = Task { @MainActor in
                     for await _ in NotificationCenter.default.notifications(named: .dataStoreDidSave) {
                         self.refresh?()

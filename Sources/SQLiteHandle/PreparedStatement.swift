@@ -26,7 +26,7 @@ extension PreparedStatement {
         connection: consuming DatabaseConnection<T>
     ) throws(SQLError) where T.Handle == SQLite {
         let handle = connection.release()
-        #if swift(>=6.2)
+        #if swift(>=6.2) && !SwiftPlaygrounds
         try self.init(
             sql: sql,
             bindings: bindings,

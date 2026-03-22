@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-#if swift(>=6.2)
+#if swift(>=6.2) && !SwiftPlaygrounds
 
 public struct SQLStatementShortcut<Handle>: ~Copyable, Sendable
 where Handle: DatabaseHandle {
