@@ -7,9 +7,11 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
+import DataStoreCore
 import DataStoreRuntime
 import DataStoreSQL
 import DataStoreSupport
+import Foundation
 import Logging
 import SwiftData
 
@@ -46,21 +48,39 @@ extension DatabaseStore: DataStoreBatching {
                 )
                 relatedIdentifiers.formUnion(unlinked)
                 relatedIdentifiers.formUnion(cascaded)
-                try connection.execute.delete(
-                    from: entityName,
-                    where: "\(pk) = ?",
-                    bindings: [snapshot.primaryKey]
-                )
+                try connection.delete(snapshot)
                 relatedIdentifiers.insert(snapshot.persistentIdentifier)
                 deletedIdentifiers.insert(snapshot.persistentIdentifier)
                 logger.debug("Successfully deleted from batch: \(snapshot.persistentIdentifier)")
             }
         }
+        let allIdentifiers = deletedIdentifiers.union(relatedIdentifiers)
         queue.release(connection)
-        attachment?.storeDidSave(inserted: [], updated: [], deleted: .init(deletedIdentifiers))
+        attachment?.storeDidSave(inserted: [], updated: [], deleted: .init(allIdentifiers))
         manager.registry(for: request.editingState)?.synchronize(
             snapshots: [:],
-            invalidateIdentifiers: relatedIdentifiers
+            invalidateIdentifiers: allIdentifiers
         )
+        if !allIdentifiers.isEmpty {
+            Task { @DatabaseActor in
+                self.history?.scheduleSynchronizationIfNeeded()
+            }
+        }
+        logger.info(
+            "Batch deleted \(allIdentifiers.count) snapshots.",
+            metadata: [
+                "editing_state": "\(request.editingState.id)",
+                "author": "\(request.editingState.author ?? "nil")",
+                "deleted_snapshots": "\(deletedIdentifiers.count)",
+                "related_snapshots": "\(relatedIdentifiers.count)"
+            ]
+        )
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .dataStoreDidSave,
+                object: nil,
+                userInfo: ["operation": [DataStoreOperation.delete: allIdentifiers]]
+            )
+        }
     }
 }
