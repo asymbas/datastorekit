@@ -7,8 +7,10 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-public enum HistoryTable: String {
-    nonisolated public static let tableName: String = "_History"
+import DataStoreCore
+
+package enum HistoryTable: String {
+    nonisolated package static let tableName: String = "_History"
     /// The auto-incrementing primary key that is unique per row (per event, not transaction).
     case pk
     /// The type of data store operation (insert, update, or delete).
