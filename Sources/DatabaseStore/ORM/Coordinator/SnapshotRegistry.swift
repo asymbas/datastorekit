@@ -19,15 +19,16 @@ import Synchronization
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.coordinator")
 
-package struct DataStoreFetchResultMap: Sendable {
-    nonisolated package let key: Int
-    nonisolated package let timestamp: DispatchTime = .now()
-    nonisolated package var lastAccessed: DispatchTime = .now()
-    nonisolated package var hitCount: UInt32 = 0
-    nonisolated package var globalCacheRevision: UInt64 = 0
-    nonisolated package var entityCacheRevisions: [String: UInt64] = [:]
-    nonisolated package var fetchedIdentifiers: [PersistentIdentifier]
-    nonisolated package var relatedIdentifiers: [PersistentIdentifier]
+internal struct DataStoreFetchResultMap: Identifiable, Sendable {
+    /// Inherited from `Identifiable.id`.
+    nonisolated internal let id: Int
+    nonisolated internal let timestamp: DispatchTime = .now()
+    nonisolated internal var lastAccessed: DispatchTime = .now()
+    nonisolated internal var hitCount: UInt32 = 0
+    nonisolated internal var globalCacheRevision: UInt64 = 0
+    nonisolated internal var entityCacheRevisions: [String: UInt64] = [:]
+    nonisolated internal var fetchedIdentifiers: [PersistentIdentifier]
+    nonisolated internal var relatedIdentifiers: [PersistentIdentifier]
 }
 
 /// A cached object with a lifecycle bound to a `ModelContext` via a linked `EditingState`.
@@ -82,6 +83,26 @@ public final class SnapshotRegistry: ObjectContextProtocol {
         case resultMapInconsistency
         /// `ModelManager` and `SnapshotRegistry` are no longer in lockstep.
         case storageInconsistency
+    }
+}
+
+extension SnapshotRegistry {
+    nonisolated private func backingData(for persistentIdentifier: PersistentIdentifier)
+    -> DatabaseBackingData? {
+        if independentlyManaged {
+            storage.withLock { $0[persistentIdentifier] }
+        } else {
+            manager.backingData(for: persistentIdentifier)
+        }
+    }
+}
+
+extension SnapshotRegistry {
+    package func primaryKey<PrimaryKey: LosslessStringConvertible & Sendable>(
+        for persistentIdentifier: PersistentIdentifier,
+        as type: PrimaryKey.Type = String.self
+    ) -> PrimaryKey {
+        manager.primaryKey(for: persistentIdentifier, as: type)
     }
 }
 
@@ -150,10 +171,12 @@ extension SnapshotRegistry {
         }
     }
     
-    /// Removes the snapshot from global or local storage and invalidates any results containing it.
+    /// Removes a snapshot from storage and invalidates any cached fetch results that reference it.
+    /// This method updates tracked state immediately and schedules cache cleanup asynchronously.
     ///
     /// - Important:
     ///   This method should only be called from the `ModelManager`.
+    /// - Parameter persistentIdentifier: The identifier of the snapshot to invalidate.
     nonisolated internal func invalidate(for persistentIdentifier: PersistentIdentifier) {
         guard !invalidatingIdentifiers.withLock({ $0.contains(persistentIdentifier) }) else {
             logger.notice("Snapshot is already being invalidated: \(id) \(persistentIdentifier)")
@@ -221,7 +244,6 @@ extension SnapshotRegistry {
         }
     }
     
-    /// Updates the storage to persist snapshots in memory and adds it to the centralized manager.
     nonisolated internal func register(snapshot: Snapshot) throws -> DatabaseBackingData? {
         let persistentIdentifier = snapshot.persistentIdentifier
         let backingData = try manager.upsert(snapshot: snapshot, from: self)
@@ -233,13 +255,6 @@ extension SnapshotRegistry {
         return backingData
     }
     
-    /// Processes the snapshots given to `DataStore.save(_:)` for caching.
-    ///
-    /// - Parameters:
-    ///   - snapshots:
-    ///     The snapshots that were inserted or updated.
-    ///   - invalidateIdentifiers:
-    ///     A `PersistentIdentifier` array to invalidate any backing data or query results.
     nonisolated package func synchronize(
         snapshots: [PersistentIdentifier: Snapshot],
         invalidateIdentifiers: Set<PersistentIdentifier>
@@ -300,10 +315,6 @@ extension SnapshotRegistry {
                                 }
                             }
                         }
-                        // FIXME: Save requests do not include all registered models of a `ModelContext`.
-                        #if false
-                        try manager.validation(persistentIdentifiers: pendingIdentifiers.withLock(\.self))
-                        #endif
                     } catch {
                         logger.error("An error occurred while synchronizing: \(error)")
                     }
@@ -498,30 +509,23 @@ extension SnapshotRegistry {
     }
     
     nonisolated package func cacheFetchResult(
-        forKey hashValue: Int,
+        forKey key: Int,
         fetchedSnapshots: [Snapshot],
         relatedSnapshots: [PersistentIdentifier: Snapshot]
     ) async throws {
-        if fetchedSnapshots.isEmpty { return }
         guard manager.isCachingSnapshots else {
             return
         }
-        if cachedFetchResultMapping.withLock({ $0[hashValue] != nil }) {
-            touchFetchResultKey(hashValue)
-            scheduleEvictionIfNeeded()
+        if fetchedSnapshots.isEmpty { return }
+        if cachedFetchResultMapping.withLock({ $0[key] != nil }) {
+            touchFetchResultKey(key); scheduleEvictionIfNeeded()
             return
         }
         let requests = self.request.add(1, ordering: .sequentiallyConsistent)
-        logger.trace("Caching fetch result: \(requests) \(self.id) (\(hashValue))")
+        logger.trace("Caching fetch result: \(requests) \(self.id) (\(key))")
         defer { request.subtract(1, ordering: .sequentiallyConsistent) }
-        let fetchedIdentifiers = try await collectPersistentIdentifiers(
-            from: fetchedSnapshots,
-            hashValue: hashValue
-        )
-        let relatedIdentifiers = try await collectPersistentIdentifiers(
-            from: Array(relatedSnapshots.values),
-            hashValue: hashValue
-        )
+        let fetchedIdentifiers = try await registerFetchResult(fetchedSnapshots, forKey: key)
+        let relatedIdentifiers = try await registerFetchResult(Array(relatedSnapshots.values), forKey: key)
         try Task.checkCancellation()
         let policy = self.manager.configuration.cachePolicy.predicateResults
         var dependencyEntities = Set<String>()
@@ -548,7 +552,7 @@ extension SnapshotRegistry {
         ? manager.currentEntityGenerations(for: dependencyEntities)
         : [:]
         let entry = DataStoreFetchResultMap(
-            key: hashValue,
+            id: key,
             lastAccessed: .now(),
             hitCount: 0,
             globalCacheRevision: globalGeneratoon,
@@ -556,28 +560,13 @@ extension SnapshotRegistry {
             fetchedIdentifiers: fetchedIdentifiers,
             relatedIdentifiers: relatedIdentifiers
         )
-        #if false
-        var replacedCost: UInt64 = 0
-        cachedFetchResultMapping.withLock { cachedFetchResults in
-            if let existing = cachedFetchResults[hashValue] {
-                replacedCost = existing.estimatedCost
-            }
-            cachedFetchResults[hashValue] = entry
-        }
-        await DatabaseActor.run {
-            self.cachedFetchResultTotalCost = cachedFetchResultTotalCost &+ cost
-            if replacedCost > 0 {
-                self.cachedFetchResultTotalCost = cachedFetchResultTotalCost &- replacedCost
-            }
-        }
-        #endif
-        touchFetchResultKey(hashValue)
+        touchFetchResultKey(key)
         scheduleEvictionIfNeeded()
     }
     
-    nonisolated private func collectPersistentIdentifiers(
-        from snapshots: [Snapshot],
-        hashValue: Int
+    nonisolated(nonsending) private func registerFetchResult(
+        _ snapshots: [Snapshot],
+        forKey key: Int
     ) async throws -> [PersistentIdentifier] {
         try await withThrowingTaskGroup(of: (Int, PersistentIdentifier)?.self) { scalarGroup in
             var batch = [PersistentIdentifier?](repeating: nil, count: snapshots.count)
@@ -587,12 +576,15 @@ extension SnapshotRegistry {
                     guard let self,
                           let backingData = try register(snapshot: snapshot)
                             ?? self.backingData(for: snapshot.persistentIdentifier) else {
-                        logger.debug("Collecting identifiers returned nil when registering: \(snapshot.persistentIdentifier)")
+                        logger.debug(
+                            "Collecting identifiers returned nil when registering.",
+                            metadata: ["snapshot": "\(snapshot)"]
+                        )
                         return nil
                     }
                     precondition(snapshot.entityName == backingData.tableName)
                     _ = await DatabaseActor.run {
-                        backingData.cachedFetchResults.insert(hashValue)
+                        backingData.cachedFetchResults.insert(key)
                     }
                     return (index, snapshot.persistentIdentifier)
                 }
@@ -603,13 +595,13 @@ extension SnapshotRegistry {
                     partialResult[index] = persistentIdentifier
                 }
             }
-            return batch.compactMap { $0 }
+            return batch.compactMap(\.self)
         }
     }
 }
 
 extension SnapshotRegistry {
-    nonisolated private func isExpired(
+    private func isExpired(
         _ entry: DataStoreFetchResultMap,
         policy: CacheLayerPolicy,
         now: DispatchTime
@@ -628,7 +620,7 @@ extension SnapshotRegistry {
         }
     }
     
-    nonisolated private func isValid(_ entry: DataStoreFetchResultMap, policy: CacheLayerPolicy) -> Bool {
+    private func isValid(_ entry: DataStoreFetchResultMap, policy: CacheLayerPolicy) -> Bool {
         switch policy.validation {
         case .globalGeneration:
             return entry.globalCacheRevision == manager.currentGlobalGeneration()
@@ -647,7 +639,7 @@ extension SnapshotRegistry {
         }
     }
     
-    nonisolated private func touchFetchResultKey(_ key: Int) {
+    private func touchFetchResultKey(_ key: Int) {
         let policy = self.manager.configuration.cachePolicy.predicateResults
         cachedFetchResultKeyOrder.withLock { order in
             switch policy.eviction {
@@ -661,10 +653,27 @@ extension SnapshotRegistry {
             }
         }
     }
-    
-    nonisolated private func removeFetchResultKeyFromOrder(_ key: Int) {
-        cachedFetchResultKeyOrder.withLock { order in
-            order.removeAll(where: { $0 == key })
+}
+
+extension SnapshotRegistry {
+    @DatabaseActor private func evictPredicateResultsIfNeeded() {
+        let policy = self.manager.configuration.cachePolicy.predicateResults
+        func overEntryLimit() -> Bool {
+            switch policy.limit {
+            case let .bounded(maxCount): cachedFetchResultMapping.withLock(\.count) > maxCount
+            case .unbounded: false
+            }
+        }
+        func overCostLimit() -> Bool {
+            switch policy.costLimit {
+            case let .bounded(maxTotal): cachedFetchResultTotalCost > maxTotal
+            case .unbounded: false
+            }
+        }
+        guard overEntryLimit() || overCostLimit() else { return }
+        while overEntryLimit() || overCostLimit() {
+            guard let key = evictOnePredicateResultIfNeeded() else { return }
+            _ = removeCachedFetchResultClearingBacklinks(forKey: key)
         }
     }
     
@@ -697,10 +706,28 @@ extension SnapshotRegistry {
             return bestKey
         }
     }
-}
-
-extension SnapshotRegistry {
-    nonisolated package func scheduleEvictionIfNeeded() {
+    
+    @discardableResult @DatabaseActor
+    private func removeCachedFetchResultClearingBacklinks(forKey key: Int) -> DataStoreFetchResultMap? {
+        if let task = self.cacheTasksByKey[key] {
+            task.cancel(); self.cacheTasksByKey[key] = nil
+        }
+        let removedResult = self.cachedFetchResultMapping.withLock { $0.removeValue(forKey: key) }
+        removeFetchResultKeyFromOrder(forKey: key)
+        guard let removedResult else { return nil }
+        for identifier in Set(removedResult.fetchedIdentifiers).union(removedResult.relatedIdentifiers) {
+            self.backingData(for: identifier)?.cachedFetchResults.remove(key)
+        }
+        return removedResult
+    }
+    
+    nonisolated private func removeFetchResultKeyFromOrder(forKey key: Int) {
+        cachedFetchResultKeyOrder.withLock { order in
+            order.removeAll(where: { $0 == key })
+        }
+    }
+    
+    package func scheduleEvictionIfNeeded() {
         guard manager.isCachingSnapshots else { return }
         Task(priority: .utility) { @DatabaseActor in
             guard !evictionScheduled else { return }
@@ -708,71 +735,5 @@ extension SnapshotRegistry {
             defer { self.evictionScheduled = false }
             evictPredicateResultsIfNeeded()
         }
-    }
-    
-    @DatabaseActor private func evictPredicateResultsIfNeeded() {
-        let policy = self.manager.configuration.cachePolicy.predicateResults
-        func overEntryLimit() -> Bool {
-            switch policy.limit {
-            case let .bounded(maxCount):
-                return cachedFetchResultMapping.withLock(\.count) > maxCount
-            case .unbounded:
-                return false
-            }
-        }
-        func overCostLimit() -> Bool {
-            switch policy.costLimit {
-            case let .bounded(maxTotal):
-                return cachedFetchResultTotalCost > maxTotal
-            case .unbounded:
-                return false
-            }
-        }
-        guard overEntryLimit() || overCostLimit() else { return }
-        while overEntryLimit() || overCostLimit() {
-            guard let key = evictOnePredicateResultIfNeeded() else { return }
-            _ = removeCachedFetchResultClearingBacklinks(forKey: key)
-        }
-    }
-    
-    @discardableResult @DatabaseActor
-    private func removeCachedFetchResultClearingBacklinks(forKey key: Int) -> DataStoreFetchResultMap? {
-        if let task = cacheTasksByKey[key] {
-            task.cancel()
-            cacheTasksByKey[key] = nil
-        }
-        let removed = self.cachedFetchResultMapping.withLock { $0.removeValue(forKey: key) }
-        removeFetchResultKeyFromOrder(key)
-        guard let removed else { return nil }
-        for identifier in Set(removed.fetchedIdentifiers).union(removed.relatedIdentifiers) {
-            if let backingData = self.backingData(for: identifier) {
-                backingData.cachedFetchResults.remove(key)
-            }
-        }
-        return removed
-    }
-}
-
-extension SnapshotRegistry {
-    /// Returns the in-memory backing data stored in this registry's storage or from the centralized storage.
-    ///
-    /// - Parameter persistentIdentifier: The unique identifier assigned to the backing data.
-    /// - Returns: The in-memory backing data used for persistence.
-    nonisolated private func backingData(for persistentIdentifier: PersistentIdentifier)
-    -> DatabaseBackingData? {
-        if independentlyManaged {
-            storage.withLock { $0[persistentIdentifier] }
-        } else {
-            manager.backingData(for: persistentIdentifier)
-        }
-    }
-}
-
-extension SnapshotRegistry {
-    package func primaryKey<PrimaryKey: LosslessStringConvertible & Sendable>(
-        for persistentIdentifier: PersistentIdentifier,
-        as type: PrimaryKey.Type = String.self
-    ) -> PrimaryKey {
-        manager.primaryKey(for: persistentIdentifier, as: type)
     }
 }
