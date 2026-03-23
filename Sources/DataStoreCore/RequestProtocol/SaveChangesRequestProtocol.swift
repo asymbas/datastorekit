@@ -21,8 +21,8 @@ public protocol SaveChangesRequest<SnapshotType>: Sendable, SendableMetatype {
 
 extension DataStoreSaveChangesRequest: SaveChangesRequest {}
 
-public struct DatabaseSaveChangesRequest<T, Snapshot, EditingState>: SaveChangesRequest
-where T: PersistentModel, Snapshot: DataStoreSnapshot, EditingState: EditingStateProviding {
+public struct DatabaseSaveChangesRequest<Snapshot, EditingState>: SaveChangesRequest
+where Snapshot: DataStoreSnapshot, EditingState: EditingStateProviding {
     public typealias SnapshotType = Snapshot
     public typealias EditingStateType = EditingState
     nonisolated public var editingState: EditingState

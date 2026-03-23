@@ -25,8 +25,8 @@ public protocol SaveChangesResult<SnapshotType>: AnyObject, Sendable, SendableMe
 
 extension DataStoreSaveChangesResult: SaveChangesResult {}
 
-public final class DatabaseSaveChangesResult<T, Snapshot>: SaveChangesResult
-where T: PersistentModel, Snapshot: DataStoreSnapshot {
+public final class DatabaseSaveChangesResult<Snapshot>: SaveChangesResult
+where Snapshot: DataStoreSnapshot {
     public typealias SnapshotType = Snapshot
     nonisolated public let storeIdentifier: String
     nonisolated public let remappedIdentifiers: [PersistentIdentifier : PersistentIdentifier]
