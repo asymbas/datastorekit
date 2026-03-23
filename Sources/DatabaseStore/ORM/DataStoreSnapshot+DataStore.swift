@@ -393,7 +393,7 @@ extension DatabaseSnapshot {
             self.values[index] = SQLNull()
             logger.trace("Assigned column to attribute: \(description) = NULL")
         default:
-            fatalError("Attribute was not assigned a value: \(description)")
+            preconditionFailure("Attribute was not assigned a value: \(description) = \(value)")
         }
     }
     
@@ -421,7 +421,7 @@ extension DatabaseSnapshot {
                 self.values[index] = SQLNull()
                 logger.trace("Assigned column to one-to-one relationship: \(description) = NULL")
             default:
-                fatalError("Relationship was not assigned a value: \(description)")
+                preconditionFailure("Relationship was not assigned a value: \(description) = \(value)")
             }
         } else {
             switch value {
@@ -441,7 +441,7 @@ extension DatabaseSnapshot {
                 self.values[index] = SQLNull()
                 logger.trace("Assigned column to one-to-many relationship: \(description) = NULL")
             default:
-                fatalError("Relationship was not assigned a value: \(description)")
+                preconditionFailure("Relationship was not assigned a value: \(description) = \(value)")
             }
         }
     }

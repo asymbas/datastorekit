@@ -133,7 +133,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
     ) {
         let entityName = persistentIdentifier.entityName
         guard let type = type ?? Schema.type(for: entityName) else {
-            fatalError()
+            preconditionFailure("\(SchemaError.entityNotRegistered)")
         }
         self.persistentIdentifier = persistentIdentifier
         self.primaryKey = primaryKey.description
@@ -231,7 +231,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
                             offset += 1
                             continue
                         }
-                        fatalError("Expected an identifier for to-one relationship: \(description)")
+                        preconditionFailure("Expected an identifier for to-one relationship: \(description)")
                     }
                     guard relatedIdentifier.storeIdentifier != nil else {
                         #if DEBUG
@@ -250,7 +250,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
                             toManyDependencies.append(property.index)
                             continue
                         }
-                        fatalError("Expected identifiers for to-many relationship: \(description) = \(value)")
+                        preconditionFailure("Expected identifiers for to-many relationship: \(description) = \(value)")
                     }
                     if relatedIdentifiers.isEmpty { continue }
                     #if DEBUG
@@ -329,6 +329,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
         case mismatchingPrimaryKeys
         case mismatchingStoreIdentifiers
         case propertyDoesNotMatchSchema(PropertyMetadata, PropertyMetadata)
+        case fieldCountNotEqual(Int, Int)
     }
 }
 
@@ -718,8 +719,10 @@ extension DatabaseSnapshot {
             any DataStoreSnapshotValue
         ) throws -> (any DataStoreSnapshotValue)?
     ) throws -> Self {
-        guard self.values.count == other.values.count else {
-            fatalError()
+        let lhsCount = self.values.count
+        let rhsCount = other.values.count
+        guard lhsCount == rhsCount else {
+            throw Self.Error.fieldCountNotEqual(lhsCount, rhsCount)
         }
         var copy = self
         for property in self.properties {
