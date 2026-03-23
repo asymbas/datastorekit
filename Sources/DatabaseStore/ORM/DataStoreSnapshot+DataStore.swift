@@ -389,7 +389,7 @@ extension DatabaseSnapshot {
             }
             self.values[index] = value
             logger.trace("Assigned column to attribute: \(description) = \(value) default")
-        case is NSNull where attribute.isOptional:
+        case is SQLNull where attribute.isOptional, is NSNull where attribute.isOptional:
             self.values[index] = SQLNull()
             logger.trace("Assigned column to attribute: \(description) = NULL")
         default:
@@ -417,7 +417,7 @@ extension DatabaseSnapshot {
                     primaryKey: referencedPrimaryKey
                 )
                 logger.trace("Assigned column to one-to-one relationship: \(description) = primary key")
-            case is NSNull where relationship.isOptional:
+            case is SQLNull where relationship.isOptional, is NSNull where relationship.isOptional:
                 self.values[index] = SQLNull()
                 logger.trace("Assigned column to one-to-one relationship: \(description) = NULL")
             default:
@@ -437,7 +437,7 @@ extension DatabaseSnapshot {
                     )
                 }
                 logger.trace("Assigned column to one-to-many relationship: \(description) = [primary key]")
-            case is NSNull where relationship.isOptional:
+            case is SQLNull where relationship.isOptional, is NSNull where relationship.isOptional:
                 self.values[index] = SQLNull()
                 logger.trace("Assigned column to one-to-many relationship: \(description) = NULL")
             default:
