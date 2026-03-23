@@ -19,17 +19,17 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
 
 public final class ModelManager: Sendable {
     internal typealias Snapshot = DatabaseSnapshot
+    nonisolated private let storage: Mutex<[PersistentIdentifier: DatabaseBackingData]> = .init([:])
+    nonisolated private let preloadedFetches: Mutex<[EditingState.ID: any Sendable]> = .init([:])
+    nonisolated private let entityCacheRevisions: Mutex<[String: UInt64]> = .init([:])
+    nonisolated internal let globalCacheRevision: Atomic<UInt64> = .init(0)
+    nonisolated internal let isCachingSnapshots: Bool
+    nonisolated internal let state: Atomic<State> = .init(.idle)
+    nonisolated internal let editingStates: Mutex<[PersistentIdentifier: OrderedSet<EditingState.ID>]> = .init([:])
+    nonisolated internal let registries: Mutex<[EditingState.ID: SnapshotRegistry]> = .init([:])
     nonisolated internal let configuration: DatabaseConfiguration
     nonisolated internal let broadcaster: EventBroadcaster = .init()
     nonisolated public let graph: ReferenceGraph = .init()
-    nonisolated private let preloadedFetches: Mutex<[EditingState.ID: any Sendable]> = .init([:])
-    nonisolated private let storage: Mutex<[PersistentIdentifier: DatabaseBackingData]> = .init([:])
-    nonisolated package let editingStates: Mutex<[PersistentIdentifier: OrderedSet<EditingState.ID>]> = .init([:])
-    nonisolated package let registries: Mutex<[EditingState.ID: SnapshotRegistry]> = .init([:])
-    nonisolated internal let isCachingSnapshots: Bool
-    nonisolated internal let state: Atomic<State> = .init(.idle)
-    nonisolated internal let globalCacheRevision: Atomic<UInt64> = .init(0)
-    nonisolated private let entityCacheRevisions: Mutex<[String: UInt64]> = .init([:])
     
     nonisolated internal var store: DatabaseStore? {
         configuration.store
@@ -61,10 +61,6 @@ public final class ModelManager: Sendable {
 }
 
 extension ModelManager {
-    /// Returns the preloaded fetch result that was assigned to the editing state.
-    ///
-    /// - Parameter editingState: The expected editing state to follow up for the preloading.
-    /// - Returns: A type-erased value that should be casted to `PreloadFetchResult<T, Snapshot>`.
     nonisolated internal func preload<Result: FetchResult>(
         for editingState: some EditingStateProviding,
         as resultType: Result.Type = Result.self
@@ -74,11 +70,6 @@ extension ModelManager {
         } as? PreloadFetchResult<Result.ModelType, Result.SnapshotType>
     }
     
-    /// Sets the preloaded fetch result to the editing state.
-    ///
-    /// - Parameters:
-    ///   - result: The preloaded fetch result to store until the next fetch request.
-    ///   - editingState: The editing state expected later to acquire the preloaded fetch result.
     @concurrent internal func preload<T, Snapshot>(
         _ result: PreloadFetchResult<T, Snapshot>,
         for editingState: some EditingStateProviding
@@ -88,10 +79,8 @@ extension ModelManager {
 }
 
 extension ModelManager {
-    nonisolated internal func registry<T>(
-        for editingState: T,
-        isTransaction: Bool
-    ) -> SnapshotRegistry? where T: EditingStateProviding {
+    nonisolated internal func registry<T>(for editingState: T, isTransaction: Bool) -> SnapshotRegistry?
+    where T: EditingStateProviding {
         guard isCachingSnapshots else {
             return nil
         }
@@ -124,12 +113,14 @@ extension ModelManager {
     }
     
     /// Creates or replaces a `SnapshotRegistry` instance for the `ModelContext` it will be associated to.
+    /// - Parameter editingState: The editing state that owns the registry.
     nonisolated internal func initializeState(for editingState: EditingState) {
         guard isCachingSnapshots else { return }
         registries.withLock { $0[editingState.id] = .init(manager: self, id: editingState.id) }
     }
     
-    /// Removes the `SnapshotRegistry` after performing a cleanup.
+    /// Invalidates the editing state and removes its associated registry after cleanup.
+    /// - Parameter editingState: The `EditingState` to remove.
     nonisolated internal func invalidateState(for editingState: EditingState) {
         preloadedFetches.withLock { $0[editingState.id] = nil }
         guard isCachingSnapshots else { return }
@@ -166,7 +157,7 @@ extension ModelManager {
     ///
     /// - Parameters:
     ///   - persistentIdentifier: The identifier of the snapshot being requested.
-    ///   - remappedIdentifiers: The dictionary containing temporary and permanent identifiers.
+    ///   - remappedIdentifiers: A dictionary for updating the snapshot's references.
     /// - Returns: The snapshot can only return if a registered `PersistentModel` is still instantiated.
     nonisolated internal func snapshot(
         for persistentIdentifier: PersistentIdentifier,
@@ -192,7 +183,6 @@ extension ModelManager {
             return nil
         }
         if !remappedIdentifiers.isEmpty {
-            logger.debug("Detected ongoing remap, using remapped identifier: \(persistentIdentifier)")
             return snapshot.copy(
                 persistentIdentifier: remappedIdentifiers[persistentIdentifier] ?? persistentIdentifier,
                 remappedIdentifiers: remappedIdentifiers
@@ -207,8 +197,7 @@ extension ModelManager {
     ) -> [PersistentIdentifier: Snapshot] {
         guard !identifiers.isEmpty else { return [:] }
         let backingDataMapping = self.storage.withLock { storage in
-            let count = identifiers.count
-            var result = [PersistentIdentifier: DatabaseBackingData](minimumCapacity: count)
+            var result = [PersistentIdentifier: DatabaseBackingData](minimumCapacity: identifiers.count)
             for identifier in identifiers {
                 if let backingData = storage[identifier] {
                     backingData.accessedTimestamp = .now()
@@ -232,7 +221,6 @@ extension ModelManager {
         return snapshots
     }
     
-    /// Upserts the snapshot into the storage and updates the reference graph.
     nonisolated internal func upsert(
         snapshot: Snapshot,
         from registry: SnapshotRegistry
@@ -262,14 +250,12 @@ extension ModelManager {
             try self.initialize(for: persistentIdentifier, from: registry.id)
         }
         try Task.checkCancellation()
-        graph.set(
-            owner: persistentIdentifier,
-            mapping: extractRelationshipReferences(from: snapshot)
-        )
+        graph.set(owner: persistentIdentifier, mapping: extractRelationshipReferences(from: snapshot))
         return backingData
     }
     
-    /// Cleans up stale identifiers that are no longer active, which is determined via identifiers excluded from a save request.
+    /// Invalidates tracked identifiers that are no longer present in the active set.
+    /// - Parameter persistentIdentifiers: The identifiers that should remain active.
     nonisolated internal func validation(persistentIdentifiers: Set<PersistentIdentifier>) throws {
         let trackedIdentifiers = Set(self.editingStates.withLock(\.keys))
         let staleIdentifiers = trackedIdentifiers.subtracting(persistentIdentifiers)
@@ -281,7 +267,6 @@ extension ModelManager {
         }
     }
     
-    /// Adds the `PersistentIdentifier` to the global tracking of active models.
     nonisolated internal func initialize(
         for persistentIdentifier: PersistentIdentifier,
         from editingStateID: EditingState.ID
@@ -292,9 +277,9 @@ extension ModelManager {
         }
         try editingStates.withLock { editingStates in
             try Task.checkCancellation()
-            if var editingStatesAssociatedWithScopedIdentifier = editingStates[persistentIdentifier] {
-                let (index, _) = editingStatesAssociatedWithScopedIdentifier.append(editingStateID)
-                editingStates[persistentIdentifier] = consume editingStatesAssociatedWithScopedIdentifier
+            if var associatedEditingStates = editingStates[persistentIdentifier] {
+                let (index, _) = associatedEditingStates.append(editingStateID)
+                editingStates[persistentIdentifier] = consume associatedEditingStates
                 logger.trace("Registered into an existing identifier: \(persistentIdentifier) \(editingStateID) \(index)")
             } else {
                 editingStates[persistentIdentifier] = [editingStateID]
@@ -303,15 +288,16 @@ extension ModelManager {
         }
     }
     
-    /// Removes the `PersistentIdentifier` from global tracking after performing a cleanup per registry.
+    /// Removes the `PersistentIdentifier` from all registries and cached state.
+    /// - Parameter persistentIdentifier: The model's identifier to clean up.
     nonisolated internal func invalidate(persistentIdentifier: PersistentIdentifier) {
-        if var editingStatesAssociatedWithScopedIdentifier = self.editingStates.withLock({ $0[persistentIdentifier] }) {
-            for editingState in editingStatesAssociatedWithScopedIdentifier {
+        if var associatedEditingStates = self.editingStates.withLock({ $0[persistentIdentifier] }) {
+            for editingState in associatedEditingStates {
                 guard let registry = self.registries.withLock({ $0[editingState] }) else {
                     continue
                 }
                 registry.invalidate(for: persistentIdentifier)
-                editingStatesAssociatedWithScopedIdentifier.remove(editingState)
+                associatedEditingStates.remove(editingState)
                 logger.debug("Invalidated associated registry from identifier: \(persistentIdentifier)")
             }
             _ = editingStates.withLock { $0.removeValue(forKey: persistentIdentifier) }
@@ -319,51 +305,16 @@ extension ModelManager {
         cleanup(persistentIdentifier: persistentIdentifier)
     }
     
+    /// Removes all cached state associated to the `PersistentModel`.
+    /// - Parameter persistentIdentifier: The model's identifier to clean up.
     nonisolated private func cleanup(persistentIdentifier: PersistentIdentifier) {
         graph.removeAll(for: persistentIdentifier)
         graph.removeIncomingEdges(to: persistentIdentifier)
         storage.withLock { storage in
             if let backingData = storage.removeValue(forKey: persistentIdentifier) {
-                Task.detached { backingData.stopListening() }
+                backingData.stopListening()
             }
         }
-    }
-    
-    /// Updates the globally tracked `PersistentIdentifier`.
-    nonisolated internal func remapPersistentIdentifier(
-        from oldIdentifier: PersistentIdentifier,
-        to newIdentifier: PersistentIdentifier
-    ) {
-        editingStates.withLock { editingStates in
-            if let editingStatesAssociatedWithScopedIdentifier = editingStates.removeValue(forKey: oldIdentifier) {
-                editingStates[newIdentifier] = consume editingStatesAssociatedWithScopedIdentifier
-            }
-        }
-        graph.remap(from: oldIdentifier, to: newIdentifier)
-    }
-    
-    @available(*, unavailable, message: "Implementation is unused.") nonisolated internal
-    func normalize(remappedIdentifiers: [PersistentIdentifier: PersistentIdentifier]) {
-        guard !remappedIdentifiers.isEmpty else {
-            return
-        }
-        storage.withLock { storage in
-            for (oldIdentifier, backingData) in storage {
-                if let newIdentifier = remappedIdentifiers[oldIdentifier] {
-                    storage[newIdentifier] = try? Snapshot(backingData: backingData).copy(
-                        persistentIdentifier: newIdentifier,
-                        remappedIdentifiers: remappedIdentifiers
-                    ).backingData
-                    storage.removeValue(forKey: oldIdentifier)
-                } else {
-                    storage[oldIdentifier] = try? Snapshot(backingData: backingData).copy(
-                        persistentIdentifier: oldIdentifier,
-                        remappedIdentifiers: remappedIdentifiers
-                    ).backingData
-                }
-            }
-        }
-        graph.remap(using: remappedIdentifiers)
     }
 }
 
