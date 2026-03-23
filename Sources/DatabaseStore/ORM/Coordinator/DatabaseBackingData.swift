@@ -20,6 +20,16 @@ public struct RecordIdentifier: Equatable, Hashable, Identifiable, Sendable {
     nonisolated public let tableName: String
     nonisolated public let primaryKey: any LosslessStringConvertible & Sendable
     
+    nonisolated public init(
+        for storeIdentifier: String,
+        tableName: String,
+        primaryKey: any LosslessStringConvertible & Sendable
+    ) {
+        self.storeIdentifier = storeIdentifier
+        self.tableName = tableName
+        self.primaryKey = primaryKey
+    }
+    
     nonisolated public var id: String {
         storeIdentifier + ":" + tableName + ":" + primaryKey.description
     }
@@ -85,7 +95,7 @@ package final class DatabaseBackingData: Sendable {
     ) {
         self.registry = registry
         self.recordIdentifier = .init(
-            storeIdentifier: storeIdentifier,
+            for: storeIdentifier,
             tableName: tableName, 
             primaryKey: primaryKey
         )
