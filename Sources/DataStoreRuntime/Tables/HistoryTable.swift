@@ -57,4 +57,38 @@ package enum HistoryTable: String {
             )
             """
     }
+    
+    nonisolated package static func changedPropertyNames(_ context: String?) -> Set<String> {
+        guard let context, context.isEmpty == false else { return [] }
+        let names = Set(context.split(separator: ",").map(String.init))
+        return names
+    }
+    
+    package struct Row: Sendable {
+        nonisolated package let pk: Int64
+        nonisolated package let changeType: DataStoreOperation
+        nonisolated package let transactionIdentifier: Int64
+        nonisolated package let entityName: String
+        nonisolated package let entityPrimaryKey: String
+        nonisolated package let author: String?
+        nonisolated package let context: String?
+        
+        nonisolated package init(
+            pk: Int64,
+            changeType: DataStoreOperation,
+            transactionIdentifier: Int64,
+            entityName: String,
+            entityPrimaryKey: String,
+            author: String?,
+            context: String?
+        ) {
+            self.pk = pk
+            self.changeType = changeType
+            self.transactionIdentifier = transactionIdentifier
+            self.entityName = entityName
+            self.entityPrimaryKey = entityPrimaryKey
+            self.author = author
+            self.context = context
+        }
+    }
 }
