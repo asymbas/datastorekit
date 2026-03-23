@@ -24,6 +24,10 @@ import SwiftData
 @preconcurrency import SwiftData
 #endif
 
+#if canImport(CloudKit)
+import CloudKit
+#endif
+
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
 extension DatabaseStore: DatabaseProtocol {
@@ -33,6 +37,7 @@ extension DatabaseStore: DatabaseProtocol {
     public typealias Transaction = TransactionObject
 }
 
+/// A data store that uses SQL as its persistence layer.
 public final class DatabaseStore: DataStore, Sendable {
     /// Inherited from `DataStore.Configuration`.
     public typealias Configuration = DatabaseConfiguration
@@ -54,7 +59,7 @@ public final class DatabaseStore: DataStore, Sendable {
         configuration.attachment
     }
     
-    @DatabaseActor internal final var transaction: HistoryState?
+    @DatabaseActor internal final var history: HistoryState?
     
     /// Inherited from `DataStore.init(_:migrationPlan:)`.
     ///
@@ -143,8 +148,8 @@ public final class DatabaseStore: DataStore, Sendable {
             self.queue = try configuration.makeDatabaseQueue(manager)
             self.manager = manager
             self.configuration = configuration
-            self.transaction = configuration.options.contains(.disablePersistentHistoryTracking)
-            ? nil : HistoryState(store: self, cloudKit: configuration.cloudKit)
+            self.history = configuration.options.contains(.disablePersistentHistoryTracking)
+            ? nil : HistoryState(store: self, synchronizerConfigurations: configuration.synchronizers)
         }
         defer {
             self.configuration.bind(container: initialize())
@@ -176,6 +181,9 @@ public final class DatabaseStore: DataStore, Sendable {
             try connection.execute(HistoryTable.createTable)
         }
         try DataStoreMigration(store: self) { context, connection in }
+        if history?.synchronizers.isEmpty == false {
+            Task { @DatabaseActor in history?.scheduleSynchronizationIfNeeded() }
+        }
         logger.debug("DataStore init: \(self.configuration.url?.path, default: "nil")")
     }
     
@@ -403,6 +411,9 @@ public final class DatabaseStore: DataStore, Sendable {
         return count
     }
     
+    /// Fetches model snapshots based on the provided descriptor.
+    ///
+    /// - Parameter descriptor: A fetch descriptor that provides the configuration for the fetch.
     nonisolated public final func fetch<T>(_ descriptor: FetchDescriptor<T>)
     throws -> DatabaseFetchResult<T, Snapshot> where T: PersistentModel & SendableMetatype {
         try self.fetch(DatabaseFetchRequest(
@@ -661,7 +672,9 @@ public final class DatabaseStore: DataStore, Sendable {
                 try connection.checkCancellation()
                 do {
                     let temporaryIdentifier = snapshot.persistentIdentifier
-                    let permanentIdentifier = try remappedIdentifiers[temporaryIdentifier]
+                    let permanentIdentifier = temporaryIdentifier.storeIdentifier != nil
+                    ? temporaryIdentifier
+                    : try remappedIdentifiers[temporaryIdentifier]
                     ?? PersistentIdentifier.identifier(
                         for: self.identifier,
                         entityName: temporaryIdentifier.entityName,
@@ -904,32 +917,44 @@ public final class DatabaseStore: DataStore, Sendable {
                 )
             }
             dependencies.removeAll(keepingCapacity: true)
+            var queuedDeletedIdentifiers = Set(request.deleted.map(\.persistentIdentifier))
             var deleted = Deque(request.deleted.map { Payload(snapshot: $0) })
             while let delete = deleted.popFirst() {
                 var snapshot = delete.snapshot
                 do {
                     let export = snapshot.delete
-                    if false {
-                        let results = try snapshot.reconcileExternalReferencesBeforeDelete(
-                            indices: export.toOneDependencies + export.toManyDependencies,
-                            connection: connection
-                        )
-                        invalidatedIdentifiers.formUnion(results.unlinked)
-                        invalidatedIdentifiers.formUnion(results.cascaded)
-                        for _ in results.unlinked {}
-                        for _ in results.cascaded {}
-                        logger.debug(
-                            "The backing datas referencing this snapshot has been updated.",
-                            metadata: [
-                                "event": "delete",
-                                "entity": "\(snapshot.entityName)",
-                                "primary_key": "\(snapshot.primaryKey)",
-                                "snapshot": "\(snapshot.contentDescriptions(where: { $0.isRelationship }))",
-                                "unlinked": "\(results.unlinked)",
-                                "cascaded": "\(results.cascaded)"
-                            ]
-                        )
+                    let results = try snapshot.reconcileExternalReferencesBeforeDelete(
+                        indices: export.toOneDependencies + export.toManyDependencies,
+                        connection: connection
+                    )
+                    invalidatedIdentifiers.formUnion(results.unlinked)
+                    invalidatedIdentifiers.formUnion(results.cascaded)
+                    for _ in results.unlinked {}
+                    for cascadedIdentifier in results.cascaded {
+                        guard queuedDeletedIdentifiers.insert(cascadedIdentifier).inserted,
+                              let entity = self.schema.entitiesByName[cascadedIdentifier.entityName] else {
+                            continue
+                        }
+                        var relatedSnapshots: [PersistentIdentifier: Snapshot]? = nil
+                        if let cascadedSnapshot = try? self.fetch(
+                            for: cascadedIdentifier.primaryKey(),
+                            entity: entity,
+                            relatedSnapshots: &relatedSnapshots
+                        ) {
+                            deleted.append(Payload(snapshot: cascadedSnapshot))
+                        }
                     }
+                    logger.debug(
+                        "The backing datas referencing this snapshot has been updated.",
+                        metadata: [
+                            "event": "delete",
+                            "entity": "\(snapshot.entityName)",
+                            "primary_key": "\(snapshot.primaryKey)",
+                            "snapshot": "\(snapshot.contentDescriptions(where: { $0.isRelationship }))",
+                            "unlinked": "\(results.unlinked)",
+                            "cascaded": "\(results.cascaded)"
+                        ]
+                    )
                     try connection.delete(snapshot)
                     operation[.delete, default: []].append(snapshot.persistentIdentifier)
                     invalidatedIdentifiers.insert(snapshot.persistentIdentifier)
@@ -976,11 +1001,16 @@ public final class DatabaseStore: DataStore, Sendable {
             snapshots: snapshots,
             invalidateIdentifiers: invalidatedIdentifiers
         )
+        if request.editingState.author != "CloudKit",
+           !remappedIdentifiers.isEmpty || !snapshotsToReregister.isEmpty || !snapshots.isEmpty {
+            Task { @DatabaseActor in self.history?.scheduleSynchronizationIfNeeded() }
+        }
         logger.info(
             "Saved \(remappedIdentifiers.count) new snapshots.",
             metadata: [
                 "editing_state": "\(request.editingState.id)",
                 "author": "\(request.editingState.author ?? "nil")",
+                "remapped_identifiers": "\(remappedIdentifiers.count)",
                 "snapshots_to_reregister": "\(snapshotsToReregister.count)"
             ]
         )
@@ -998,6 +1028,73 @@ public final class DatabaseStore: DataStore, Sendable {
             snapshotsToReregister: snapshotsToReregister
         )
     }
+    
+    nonisolated public func synchronizationStatus(
+        for id: String
+    ) async -> SynchronizationStatus? {
+        await DatabaseActor.run { self.history?.synchronizationStatus(for: id) }
+    }
+
+    nonisolated public func synchronizationStatuses() async -> [SynchronizationStatus] {
+        await DatabaseActor.run { self.history?.allSynchronizationStatuses() ?? [] }
+    }
+
+    #if canImport(CloudKit)
+    
+    nonisolated public func handleCloudKitNotification(_ userInfo: [AnyHashable: Any]) {
+        guard CKNotification(fromRemoteNotificationDictionary: userInfo) != nil else {
+            return
+        }
+        Task { @DatabaseActor in self.history?.scheduleSynchronizationIfNeeded() }
+    }
+    
+    nonisolated public func cloudKitSyncStatus() async -> SynchronizationStatus? {
+        await synchronizationStatuses().first { $0.id == "cloudkit" }
+    }
+    
+    nonisolated public func fetchChanges() async throws {
+        guard let synchronizer = await self.history?.synchronizers.first(where: { $0 is Configuration.CloudKitDatabase.Replicator }) else {
+            return
+        }
+        guard let replicator = synchronizer as? Configuration.CloudKitDatabase.Replicator else {
+            fatalError("Unexpected synchronizer: \(synchronizer)")
+        }
+        try await replicator.fetchChanges()
+    }
+    
+    nonisolated public func sendChanges() async throws {
+        guard let synchronizer = await self.history?.synchronizers.first(where: { $0 is Configuration.CloudKitDatabase.Replicator }) else {
+            return
+        }
+        guard let replicator = synchronizer as? Configuration.CloudKitDatabase.Replicator else {
+            fatalError("Unexpected synchronizer: \(synchronizer)")
+        }
+        try await replicator.sendChanges()
+    }
+    
+    nonisolated public func sync() async throws {
+        guard let synchronizer = await self.history?.synchronizers.first(where: { $0 is Configuration.CloudKitDatabase.Replicator }) else {
+            return
+        }
+        guard let replicator = synchronizer as? Configuration.CloudKitDatabase.Replicator else {
+            fatalError("Unexpected synchronizer: \(synchronizer)")
+        }
+        try await replicator.sync()
+    }
+    
+    nonisolated public func resetCloudKit() async throws {
+        guard let synchronizer = await self.history?.synchronizers.first(where: { $0 is Configuration.CloudKitDatabase.Replicator }) else {
+            return
+        }
+        guard let replicator = synchronizer as? Configuration.CloudKitDatabase.Replicator else {
+            fatalError("Unexpected synchronizer: \(synchronizer)")
+        }
+        try await replicator.eraseCloudKitData(recreateEmptyZone: true)
+        try await Task.sleep(for: .seconds(2))
+        exit(0)
+    }
+    
+    #endif
     
     /// Inherited from `DataStore.erase()`.
     nonisolated public final func erase() throws {

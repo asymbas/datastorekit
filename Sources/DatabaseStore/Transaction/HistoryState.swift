@@ -7,6 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
+import DataStoreCore
 import DataStoreRuntime
 import DataStoreSupport
 import Foundation
@@ -15,10 +16,24 @@ import Synchronization
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.transaction")
 
+public extension Notification.Name {
+    static let dataStoreSynchronizationStatusDidChange: Self = .init("dataStoreSynchronizationStatusDidChange")
+}
+
+extension DataStoreSynchronizerConfiguration {
+    internal func makeDatabaseSynchronizer(store: Any) -> any DataStoreSynchronizer {
+        guard let store = store as? Self.Store else {
+            preconditionFailure()
+        }
+        return makeSynchronizer(store: store)
+    }
+}
+
 @DatabaseActor internal final class HistoryState: Sendable {
     nonisolated internal unowned let store: DatabaseStore
-    internal let cloudKitReplicator: CloudKitReplicator?
-    internal let cloudKitSyncState: CloudKitSyncState
+    internal let synchronizers: [any DataStoreSynchronizer]
+    internal var synchronizationState: SynchronizationState
+    internal var synchronizationStatusesByID: [String: SynchronizationStatus]
     internal let historyTTL: DateComponents
     internal let calendar: Calendar
     internal let requireArchivedBeforeDelete: Bool
@@ -31,6 +46,11 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
     internal var historyArchiveState: HistoryArchiveState
     internal var lastHistoryArchiveDate: Date
     internal var nextHistoryArchiveDate: Date
+    
+    internal var cloudKitSyncState: SynchronizationState {
+        get { synchronizationState }
+        set { synchronizationState = newValue }
+    }
     
     internal enum HistoryPurgeState: UInt8 {
         case idle = 0
@@ -46,7 +66,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
     
     nonisolated internal init(
         store: DatabaseStore,
-        cloudKit: CloudKitConfiguration?,
+        synchronizerConfigurations: [any DataStoreSynchronizerConfiguration],
         historyTTL: DateComponents = HistoryTable.defaultHistoryTTL(),
         calendar: Calendar = .current,
         shouldPurgeOnInitialTransaction: Bool = true,
@@ -78,26 +98,16 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
         self.historyArchiveState = .idle
         self.lastHistoryArchiveDate = now.addingTimeInterval(-initialArchiveBackfill)
         self.nextHistoryArchiveDate = now
-#if canImport(CloudKit)
-        self.cloudKitSyncState = .init()
-            if let cloudKit {
-                logger.info("Setting up CloudKit configuration: \(cloudKit)")
-                cloudKitReplicator = CloudKitReplicator(store: store, configuration: cloudKit)
-//                cloudKitSyncState.task?.cancel()
-//                cloudKitSyncState.task = Task {
-                Task {
-                    do {
-                        try await cloudKitReplicator?.prepare()
-                        try await cloudKitReplicator?.sync()
-                    } catch {
-                        logger.error("CloudKit sync error: \(error)")
-                    }
-                }
-//                }
-            } else {
-                self.cloudKitReplicator = nil
+        self.synchronizationState = .init()
+        let synchronizers = synchronizerConfigurations.map { synchronizerConfiguration in
+            synchronizerConfiguration.makeDatabaseSynchronizer(store: store)
+        }
+        self.synchronizers = synchronizers
+        self.synchronizationStatusesByID = Dictionary(
+            uniqueKeysWithValues: synchronizers.map {
+                ($0.id, .init(id: $0.id))
             }
-#endif
+        )
     }
     
     @discardableResult
@@ -106,23 +116,25 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
         case .purging:
             return false
         case .pending:
-            historyPurgeState = .purging
+            self.historyPurgeState = .purging
             return true
         case .idle:
             if force == false {
                 guard now >= nextHistoryPurgeDate else { return false }
             }
-            historyPurgeState = .purging
+            self.historyPurgeState = .purging
             return true
         }
     }
     
     internal func finishHistoryPurge(at date: Date = .init()) {
-        lastHistoryPurgeDate = date
-        nextHistoryPurgeDate = date.addingTimeInterval(
-            Self.randomHistoryPurgeDelay(ttl: historyTTL, calendar: calendar, now: date)
-        )
-        historyPurgeState = .idle
+        self.lastHistoryPurgeDate = date
+        self.nextHistoryPurgeDate = date.addingTimeInterval(Self.randomHistoryPurgeDelay(
+            ttl: historyTTL,
+            calendar: calendar,
+            now: date
+        ))
+        self.historyPurgeState = .idle
     }
     
     @discardableResult
@@ -137,15 +149,15 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
             if force == false {
                 guard now >= nextHistoryArchiveDate else { return false }
             }
-            historyArchiveState = .archiving
+            self.historyArchiveState = .archiving
             return true
         }
     }
     
     internal func finishHistoryArchive(at date: Date = .init()) {
-        lastHistoryArchiveDate = date
-        nextHistoryArchiveDate = date.addingTimeInterval(Self.randomHistoryArchiveDelay())
-        historyArchiveState = .idle
+        self.lastHistoryArchiveDate = date
+        self.nextHistoryArchiveDate = date.addingTimeInterval(Self.randomHistoryArchiveDelay())
+        self.historyArchiveState = .idle
     }
     
     nonisolated internal func run(force: Bool = false) {
@@ -227,5 +239,118 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
         if let minute = ttl.minute { delta.minute = -minute }
         if let second = ttl.second { delta.second = -second }
         return delta
+    }
+}
+
+extension HistoryState {
+    internal func synchronizationStatus(for id: String) -> SynchronizationStatus? {
+        synchronizationStatusesByID[id]
+    }
+    
+    internal func allSynchronizationStatuses() -> [SynchronizationStatus] {
+        synchronizers.compactMap { synchronizationStatusesByID[$0.id] }
+    }
+    
+    internal func scheduleSynchronizationIfNeeded() {
+        guard synchronizers.isEmpty == false else {
+            return
+        }
+        if synchronizationState.task != nil {
+            self.synchronizationState.isPending = true
+            for synchronizer in synchronizers {
+                updateSynchronizationStatus(for: synchronizer.id, phase: .scheduled)
+            }
+            return
+        }
+        self.synchronizationState.isPending = false
+        for synchronizer in synchronizers {
+            updateSynchronizationStatus(for: synchronizer.id, phase: .scheduled)
+        }
+        self.synchronizationState.task = Task { @DatabaseActor in
+            await self.runSynchronizationLoop()
+        }
+    }
+    
+    internal func scheduleCloudKitSyncIfNeeded() {
+        scheduleSynchronizationIfNeeded()
+    }
+    
+    internal func runSynchronizationLoop() async {
+        defer {
+            self.synchronizationState.task = nil
+            if synchronizationState.isPending {
+                self.synchronizationState.isPending = false
+                scheduleSynchronizationIfNeeded()
+            } else {
+                for synchronizer in synchronizers {
+                    updateSynchronizationStatus(for: synchronizer.id, phase: .idle)
+                }
+            }
+        }
+        for synchronizer in synchronizers {
+            do {
+                updateSynchronizationStatus(for: synchronizer.id, phase: .preparing)
+                #if DEBUG
+                // Temporary - used to reset CloudKit records.
+                if false, let replicator = synchronizer as? DatabaseConfiguration.CloudKitDatabase.Replicator {
+                    try await replicator.prepare()
+                    try await replicator.eraseCloudKitData(recreateEmptyZone: true)
+                }
+                #endif
+                try await synchronizer.prepare()
+                updateSynchronizationStatus(for: synchronizer.id, phase: .sending)
+                try await synchronizer.sync()
+                updateSynchronizationStatus(for: synchronizer.id, phase: .finished)
+            } catch {
+                logger.error(
+                    "Synchronizer error: \(error)",
+                    metadata: [
+                        "store_identifier": "\(store.identifier)",
+                        "synchronizer_id": "\(synchronizer.id)"
+                    ]
+                )
+                updateSynchronizationStatus(for: synchronizer.id, phase: .failed, error: error)
+            }
+        }
+    }
+    
+    internal func runCloudKitSyncLoop() async {
+        await runSynchronizationLoop()
+    }
+    
+    internal func updateSynchronizationStatus(
+        for id: String,
+        phase: SynchronizationPhase,
+        error: (any Swift.Error)? = nil
+    ) {
+        guard var status = self.synchronizationStatusesByID[id] else {
+            return
+        }
+        status.phase = phase
+        status.isPending = self.synchronizationState.isPending
+        if phase == .finished {
+            status.lastSyncDate = .init()
+            status.lastError = nil
+        } else if let error {
+            status.lastError = error
+        }
+        self.synchronizationStatusesByID[id] = status
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .dataStoreSynchronizationStatusDidChange,
+                object: self.store,
+                userInfo: ["id": id, "status": status]
+            )
+        }
+    }
+    
+    internal func updateCloudKitSyncStatus(
+        phase: SynchronizationPhase,
+        error: (any Swift.Error)? = nil
+    ) {
+        guard let cloudKitSynchronizer = self.synchronizers.first(where: { $0 is DatabaseConfiguration.CloudKitDatabase.Replicator }) else {
+            return
+        }
+        updateSynchronizationStatus(for: cloudKitSynchronizer.id, phase: phase, error: error)
     }
 }

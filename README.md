@@ -2,6 +2,8 @@
 
 A SwiftData custom data store implementation that supports SQLite as its primary persistence layer.
 
+**This package is in active development.**
+
 ## Table of Contents
 
 - [Features](#features)

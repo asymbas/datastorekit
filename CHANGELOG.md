@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Initial CloudKit implementation.
+
 ### Changed
 
 - Reduced the package's Swift tools version and dependency version requirements so it can be added as a dependency in Swift Playground.

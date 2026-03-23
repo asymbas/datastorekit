@@ -117,10 +117,27 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         set { ensureUniqueStorage(); storage.cachePolicy.withLock { $0 = newValue } }
     }
     
+    nonisolated public var synchronizers: [any DataStoreSynchronizerConfiguration] {
+        get { storage.synchronizers.withLock(\.self) }
+        set { ensureUniqueStorage(); storage.synchronizers.withLock { $0 = newValue } }
+    }
+    
     /// The CloudKit configuration to sync the database with.
-    nonisolated internal var cloudKit: CloudKitConfiguration? {
-        get { storage.cloudKit.withLock(\.self) }
-        set { ensureUniqueStorage(); storage.cloudKit.withLock { $0 = newValue } }
+    nonisolated internal var cloudKit: CloudKitDatabase? {
+        get {
+            storage.synchronizers.withLock { synchronizers in
+                synchronizers.first { $0 is CloudKitDatabase } as? CloudKitDatabase
+            }
+        }
+        set {
+            ensureUniqueStorage()
+            storage.synchronizers.withLock { synchronizers in
+                synchronizers.removeAll { $0 is CloudKitDatabase }
+                if let newValue {
+                    synchronizers.append(newValue)
+                }
+            }
+        }
     }
     
     nonisolated private init(
@@ -137,7 +154,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         mode: DataStoreDebugging = .default,
         cachePolicy: CachePolicy = .default,
         attachment: (any DataStoreDelegate)? = nil,
-        cloudKit: CloudKitConfiguration? = nil
+        synchronizers: [any DataStoreSynchronizerConfiguration] = []
     ) {
         let location: SQLite.StoreType = {
             guard case .file(let path) = location else {
@@ -224,7 +241,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                     }
                     defer {
                         Task { @DatabaseActor in
-                            attachment.store?.transaction?.run(force: true)
+                            attachment.store?.history?.run(force: false)
                         }
                     }
                     return TransactionObject(
@@ -283,7 +300,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             allowsSave: allowsSave,
             cachePolicy: cachePolicy,
             attachment: attachment,
-            cloudKit: cloudKit,
+            synchronizers: synchronizers,
             container: nil,
             makeDatabaseQueue: makeDatabaseQueue
         )
@@ -328,7 +345,8 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         size: Int = 4,
         options: DataStoreOptions = [],
         attachment: (any DataStoreDelegate)? = nil,
-        cloudKit: CloudKitConfiguration? = nil
+        cloudKit: CloudKitDatabase? = nil,
+        synchronizers: [any DataStoreSynchronizerConfiguration] = [] // TODO: Update documentation.
     ) {
         let resolvedName: String = {
             if let name, !name.isEmpty { return name }
@@ -365,6 +383,11 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             )
         }
         precondition(resolvedURL.isFileURL, "Store URL must be a file URL: \(resolvedURL)")
+        var resolvedSynchronizers = synchronizers
+        if let cloudKit {
+            resolvedSynchronizers.removeAll { $0 is CloudKitDatabase }
+            resolvedSynchronizers.append(cloudKit)
+        }
         self.init(
             name: resolvedName,
             types: types,
@@ -379,7 +402,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             allowsSave: allowsSave,
             size: size,
             attachment: attachment,
-            cloudKit: cloudKit
+            synchronizers: resolvedSynchronizers
         )
     }
     
@@ -559,6 +582,13 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         _ = storage.container.storeIfNil(container)
     }
     
+    nonisolated public mutating func appendSynchronizer(
+        _ synchronizer: some DataStoreSynchronizerConfiguration
+    ) {
+        ensureUniqueStorage()
+        storage.synchronizers.withLock { $0.append(synchronizer) }
+    }
+    
     fileprivate final class Storage: Sendable {
         nonisolated fileprivate final let name: Mutex<String>
         nonisolated fileprivate final let schema: AtomicLazyReference<Schema>
@@ -570,7 +600,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         nonisolated fileprivate final let allowsSave: Mutex<Bool>
         nonisolated fileprivate final let cachePolicy: Mutex<CachePolicy>
         nonisolated fileprivate final let attachment: (any DataStoreDelegate)?
-        nonisolated fileprivate final let cloudKit: Mutex<CloudKitConfiguration?>
+        nonisolated fileprivate final let synchronizers: Mutex<[any DataStoreSynchronizerConfiguration]>
         nonisolated fileprivate final let container: AtomicLazyReference<DataStoreContainer>
         nonisolated fileprivate final let makeDatabaseQueue: @Sendable
         (Store.Attachment?) throws -> DatabaseQueue<Store>
@@ -586,7 +616,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             allowsSave: Bool,
             cachePolicy: CachePolicy,
             attachment: (any DataStoreDelegate)?,
-            cloudKit: CloudKitConfiguration?,
+            synchronizers: [any DataStoreSynchronizerConfiguration],
             container: DataStoreContainer?,
             makeDatabaseQueue: @escaping @Sendable
             (Store.Attachment?) throws -> DatabaseQueue<Store>
@@ -601,7 +631,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             self.allowsSave = .init(allowsSave)
             self.attachment = attachment
             self.cachePolicy = .init(cachePolicy)
-            self.cloudKit = .init(cloudKit)
+            self.synchronizers = .init(synchronizers)
             self.container = .init()
             self.makeDatabaseQueue = makeDatabaseQueue
             if let container { _ = self.container.storeIfNil(container) }
@@ -620,7 +650,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                 allowsSave: allowsSave.withLock(\.self),
                 cachePolicy: cachePolicy.withLock(\.self),
                 attachment: attachment,
-                cloudKit: cloudKit.withLock(\.self),
+                synchronizers: synchronizers.withLock(\.self),
                 container: container.load(),
                 makeDatabaseQueue: makeDatabaseQueue
             )

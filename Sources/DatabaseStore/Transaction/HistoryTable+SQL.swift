@@ -42,6 +42,36 @@ extension HistoryTable {
 }
 
 extension HistoryTable {
+    nonisolated static func archiveDatabaseName(year: Int) -> String {
+        "archive_\(year)"
+    }
+
+    nonisolated static func archiveYear(from archiveURL: URL) throws -> Int {
+        let fileName = archiveURL.deletingPathExtension().lastPathComponent
+        guard let yearText = fileName.split(separator: "-").last,
+              let year = Int(yearText) else {
+            throw SQLError(message: "Invalid history archive file name: \(fileName)")
+        }
+        return year
+    }
+
+    nonisolated static func archiveDatabaseName(for archiveURL: URL) throws -> String {
+        try archiveDatabaseName(year: archiveYear(from: archiveURL))
+    }
+    
+    private func withAttachedHistoryArchive<Result>(
+        at archiveURL: URL,
+        connection: borrowing DatabaseConnection<DatabaseStore>,
+        _ body: (String) throws -> Result
+    ) throws -> Result {
+        let archiveName = try HistoryTable.archiveDatabaseName(for: archiveURL)
+        try connection.attachDatabase(at: archiveURL, as: archiveName)
+        defer { try? connection.detachDatabaseIfAttached(named: archiveName) }
+        return try body(archiveName)
+    }
+}
+
+extension HistoryTable {
     nonisolated package static func maintainHistory(
         in storeIdentifier: String,
         connection: borrowing DatabaseConnection<DatabaseStore>,
