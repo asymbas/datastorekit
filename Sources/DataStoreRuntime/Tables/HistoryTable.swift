@@ -9,21 +9,22 @@
 
 import DataStoreCore
 
+/// A type that defines the history table definition for tracking model changes.
 package enum HistoryTable: String {
     nonisolated package static let tableName: String = "_History"
-    /// The auto-incrementing primary key that is unique per row (per event, not transaction).
+    /// The primary key for the change event.
     case pk
-    /// The type of data store operation (insert, update, or delete).
+    /// The type of change operation (insert, update, or delete).
     case event
-    /// The table name for the model being logged.
-    case recordTarget = "record_target"
-    /// The primary key of the model being logged.
-    case recordIdentifier = "record_identifier"
-    /// The modified columns when its an update or preserved values when its a delete.
+    /// The name of the entity whose model data has changed.
+    case entityName = "entity_name"
+    /// The primary key of the entity whose model data has changed.
+    case entityPrimaryKey = "entity_pk"
+    /// The changed properties when it's an update or the preserved values keyed by their properties when its a delete.
     case context
-    /// The timestamp of the transaction when it begins.
+    /// The timestamp of the transaction before any change operations occur.
     case timestamp
-    /// An author that was configured in and provided by `ModelContext`.
+    /// An author that was assigned in an `EditingState`.
     case author
     /// The group key that represents the model's associated store.
     case storeIdentifier = "store_identifier"
@@ -32,24 +33,19 @@ package enum HistoryTable: String {
         createTable(databaseName: nil, autoIncrement: true)
     }
     
-    nonisolated package static func createTable(
-        databaseName: String?,
-        autoIncrement: Bool
-    ) -> String {
+    nonisolated package static func createTable(databaseName: String?, autoIncrement: Bool) -> String {
         let qualifiedTableName = if let databaseName {
             "\(databaseName).\(Self.tableName)"
         } else {
             Self.tableName
         }
-        let primaryKey = autoIncrement
-        ? "INTEGER PRIMARY KEY AUTOINCREMENT"
-        : "INTEGER PRIMARY KEY"
+        let primaryKey = autoIncrement ? "INTEGER PRIMARY KEY AUTOINCREMENT" : "INTEGER PRIMARY KEY"
         return """
             CREATE TABLE IF NOT EXISTS \(qualifiedTableName) (
                 \(Self.pk.rawValue) \(primaryKey),
                 \(Self.event.rawValue) TEXT NOT NULL,
-                \(Self.recordTarget.rawValue) TEXT NOT NULL,
-                \(Self.recordIdentifier.rawValue) TEXT NOT NULL,
+                \(Self.entityName.rawValue) TEXT NOT NULL,
+                \(Self.entityPrimaryKey.rawValue) TEXT NOT NULL,
                 \(Self.context.rawValue) TEXT,
                 \(Self.timestamp.rawValue) INTEGER NOT NULL,
                 \(Self.author.rawValue) TEXT,

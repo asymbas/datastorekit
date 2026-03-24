@@ -655,8 +655,8 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                 \(HistoryTable.pk.rawValue) AS history_pk,
                 \(HistoryTable.event.rawValue) AS change_type,
                 \(HistoryTable.timestamp.rawValue) AS transaction_identifier,
-                \(HistoryTable.recordTarget.rawValue) AS entity_name,
-                \(HistoryTable.recordIdentifier.rawValue) AS entity_pk,
+                \(HistoryTable.entityName.rawValue) AS entity_name,
+                \(HistoryTable.entityPrimaryKey.rawValue) AS entity_pk,
                 \(HistoryTable.author.rawValue) AS author,
                 \(HistoryTable.context.rawValue) AS context
             FROM \(databaseName).\(HistoryTable.tableName)

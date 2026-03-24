@@ -491,8 +491,8 @@ extension HistoryTable {
                 \(timestampKey),
                 \(storeIdentifierKey),
                 \(Self.author.rawValue),
-                \(Self.recordTarget.rawValue),
-                \(Self.recordIdentifier.rawValue),
+                \(Self.entityName.rawValue),
+                \(Self.entityPrimaryKey.rawValue),
                 \(Self.context.rawValue)
             )
             SELECT
@@ -501,8 +501,8 @@ extension HistoryTable {
                 \(timestampKey),
                 \(storeIdentifierKey),
                 \(Self.author.rawValue),
-                \(Self.recordTarget.rawValue),
-                \(Self.recordIdentifier.rawValue),
+                \(Self.entityName.rawValue),
+                \(Self.entityPrimaryKey.rawValue),
                 \(Self.context.rawValue)
             FROM main.\(Self.tableName)
             WHERE \(storeIdentifierKey) = ?

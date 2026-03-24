@@ -118,8 +118,8 @@ extension DatabaseStore: HistoryProviding {
                     currentChanges.removeAll(keepingCapacity: true)
                 }
                 guard let type = row[HistoryTable.event.rawValue] as? String,
-                      let entityName = row[HistoryTable.recordTarget.rawValue] as? String,
-                      let entityPrimaryKey = row[HistoryTable.recordIdentifier.rawValue] as? String,
+                      let entityName = row[HistoryTable.entityName.rawValue] as? String,
+                      let entityPrimaryKey = row[HistoryTable.entityPrimaryKey.rawValue] as? String,
                       let modelType = TypeRegistry.getType(forName: entityName) as? any PersistentModel.Type else {
                     logger.warning("Unable to parse row for history transaction changes: \(row)")
                     continue
