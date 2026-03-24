@@ -132,10 +132,10 @@ internal final class DataStoreMigration: DatabaseContext {
             borrowing DatabaseConnection<Store>
         ) throws -> Void)? = nil
     ) throws {
+        let newSQLSchema = Self.load(schema: store.schema, shouldRegister: true)
         if store.configuration.options.contains(.disableSchemaMigrations) {
             return nil
         }
-        let newSQLSchema = Self.load(schema: store.schema, shouldRegister: true)
         self.store = store
         self.shouldAutomaticallyMigrateOnSchemaChange =
         store.configuration.options.contains(.disableLightweightSchemaMigrations) == false
