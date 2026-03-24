@@ -130,9 +130,12 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log")
             ],
             path: "Sources/SQLSupport",
-            swiftSettings: [
-                .unsafeFlags(["-package-name", "DataStoreKit"])
-            ]
+            swiftSettings: []
+        ),
+        .testTarget(
+            name: "DataStoreKitTests",
+            dependencies: ["DataStoreKit"],
+            path: "Tests/DataStoreKitTests"
         )
     ]
 )
