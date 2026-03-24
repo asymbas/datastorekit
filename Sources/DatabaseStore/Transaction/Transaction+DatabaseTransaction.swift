@@ -147,8 +147,8 @@ public final class TransactionObject: DatabaseTransaction {
                         let column = columns[index]
                         let resolvedPropertyName = column.hasSuffix("_pk")
                         ? String(column.dropLast(3)) : column
-                        if let column = entity.storedPropertiesByName[resolvedPropertyName] {
-                            affectedColumns.append(column)
+                        if let property = entity.storedPropertiesByName[resolvedPropertyName] {
+                            affectedColumns.append(property.name)
                         }
                     }
                 }
