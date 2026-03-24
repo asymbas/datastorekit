@@ -22,7 +22,7 @@ public struct DataStoreOptions: OptionSet, Sendable {
 }
 
 extension DataStoreOptions {
-    nonisolated private static var allowedMask: Int { (1 << 20) - 1 } // bits 0...19
+    nonisolated private static var allowedMask: Int { (1 << 21) - 1 } // bits 0...20
     
     nonisolated private init(uncheckedRawValue: Int) {
         self.rawValue = uncheckedRawValue
@@ -86,28 +86,32 @@ public extension DataStoreOptions {
     nonisolated static var disableKeyPathVariants: Self {
         .init(uncheckedRawValue: 1 << 13)
     }
+    /// Overwrite the encoded SwiftData `Schema` data.
+    nonisolated static var forceSchemaOverwrite: Self {
+        .init(uncheckedRawValue: 1 << 14)
+    }
     /// Prevents any schema migrations checking.
     nonisolated static var disableSchemaMigrations: Self {
-        .init(uncheckedRawValue: 1 << 14)
+        .init(uncheckedRawValue: 1 << 15)
     }
     /// Prevents automatic execution of any lightweight schema migrations.
     nonisolated static var disableLightweightSchemaMigrations: Self {
-        .init(uncheckedRawValue: 1 << 15)
+        .init(uncheckedRawValue: 1 << 16)
     }
     /// Skips recording and managing transactions in persistent history tracking.
     nonisolated static var disablePersistentHistoryTracking: Self {
-        .init(uncheckedRawValue: 1 << 16)
+        .init(uncheckedRawValue: 1 << 17)
     }
     /// Maintain inline transaction history and do not copy it externally.
     nonisolated static var neverArchiveTransactionHistory: Self {
-        .init(uncheckedRawValue: 1 << 17)
+        .init(uncheckedRawValue: 1 << 18)
     }
     /// Checks if `PRAGMA foreign_keys` is enabled and runs `PRAGMA foreign_key_check` for each table on setup.
     nonisolated static var verifyForeignKeysOnSetup: Self {
-        .init(uncheckedRawValue: 1 << 18)
+        .init(uncheckedRawValue: 1 << 19)
     }
     /// Prevents throwing any errors when the configuration is being validated.
     nonisolated static var ignoreStoreValidationErrors: Self {
-        .init(uncheckedRawValue: 1 << 19)
+        .init(uncheckedRawValue: 1 << 20)
     }
 }
