@@ -132,6 +132,9 @@ internal final class DataStoreMigration: DatabaseContext {
             borrowing DatabaseConnection<Store>
         ) throws -> Void)? = nil
     ) throws {
+        if store.configuration.options.contains(.disableSchemaMigrations) {
+            return nil
+        }
         let newSQLSchema = Self.load(schema: store.schema, shouldRegister: true)
         self.store = store
         self.shouldAutomaticallyMigrateOnSchemaChange =
@@ -141,9 +144,6 @@ internal final class DataStoreMigration: DatabaseContext {
             logger.info("No SwiftData.Schema was ever stored. Saving current schema: \(newSchema.version)")
             try store.setValue(newSchema, forKey: "schema")
             try Self.setup(schema: newSQLSchema, store: store)
-            return nil
-        }
-        guard store.configuration.options.contains(.disableSchemaMigrations) == false else {
             return nil
         }
         let (oldDatabaseSchema, storedStatements, oldAuxiliaryObjectsByTable) = try store.queue.reader { connection in
