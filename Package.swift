@@ -35,9 +35,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log")
             ],
             path: "Sources/DataStoreKit",
-            swiftSettings: [
-                .unsafeFlags(["-package-name", "DataStoreKit"])
-            ]
+            swiftSettings: []
         ),
         .target(
             name: "_DatabaseStore",
@@ -52,9 +50,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log")
             ],
             path: "Sources/DatabaseStore",
-            swiftSettings: [
-                .unsafeFlags(["-package-name", "DataStoreKit"])
-            ]
+            swiftSettings: []
         ),
         .target(
             name: "DataStoreRuntime",
@@ -68,9 +64,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log")
             ],
             path: "Sources/DataStoreRuntime",
-            swiftSettings: [
-                .unsafeFlags(["-package-name", "DataStoreKit"])
-            ]
+            swiftSettings: []
         ),
         .target(
             name: "DataStoreCore",
@@ -79,9 +73,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log")
             ],
             path: "Sources/DataStoreCore",
-            swiftSettings: [
-                .unsafeFlags(["-package-name", "DataStoreKit"])
-            ]
+            swiftSettings: []
         ),
         .target(
             name: "DataStoreSQL",
@@ -91,9 +83,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log")
             ],
             path: "Sources/DataStoreSQL",
-            swiftSettings: [
-                .unsafeFlags(["-package-name", "DataStoreKit"])
-            ]
+            swiftSettings: []
         ),
         .target(
             name: "DataStoreSupport",
@@ -101,9 +91,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log")
             ],
             path: "Sources/DataStoreSupport",
-            swiftSettings: [
-                .unsafeFlags(["-package-name", "DataStoreKit"])
-            ]
+            swiftSettings: []
         ),
         .target(
             name: "SQLiteHandle",
@@ -116,9 +104,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log")
             ],
             path: "Sources/SQLiteHandle",
-            swiftSettings: [
-                .unsafeFlags(["-package-name", "DataStoreKit"])
-            ]
+            swiftSettings: []
         ),
         .target(
             name: "SQLiteStatement",
@@ -135,9 +121,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log")
             ],
             path: "Sources/SQLiteStatement",
-            swiftSettings: [
-                .unsafeFlags(["-package-name", "DataStoreKit"])
-            ]
+            swiftSettings: []
         ),
         .target(
             name: "SQLSupport",
