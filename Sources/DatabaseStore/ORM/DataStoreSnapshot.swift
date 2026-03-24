@@ -739,7 +739,7 @@ extension DatabaseSnapshot {
     nonisolated public func diff<Collected>(
         from other: Self,
         onChange: (PropertyMetadata, any Sendable, any Sendable) throws -> Collected?
-    ) throws -> [Collected] {
+    ) rethrows -> [Collected] {
         var result = [Collected]()
         for property in self.properties {
             let lhs = self.values[property.index]

@@ -236,7 +236,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                         return Optional<Store.Transaction>.none
                     }
                     guard let attachment, let identifier = attachment.store?.identifier else {
-                        logger.warning("No store for transaction attachment")
+                        logger.warning("No store for transaction attachment.")
                         return nil
                     }
                     defer {

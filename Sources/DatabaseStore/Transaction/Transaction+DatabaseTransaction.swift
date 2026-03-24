@@ -28,14 +28,16 @@ public final class TransactionObject: DatabaseTransaction {
     #else
     nonisolated(unsafe) public weak var handle: Handle?
     #endif
+    nonisolated private let _lastObservedTotalRowChanges: Atomic<Handle.Count> = .init(0)
+    nonisolated private let _externalStorageTransaction: Mutex<ExternalStorageTransaction>
     nonisolated private let manager: ModelManager
+    nonisolated private let schema: Schema?
+    nonisolated private let isResolved: Bool
     nonisolated public let timestamp: Date
     nonisolated public let storeIdentifier: String
     nonisolated public let editingState: any EditingStateProviding
     nonisolated public let transactionIdentifier: Int64
     nonisolated public let startingTotalRowChanges: Int32 = 0
-    nonisolated private let _lastObservedTotalRowChanges: Atomic<Handle.Count> = .init(0)
-    nonisolated private let _externalStorageTransaction: Mutex<ExternalStorageTransaction>
     
     nonisolated internal var externalStorageTransaction: ExternalStorageTransaction {
         get { _externalStorageTransaction.withLock(\.self) }
@@ -59,11 +61,13 @@ public final class TransactionObject: DatabaseTransaction {
         editingState: any EditingStateProviding
     ) {
         self.handle = handle
-        self.timestamp = Date()
-        self.transactionIdentifier = Int64(self.timestamp.timeIntervalSince1970 * 1_000_000)
         self.manager = manager
         self.storeIdentifier = storeIdentifier
+        self.timestamp = Date()
+        self.transactionIdentifier = Int64(self.timestamp.timeIntervalSince1970 * 1_000_000)
         self.editingState = editingState
+        self.isResolved = editingState is EditingState
+        self.schema = isResolved ? nil : manager.configuration.schema
         do {
             self._externalStorageTransaction = .init(try ExternalStorageTransaction(baseURL: externalStorageURL))
         } catch {
@@ -125,6 +129,8 @@ public final class TransactionObject: DatabaseTransaction {
         }
     }
     
+    // TODO: Use SQLite's callback to include external changes.
+    
     nonisolated public func didUpdateRow(
         for primaryKey: some LosslessStringConvertible & Sendable,
         in table: String,
@@ -134,29 +140,29 @@ public final class TransactionObject: DatabaseTransaction {
     ) {
         guard table != HistoryTable.tableName else { return }
         do {
-            var affectedColumns = [String]()
-            if let oldValues {
-                for index in diff(
-                    columns: columns,
-                    old: oldValues,
-                    new: newValues,
-                    ignoring: [pk]
-                ) {
-                    affectedColumns.append(columns[index])
+            let changedProperties = isResolved ? columns : {
+                var affectedColumns = [String]()
+                if !isResolved, let oldValues, let entity = self.schema?.entitiesByName[table] {
+                    for index in diff(columns: columns, old: oldValues, new: newValues, ignoring: [pk]) {
+                        let column = columns[index]
+                        let resolvedPropertyName = column.hasSuffix("_pk")
+                        ? String(column.dropLast(3)) : column
+                        if let column = entity.storedPropertiesByName[resolvedPropertyName] {
+                            affectedColumns.append(column)
+                        }
+                    }
                 }
-            }
-            guard affectedColumns.isEmpty == false else {
-                logger.debug(
-                    "No update to record in history.",
-                    metadata: [
-                        "table": "\(table)",
-                        "primary key": "\(primaryKey)",
-                        "columns": "\(columns)"
-                    ]
-                )
+                return affectedColumns
+            }()
+            guard changedProperties.isEmpty == false else {
+                logger.debug("No update to record in history.", metadata: [
+                    "table": "\(table)",
+                    "primary key": "\(primaryKey)",
+                    "columns": "\(columns)"
+                ])
                 return
             }
-            let list = affectedColumns.joined(separator: ",")
+            let list = changedProperties.joined(separator: ",")
             try record(.update, tableName: table, primaryKey: primaryKey, context: list)
         } catch {
             logger.error(
@@ -211,8 +217,8 @@ public final class TransactionObject: DatabaseTransaction {
                 "\(HistoryTable.timestamp.rawValue)",
                 "\(HistoryTable.storeIdentifier.rawValue)",
                 "\(HistoryTable.author.rawValue)",
-                "\(HistoryTable.recordTarget.rawValue)",
-                "\(HistoryTable.recordIdentifier.rawValue)",
+                "\(HistoryTable.entityName.rawValue)",
+                "\(HistoryTable.entityPrimaryKey.rawValue)",
                 "\(HistoryTable.context.rawValue)"
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,

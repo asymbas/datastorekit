@@ -48,11 +48,12 @@ extension DatabaseConnection where Store == DatabaseStore {
             .compactMap { $0.column == nil ? nil : quote($0.column!) }
             .joined(separator: ", ")
         let result = try fetch(
-                """
-                SELECT \(columns) FROM "\(entityName)"
-                \(sql.joined(separator: "\n"))
-                """,
-                bindings: bindings
+            """
+            SELECT \(columns) 
+            FROM "\(entityName)"
+            \(sql.joined(separator: "\n"))
+            """,
+            bindings: bindings
         )
         var relatedSnapshots = [PersistentIdentifier: DatabaseSnapshot]()
         return try result.map { row in
@@ -99,7 +100,7 @@ extension DatabaseConnection where Store == DatabaseStore {
         orReplace: Bool = false
     ) throws {
         guard let transaction = self.transaction else {
-            fatalError("Inserting backing data is only allowed during a transaction.")
+            preconditionFailure("Inserting backing data is only allowed during a transaction.")
         }
         let export = snapshot.export
         try execute.insert(
@@ -122,12 +123,12 @@ extension DatabaseConnection where Store == DatabaseStore {
     /// - Parameters:
     ///   - oldSnapshot: The previous model snapshot.
     ///   - newSnapshot: The current model snapshot.
-    nonisolated public /*mutating*/ func update(
+    nonisolated public func update(
         from oldSnapshot: consuming Store.Snapshot? = nil,
         to newSnapshot: consuming Store.Snapshot
     ) throws {
         guard let transaction = self.transaction else {
-            fatalError("Updating backing data is only allowed during a transaction.")
+            preconditionFailure("Updating backing data is only allowed during a transaction.")
         }
         let entityName = newSnapshot.entityName
         let primaryKey = newSnapshot.primaryKey
@@ -151,13 +152,12 @@ extension DatabaseConnection where Store == DatabaseStore {
             }
         }()
         let export = newSnapshot.export
-//        self.externalDependencies[newSnapshot.persistentIdentifier] = export.toManyDependencies
         var columnsToUpdate = [String]()
         var valuesToUpdate = [any Sendable]()
         var propertiesChanges = [String]()
         var oldValues = [any Sendable]()
         var newValues = [any Sendable]()
-        _ = try oldSnapshot?.diff(from: newSnapshot) { property, lhs, rhs in
+        _ = oldSnapshot?.diff(from: newSnapshot) { property, lhs, rhs in
             if let index = export.columns.firstIndex(of: property.name) {
                 columnsToUpdate.append(export.columns[index])
                 valuesToUpdate.append(export.values[index])
@@ -167,13 +167,10 @@ extension DatabaseConnection where Store == DatabaseStore {
             newValues.append(rhs)
         }
         if !columnsToUpdate.isEmpty {
-            logger.debug(
-                "Updated snapshot.",
-                metadata: [
-                    "columns_to_update": "\(columnsToUpdate)",
-                    "values_to_update": "\(valuesToUpdate)",
-                ]
-            )
+            logger.debug("Updated snapshot.", metadata: [
+                "columns_to_update": "\(columnsToUpdate)",
+                "values_to_update": "\(valuesToUpdate)",
+            ])
             let _ = try execute.update(
                 table: newSnapshot.entityName,
                 columns: columnsToUpdate,
@@ -198,17 +195,12 @@ extension DatabaseConnection where Store == DatabaseStore {
     /// - Parameter snapshot: The model snapshot.
     nonisolated public func delete(_ snapshot: consuming Store.Snapshot) throws {
         guard let transaction = self.transaction else {
-            fatalError("Deleting backing data is only allowed during a transaction.")
+            preconditionFailure("Deleting backing data is only allowed during a transaction.")
         }
         let entityName = snapshot.entityName
         let primaryKey = snapshot.primaryKey
         let delete = snapshot.delete
-        let _ = try execute.delete(
-            from: entityName,
-            as: nil,
-            where: "\(pk) = ?",
-            bindings: [primaryKey]
-        )
+        let _ = try execute.delete(from: entityName, where: "\(pk) = ?", bindings: [primaryKey])
         try transaction.externalStorageTransaction.apply(delete.externalStorageData)
         transaction.informDidDeleteRow(
             primaryKey,
@@ -264,13 +256,10 @@ extension DatabaseConnection where Store == DatabaseStore {
             if let existingPrimaryKey = existingRow?.first as? String {
                 var targetPrimaryKey = snapshot.primaryKey
                 if targetPrimaryKey != existingPrimaryKey {
-                    logger.debug(
-                        "Resolving upsert conflict...",
-                        metadata: [
-                            "entity": "\(snapshot.entityName)",
-                            "diff": "\(snapshot.primaryKey) != \(existingPrimaryKey)"
-                        ]
-                    )
+                    logger.debug("Resolving upsert conflict...", metadata: [
+                        "entity": "\(snapshot.entityName)",
+                        "diff": "\(snapshot.primaryKey) != \(existingPrimaryKey)"
+                    ])
                     let existingIdentifier = try PersistentIdentifier.identifier(
                         for: persistentIdentifier.storeIdentifier!,
                         entityName: snapshot.entityName,
@@ -299,7 +288,7 @@ extension DatabaseConnection where Store == DatabaseStore {
                 return nil
             }
         default:
-            throw SQLError("Unknown")
+            return nil
         }
     }
     
@@ -409,14 +398,11 @@ extension DatabaseConnection where Store == DatabaseStore {
             if let existingPrimaryKey = existingRow?.first as? String {
                 logger.debug("Found a conflict.")
                 if snapshot.primaryKey != existingPrimaryKey {
-                    logger.debug(
-                        "Resolving upsert conflict...",
-                        metadata: [
-                            "entity": "\(snapshot.entityName)",
-                            "diff": "\(snapshot.primaryKey) != \(existingPrimaryKey)"
-                        ]
-                    )
-                    logger.debug("Inheriting values then overwriting.")
+                    logger.debug("Resolving upsert conflict...", metadata: [
+                        "entity": "\(snapshot.entityName)",
+                        "diff": "\(snapshot.primaryKey) != \(existingPrimaryKey)"
+                    ])
+                    // Inheriting values then overwriting.
                     var relatedSnapshots = [PersistentIdentifier: DatabaseSnapshot]()
                     let existingSnapshot = try DatabaseSnapshot(
                         storeIdentifier: storeIdentifier,
@@ -430,17 +416,17 @@ extension DatabaseConnection where Store == DatabaseStore {
                     return try onConflict(existingSnapshot, snapshot)
                 } else {
                     guard let existingSnapshot = try fetch(for: snapshot.primaryKey, as: snapshot.type) else {
-                        fatalError("Expected to find an existing snapshot with the same primary key.")
+                        preconditionFailure("Expected to find an existing snapshot with the same primary key.")
                     }
-                    logger.debug("Same primary key.")
+                    // Same primary key.
                     return try onExisting(existingSnapshot, snapshot)
                 }
             } else {
-                logger.debug("No match.")
+                // No match.
                 return try onNone?(snapshot)
             }
         default:
-            logger.debug("No unique constraint to check.")
+            // No unique constraint to check.
             return nil
         }
     }

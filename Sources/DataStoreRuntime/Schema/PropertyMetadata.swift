@@ -24,8 +24,6 @@ extension Array where Element == PropertyMetadata {
     }
 }
 
-// TODO: Optimize struct so that it is 64 bytes (currently at 128 bytes).
-
 public struct PropertyMetadata: Equatable, Hashable, Sendable {
     nonisolated package var flags: Flags
     /// The key path for binding the property to a column.
