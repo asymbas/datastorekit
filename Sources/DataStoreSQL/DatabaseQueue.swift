@@ -182,7 +182,7 @@ extension DatabaseQueue {
                 handle = try self.writerPool.acquire(timeout: timeout)
             }
         }
-        logger.debug("DatabaseConnection acquired: \(handle.id)")
+        logger.trace("DatabaseConnection acquired: \(handle.id)")
         return .init(for: editingState, queue: self, handle: handle, context: context)
     }
     
@@ -230,7 +230,7 @@ extension DatabaseQueue {
             _ = try? handle.close()
             return
         }
-        logger.debug(
+        logger.trace(
             "DatabaseConnection released: \(handle.id)",
             metadata: ["role": "\(handle.role, default: "nil")", "available": "\(count)"]
         )
