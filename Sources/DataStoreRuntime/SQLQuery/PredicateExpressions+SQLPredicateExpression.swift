@@ -1818,17 +1818,23 @@ where Input: SQLPredicateExpression {
     func evaluate<T>(_ context: inout Context<T>) -> Fragment {
         context.log(as: .trace, input: "TypeCheck", Input.self, Desired.self)
         let input = self.input.query(&context)
-        if let rootAlias = input.alias,
-           input.type is any PersistentModel.Type,
-           let subclass = Desired.self as? any PersistentModel.Type {
-            let leafTableName = Schema.entityName(for: subclass)
-            let clause = """
-                EXISTS (
-                    SELECT 1 FROM "\(leafTableName)"
-                    WHERE "\(leafTableName)"."\(pk)" = \(quote(rootAlias))."\(pk)"
-                )
-                """
-            return input.copy(clause: clause, kind: .subquery)
+        if let desiredType = Desired.self as? any (PersistentModel & SendableMetatype).Type,
+           let inputEntity = input.entity,
+           let inputAlias = input.alias,
+           let desiredEntity = context.schema.entity(for: desiredType) ?? Schema([desiredType]).entity(for: desiredType) {
+            guard let alias = context.createInheritedAlias(input.key, from: inputEntity, as: inputAlias, to: desiredEntity) else {
+                return input.copy(clause: "FALSE", kind: .binaryOperation)
+            }
+            if alias == inputAlias && inputEntity.name == desiredEntity.name {
+                return input.copy(clause: "TRUE", kind: .binaryOperation)
+            }
+            return input.copy(
+                clause: "\(quote(alias)).\(quote(pk)) IS NOT NULL",
+                alias: alias,
+                type: desiredType,
+                entity: desiredEntity,
+                kind: .binaryOperation
+            )
         }
         switch input.type {
         case is Desired.Type:
