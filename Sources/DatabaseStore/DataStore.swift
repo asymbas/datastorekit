@@ -984,7 +984,7 @@ public final class DatabaseStore: DataStore, Sendable {
                 )
             }
             #if DEBUG
-            if configuration.options.contains(.useDetailedLogging) {
+            if configuration.options.contains(.useVerboseLogging) {
                 logPersistentIdentifiers(request: request)
                 logSaveChangesResult(
                     remappedIdentifiers: remappedIdentifiers,

@@ -72,7 +72,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
     /// The `PersistentModel` type associated to this entity.
     nonisolated public var type: any (PersistentModel & SendableMetatype).Type {
         guard let type = Schema.type(for: entityName) else {
-            fatalError("\(SchemaError.entityNotRegistered)")
+            preconditionFailure()
         }
         return type
     }
@@ -401,7 +401,7 @@ extension DatabaseSnapshot {
         relatedBackingDatas: inout [PersistentIdentifier: any BackingData]
     ) {
         guard let persistentIdentifier = backingData.persistentModelID else {
-            fatalError("The provided BackingData does not contain a PersistentIdentifier.")
+            preconditionFailure("The provided BackingData does not contain a PersistentIdentifier.")
         }
         relatedBackingDatas[persistentIdentifier] = backingData
         self.init(persistentIdentifier: persistentIdentifier, type: Self.getMetatype(backingData))
@@ -444,7 +444,7 @@ extension DatabaseSnapshot {
                     self.values[property.index] = SQLNull()
                     logger.trace("Received BackingData attribute: \(description) = NULL")
                 default:
-                    fatalError("All attributes must carry over from BackingData: \(description)")
+                    preconditionFailure("All attributes must carry over from BackingData: \(description)")
                 }
             case let relationship as Schema.Relationship:
                 guard let keyPath = relationship.keypath else {
@@ -460,7 +460,7 @@ extension DatabaseSnapshot {
                         self.values[property.index] = SQLNull()
                         logger.trace("Received BackingData relationship: \(description) = NULL")
                     default:
-                        fatalError("Required to-one relationship is missing in BackingData: \(description)")
+                        preconditionFailure("Required to-one relationship is missing in BackingData: \(description)")
                     }
                 case let valueType as any RelationshipCollection.Type:
                     switch getValue(backingData, as: valueType, keyPath: keyPath) {
@@ -476,7 +476,7 @@ extension DatabaseSnapshot {
                         logger.trace("Received BackingData relationship: \(description) = []")
                     }
                 default:
-                    fatalError("All relationships must carry over from BackingData: \(description)")
+                    preconditionFailure("All relationships must carry over from BackingData: \(description)")
                 }
             default:
                 fatalError("Unhandled property type: \(property)")
@@ -516,11 +516,8 @@ extension DatabaseSnapshot {
     }
     
     /// Extracts the required or optional attribute value from the backing data.
-    nonisolated private func getValue<B, M, V>(
-        _ backingData: B,
-        as valueType: V.Type,
-        keyPath: AnyKeyPath
-    ) -> V? where B: BackingData, B.Model == M, V: Decodable {
+    nonisolated private func getValue<B, M, V>(_ backingData: B, as valueType: V.Type, keyPath: AnyKeyPath) -> V?
+    where B: BackingData, B.Model == M, V: Decodable {
         #if swift(>=6.2)
         if #available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *),
            (B.Model.Root.self is B.Model.Type) == false {
@@ -580,14 +577,8 @@ extension DatabaseSnapshot {
     #endif
     
     /// Extracts the required or optional to-one relationship value from the backing data.
-    nonisolated private func getValue<B, M, R>(
-        _ backingData: B,
-        as type: R.Type,
-        keyPath: AnyKeyPath
-    ) -> R? where
-    B: BackingData,
-    B.Model == M,
-    R: PersistentModel {
+    nonisolated private func getValue<B, M, R>(_ backingData: B, as type: R.Type, keyPath: AnyKeyPath) -> R?
+    where B: BackingData, B.Model == M, R: PersistentModel {
         switch keyPath {
         case let keyPath as KeyPath<B.Model, R>: backingData.getValue(forKey: keyPath)
         case let keyPath as KeyPath<B.Model, R?>: backingData.getValue(forKey: keyPath)
@@ -596,15 +587,8 @@ extension DatabaseSnapshot {
     }
     
     /// Extracts the required or optional to-many relationship value from the backing data.
-    nonisolated private func getValue<B, M, R>(
-        _ backingData: B,
-        as type: R.Type,
-        keyPath: AnyKeyPath
-    ) -> [R.PersistentElement]? where
-    B: BackingData,
-    B.Model == M,
-    R: RelationshipCollection,
-    R.PersistentElement: PersistentModel {
+    nonisolated private func getValue<B, M, R>(_ backingData: B, as type: R.Type, keyPath: AnyKeyPath) -> [R.PersistentElement]?
+    where B: BackingData, B.Model == M, R: RelationshipCollection, R.PersistentElement: PersistentModel {
         switch keyPath {
         case let keyPath as KeyPath<B.Model, [R.PersistentElement]>: backingData.getValue(forKey: keyPath)
         case let keyPath as KeyPath<B.Model, [R.PersistentElement]?>: backingData.getValue(forKey: keyPath)
@@ -614,15 +598,8 @@ extension DatabaseSnapshot {
     
     /// Extracts the required to-many relationship from the backing data.
     @available(*, deprecated, message: "")
-    nonisolated private func _getValue<B, M, R>(
-        _ backingData: B,
-        as type: R.Type,
-        keyPath: AnyKeyPath
-    ) -> R? where
-    B: BackingData,
-    B.Model == M,
-    R: RelationshipCollection,
-    R.PersistentElement: PersistentModel {
+    nonisolated private func _getValue<B, M, R>(_ backingData: B, as type: R.Type, keyPath: AnyKeyPath) -> R?
+    where B: BackingData, B.Model == M, R: RelationshipCollection, R.PersistentElement: PersistentModel {
         switch keyPath as? KeyPath<B.Model, R> {
         case let keyPath?: backingData.getValue(forKey: keyPath)
         case nil: nil
@@ -661,16 +638,11 @@ extension DatabaseSnapshot {
         }
         #endif
         let values = ContiguousArray(zip(properties, values).map { key, value in
-            guard key.metadata is Schema.Relationship else {
-                return value
-            }
+            guard key.metadata is Schema.Relationship else { return value }
             switch value {
-            case let oldIdentifiers as [PersistentIdentifier]:
-                return oldIdentifiers.map(append(_:))
-            case let oldIdentifier as PersistentIdentifier:
-                return append(oldIdentifier)
-            default:
-                return SQLNull()
+            case let oldIdentifiers as [PersistentIdentifier]: return oldIdentifiers.map(append(_:))
+            case let oldIdentifier as PersistentIdentifier: return append(oldIdentifier)
+            default: return SQLNull()
             }
             func append(_ oldIdentifier: PersistentIdentifier) -> PersistentIdentifier {
                 if let newIdentifier = remappedIdentifiers?[oldIdentifier] {
@@ -714,9 +686,9 @@ extension DatabaseSnapshot {
     nonisolated public func update(
         from other: Self,
         onChange: (
-            PropertyMetadata,
-            any DataStoreSnapshotValue,
-            any DataStoreSnapshotValue
+            _ property: PropertyMetadata,
+            _ lhs: any DataStoreSnapshotValue,
+            _ rhs: any DataStoreSnapshotValue
         ) throws -> (any DataStoreSnapshotValue)?
     ) throws -> Self {
         let lhsCount = self.values.count
@@ -758,7 +730,7 @@ extension DatabaseSnapshot {
         inheritedTraversalSnapshots: inout [Self]
     ) throws {
         guard let superType = Schema.type(for: entity.name) else {
-            fatalError(SchemaError.entityNotRegistered.localizedDescription)
+            preconditionFailure(SchemaError.entityNotRegistered.localizedDescription)
         }
         let schemaMetadata = superType.databaseSchemaMetadata
         var superProperties = ContiguousArray<PropertyMetadata>()
@@ -792,11 +764,7 @@ extension DatabaseSnapshot {
             )
         }
         if let superentity = entity.superentity {
-            try recursiveExportChain(
-                on: superentity,
-                indices: indices,
-                inheritedTraversalSnapshots: &inheritedTraversalSnapshots
-            )
+            try recursiveExportChain(on: superentity, indices: indices, inheritedTraversalSnapshots: &inheritedTraversalSnapshots)
         }
     }
     
@@ -820,10 +788,8 @@ extension DatabaseSnapshot {
                 guard let relationship = property.metadata as? Schema.Relationship else {
                     preconditionFailure("Property should have been a relationship: \(property)")
                 }
-                if let graph, let cachedTargets = graph.cachedReferencesIfPresent(
-                    for: persistentIdentifier,
-                    at: property.name
-                   ) {
+                if let graph,
+                   let cachedTargets = graph.cachedReferencesIfPresent(for: persistentIdentifier, at: property.name) {
                     if relationship.isToOneRelationship {
                         oldValue = cachedTargets.first ?? SQLNull()
                     } else {
@@ -845,10 +811,7 @@ extension DatabaseSnapshot {
                 let persistentIdentifier = self.persistentIdentifier
                 DataStoreDebugging.execute(body: {
                     logger.debug("Updating references: \(newTargets)")
-                    if let references = graph.cachedReferencesIfPresent(
-                        for: persistentIdentifier,
-                        at: property.name
-                    ) {
+                    if let references = graph.cachedReferencesIfPresent(for: persistentIdentifier, at: property.name) {
                         logger.debug("Found references: \(references)")
                     }
                 }())
@@ -967,7 +930,7 @@ extension DatabaseSnapshot {
             self.values[property.index] = consume newIdentifiers
         case let (oldIdentifiers as [PersistentIdentifier], is SQLNull):
             guard relationship.isOptional else {
-                fatalError("Relationship is not optional and cannot be set to NULL: \(description)")
+                preconditionFailure("Relationship is not optional and cannot be set to NULL: \(description)")
             }
             if shouldAddOnly {
                 self.values[property.index] = oldIdentifiers
@@ -981,7 +944,6 @@ extension DatabaseSnapshot {
             self.values[property.index] = SQLNull()
             unlinkedIdentifiers.formUnion(oldIdentifiers)
             logger.debug("Removed to-many relationships: \(description) -\(oldIdentifiers.count)")
-            
         case let (is SQLNull, newIdentifiers as [PersistentIdentifier]):
             try checkRelationshipCountConstraint(newIdentifiers)
             if reference.count == 2 {
@@ -1010,7 +972,7 @@ extension DatabaseSnapshot {
             self.values[property.index] = consume newIdentifier
         case (let oldIdentifier as PersistentIdentifier, is SQLNull):
             guard relationship.isOptional else {
-                fatalError("Relationship is not optional and cannot be set to NULL: \(description)")
+                preconditionFailure("Relationship is not optional and cannot be set to NULL: \(description)")
             }
             assert(reference.count == 1, "Expected one reference, got \(reference.count): \(description)")
             logger.debug("Unlinking to-one relationship: \(description) = \(oldIdentifier) -> NULL")
@@ -1019,7 +981,7 @@ extension DatabaseSnapshot {
             self.values[property.index] = SQLNull()
         case (is SQLNull, is SQLNull):
             guard relationship.isOptional else {
-                fatalError("Relationship is not optional and cannot be set to NULL: \(description)")
+                preconditionFailure("Relationship is not optional and cannot be set to NULL: \(description)")
             }
             logger.trace("External references are NULL and unchanged: \(description)")
         default:
@@ -1059,16 +1021,12 @@ extension DatabaseSnapshot {
             let value = try fetchReference(in: property, connection: connection)
             if property.isManyToManyRelationship {
                 guard let identifiers = value as? [PersistentIdentifier] else {
-                    fatalError("Expected identifiers for many-to-many relationship: \(description)")
+                    preconditionFailure("Expected identifiers for many-to-many relationship: \(description)")
                 }
                 switch relationship.deleteRule {
                 case .deny:
                     guard identifiers.isEmpty else {
-                        throw ConstraintError(
-                            for: persistentIdentifier,
-                            references: identifiers,
-                            deleteRule: .deny
-                        )
+                        throw ConstraintError(for: persistentIdentifier, references: identifiers, deleteRule: .deny)
                     }
                 case .cascade:
                     cascadedIdentifiers.formUnion(identifiers)
@@ -1100,11 +1058,7 @@ extension DatabaseSnapshot {
                 switch relationship.deleteRule {
                 case .deny:
                     guard childIdentifiers.isEmpty else {
-                        throw ConstraintError(
-                            for: persistentIdentifier,
-                            references: childIdentifiers,
-                            deleteRule: .deny
-                        )
+                        throw ConstraintError(for: persistentIdentifier, references: childIdentifiers, deleteRule: .deny)
                     }
                 case .cascade:
                     cascadedIdentifiers.formUnion(childIdentifiers)
@@ -1134,16 +1088,12 @@ extension DatabaseSnapshot {
                         logger.debug("Optional one-to-one relationship had a nil value: \(description)")
                         continue
                     } else {
-                        fatalError("The value is missing for a required one-to-one relationship: \(description)")
+                        preconditionFailure("The value is missing for a required one-to-one relationship: \(description)")
                     }
                 }
                 switch relationship.deleteRule {
                 case .deny:
-                    throw ConstraintError(
-                        for: persistentIdentifier,
-                        references: [relatedIdentifier],
-                        deleteRule: .deny
-                    )
+                    throw ConstraintError(for: persistentIdentifier, references: [relatedIdentifier], deleteRule: .deny)
                 case .cascade:
                     cascadedIdentifiers.insert(relatedIdentifier)
                 case .nullify:
@@ -1478,10 +1428,9 @@ extension DatabaseSnapshot {
                     primaryKey: foreignKey
                 )
             }
-            logger.debug(
-                "Fetched foreign keys relationship: \(description) \(rows.count)",
-                metadata: ["type": "many-to-many"]
-            )
+            logger.debug("Fetched foreign keys relationship: \(description) \(rows.count)", metadata: [
+                "type": "many-to-many"
+            ])
             return try ensureRelationshipValue(rows, in: relationship)
         } else if !relationship.isToOneRelationship {
             let sql = """
@@ -1498,10 +1447,9 @@ extension DatabaseSnapshot {
                     primaryKey: foreignKey
                 )
             }
-            logger.debug(
-                "Fetched foreign keys for relationship: \(description) \(rows.count)",
-                metadata: ["type": "non-owning one-to-many"]
-            )
+            logger.debug("Fetched foreign keys for relationship: \(description) \(rows.count)", metadata: [
+                "type": "non-owning one-to-many"
+            ])
             return try ensureRelationshipValue(rows, in: relationship)
         } else {
             let statement = SQL {
@@ -1520,10 +1468,9 @@ extension DatabaseSnapshot {
                     primaryKey: foreignKey
                 )
             }
-            logger.debug(
-                "Fetched foreign keys for relationship: \(description) \(rows.count)",
-                metadata: ["type": "owning many-to-one"]
-            )
+            logger.debug("Fetched foreign keys for relationship: \(description) \(rows.count)", metadata: [
+                "type": "owning many-to-one"
+            ])
             return try ensureRelationshipValue(rows, in: relationship)
         }
     }

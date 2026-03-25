@@ -37,7 +37,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
             switch event {
             case .stateUpdate(let event):
                 try saveState(stateSerialization: event.stateSerialization, clearErrorCode: true)
-                logger.debug("Saved sync state update.")
+                logger.debug("Saved sync state update: \(event.stateSerialization)")
             case .accountChange(let event):
                 logger.trace("Received CloudKit account change.", metadata: ["change_type": "\(event.changeType)"])
                 guard isHandlingAccountChange == false else {

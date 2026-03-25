@@ -127,9 +127,6 @@ extension DatabaseConnection where Store == DatabaseStore {
         from oldSnapshot: consuming Store.Snapshot? = nil,
         to newSnapshot: consuming Store.Snapshot
     ) throws {
-        guard let transaction = self.transaction else {
-            preconditionFailure("Updating backing data is only allowed during a transaction.")
-        }
         let entityName = newSnapshot.entityName
         let primaryKey = newSnapshot.primaryKey
         let oldSnapshot: DatabaseSnapshot? = oldSnapshot ?? {
@@ -137,14 +134,12 @@ extension DatabaseConnection where Store == DatabaseStore {
                 return nil
             }
             if let snapshot = self.context?.snapshot(for: newSnapshot.persistentIdentifier) {
-                logger.debug("Using snapshot from cache object: \(snapshot)")
                 return snapshot
             }
             do {
                 guard let result = try fetch(for: primaryKey, as: newSnapshot.type) else {
                     return nil
                 }
-                logger.notice("Fetching previous snapshot from store - \(context.debugDescription)")
                 return result
             } catch {
                 logger.error("Failed to fetch the row to update: \(error) - \(entityName) \(primaryKey)")

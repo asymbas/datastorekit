@@ -9,8 +9,6 @@
 
 import Foundation
 
-// TODO: Check if this API was recently updated for Swift concurrency.
-
 extension Notification.Name {
     nonisolated public static let databaseConnection: Self = .init("DatabaseConnection")
 }
