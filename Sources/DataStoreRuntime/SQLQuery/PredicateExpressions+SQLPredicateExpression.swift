@@ -1082,56 +1082,43 @@ where Test: SQLPredicateExpression,
 
 /// `$0 as? Object`
 extension PredicateExpressions.ConditionalCast: SQLPredicateExpression
-where Input: SQLPredicateExpression, Desired: SQLPredicateExpression {
+where Input: SQLPredicateExpression {
     func evaluate<T>(_ context: inout Context<T>) -> Fragment {
         let input = self.input.query(&context)
-        guard var inputType = input.type else {
-            return .invalid
-        }
         var desiredType: Any.Type = Desired.self
-        context.log(
-            as: .debug,
-            input: "ConditionalCast from \(Input.Output.self) as? \(Desired.self).",
-            metadata: [
-                "input": .string(input.description),
-                "input_type": "\(inputType)",
-                "desired_type": "\(desiredType)",
-                "input_output_type": "\(Input.Output.self)",
-                "output_type": "\(Output.self)"
-            ]
-        )
-        switch desiredType {
-        case is any RelationshipCollection.Type:
-            inputType = unwrapArrayMetatype(inputType)
+        context.log(.debug, "ConditionalCast from \(Input.Output.self) as? \(Desired.self).", metadata: [
+            "input": .string(input.description),
+            "input_type": "\(input.type, default: "nil")",
+            "desired_type": "\(desiredType)",
+            "input_output_type": "\(Input.Output.self)",
+            "output_type": "\(Output.self)"
+        ])
+        if desiredType is any RelationshipCollection.Type {
             desiredType = unwrapArrayMetatype(desiredType)
-            fallthrough
-        case is any PersistentModel.Type:
-            guard let desiredType = desiredType as? Desired.Type else {
-                return input.copy(
-                    clause: input.clause,
-                    bindings: input.bindings,
-                    type: nil,
-                    kind: .expression
-                )
-            }
-            guard let type = desiredType as? any PersistentModel.Type else {
-                preconditionFailure("Type is not a PersistentModel.Type.")
-            }
-            context.loadSchemaMetadata(for: type, key: input.key)
-            return input.copy(
-                clause: input.clause,
-                bindings: input.bindings,
-                type: type,
-                kind: .expression
-            )
-        default:
-            return input.copy(
-                clause: input.clause,
-                bindings: input.bindings,
-                type: Desired.self,
-                kind: .expression
-            )
         }
+        guard let desiredType = desiredType as? any (PersistentModel & SendableMetatype).Type else {
+            return input.copy(clause: input.clause, bindings: input.bindings, type: Desired.self, kind: .expression)
+        }
+        context.loadSchemaMetadata(for: desiredType)
+        guard let inputEntity = input.entity,
+              let inputAlias = input.alias,
+              let desiredEntity = context.schema.entity(for: desiredType) ?? Schema([desiredType]).entity(for: desiredType) else {
+            return input.copy(clause: input.clause, bindings: input.bindings, type: desiredType, kind: .expression)
+        }
+        guard let alias = context.createInheritedAlias(input.key, from: inputEntity, as: inputAlias, to: desiredEntity) else {
+            return input.copy(clause: "NULL", bindings: input.bindings, type: desiredType, entity: desiredEntity, kind: .expression)
+        }
+        context.log(.debug, "Created inheritance alias: \(desiredType)")
+        return input.copy(
+            clause: "\(quote(alias)).\(quote(pk))",
+            bindings: input.bindings,
+            alias: alias,
+            type: desiredType,
+            entity: desiredEntity,
+            property: nil,
+            keyPath: nil,
+            kind: .scope
+        )
     }
 }
 
