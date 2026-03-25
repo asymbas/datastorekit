@@ -1475,6 +1475,26 @@ extension DatabaseSnapshot {
         }
     }
     
+    nonisolated package static func fetchInheritanceEntity(
+        for persistentIdentifier: PersistentIdentifier,
+        on entity: Schema.Entity,
+        connection: borrowing DatabaseConnection<Store>
+    ) throws -> Schema.Entity {
+        for subentity in entity.subentities {
+            let rows = try connection.query(
+                """
+                SELECT 1 FROM "\(subentity.name)"
+                WHERE "\(pk)" = ?
+                LIMIT 1
+                """,
+                bindings: [persistentIdentifier.primaryKey()]
+            )
+            guard !rows.isEmpty else { continue }
+            return try fetchInheritanceEntity(for: persistentIdentifier, on: subentity, connection: connection)
+        }
+        return entity
+    }
+    
     nonisolated package static func fetchSuperentities(
         for identifier: PersistentIdentifier,
         entity: String,

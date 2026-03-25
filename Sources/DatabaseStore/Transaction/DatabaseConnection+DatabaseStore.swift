@@ -146,42 +146,17 @@ extension DatabaseConnection where Store == DatabaseStore {
                 return nil
             }
         }()
-        let export = newSnapshot.export
-        var columnsToUpdate = [String]()
-        var valuesToUpdate = [any Sendable]()
-        var propertiesChanges = [String]()
-        var oldValues = [any Sendable]()
-        var newValues = [any Sendable]()
-        _ = oldSnapshot?.diff(from: newSnapshot) { property, lhs, rhs in
-            if let index = export.columns.firstIndex(of: property.name) {
-                columnsToUpdate.append(export.columns[index])
-                valuesToUpdate.append(export.values[index])
+        let inheritedSnapshots = try inheritedSnapshots(for: newSnapshot)
+        let inheritedOldSnapshotsByEntity = try Dictionary(
+            uniqueKeysWithValues: (oldSnapshot.map { try self.inheritedSnapshots(for: $0) } ?? []).map {
+                ($0.entityName, $0)
             }
-            propertiesChanges.append(property.name)
-            oldValues.append(lhs)
-            newValues.append(rhs)
-        }
-        if !columnsToUpdate.isEmpty {
-            logger.debug("Updated snapshot.", metadata: [
-                "columns_to_update": "\(columnsToUpdate)",
-                "values_to_update": "\(valuesToUpdate)",
-            ])
-            let _ = try execute.update(
-                table: newSnapshot.entityName,
-                columns: columnsToUpdate,
-                values: valuesToUpdate,
-                where: "\(pk) = ?",
-                bindings: [primaryKey]
-            )
-        }
-        try transaction.externalStorageTransaction.apply(export.externalStorageData)
-        if !propertiesChanges.isEmpty {
-            transaction.informDidUpdateRow(
-                for: primaryKey,
-                in: entityName,
-                columns: propertiesChanges,
-                oldValues: oldValues,
-                newValues: newValues
+        )
+        try updateRow(from: oldSnapshot, to: newSnapshot)
+        for inheritedSnapshot in inheritedSnapshots {
+            try updateRow(
+                from: inheritedOldSnapshotsByEntity[inheritedSnapshot.entityName],
+                to: inheritedSnapshot
             )
         }
     }
@@ -189,20 +164,11 @@ extension DatabaseConnection where Store == DatabaseStore {
     /// Deletes the model's backing data from the data store.
     /// - Parameter snapshot: The model snapshot.
     nonisolated public func delete(_ snapshot: consuming Store.Snapshot) throws {
-        guard let transaction = self.transaction else {
-            preconditionFailure("Deleting backing data is only allowed during a transaction.")
+        let inheritedSnapshots = try inheritedSnapshots(for: snapshot)
+        try deleteRow(snapshot)
+        for inheritedSnapshot in inheritedSnapshots {
+            try deleteRow(inheritedSnapshot)
         }
-        let entityName = snapshot.entityName
-        let primaryKey = snapshot.primaryKey
-        let delete = snapshot.delete
-        let _ = try execute.delete(from: entityName, where: "\(pk) = ?", bindings: [primaryKey])
-        try transaction.externalStorageTransaction.apply(delete.externalStorageData)
-        transaction.informDidDeleteRow(
-            primaryKey,
-            in: entityName,
-            preservedColumns: delete.columns.isEmpty ? nil : delete.columns,
-            preservedValues: delete.values.isEmpty ? nil : delete.values
-        )
     }
     
     nonisolated public mutating func match(snapshot: consuming Store.Snapshot) throws -> Store.Snapshot? {
@@ -424,5 +390,90 @@ extension DatabaseConnection where Store == DatabaseStore {
             // No unique constraint to check.
             return nil
         }
+    }
+}
+
+extension DatabaseConnection where Store == DatabaseStore {
+    nonisolated package func inheritedSnapshots(for snapshot: Store.Snapshot) throws -> [Store.Snapshot] {
+        guard let store = self.attachment?.store,
+              let entity = store.schema.entitiesByName[snapshot.entityName],
+              let superentity = entity.superentity else {
+            return []
+        }
+        var snapshot = snapshot
+        let indices = snapshot.export.inheritedDependencies
+        guard !indices.isEmpty else {
+            return []
+        }
+        var inheritedSnapshots = [Store.Snapshot]()
+        try snapshot.recursiveExportChain(
+            on: superentity,
+            indices: indices,
+            inheritedTraversalSnapshots: &inheritedSnapshots
+        )
+        return inheritedSnapshots
+    }
+    
+    nonisolated private func updateRow(
+        from oldSnapshot: consuming Store.Snapshot? = nil,
+        to newSnapshot: consuming Store.Snapshot
+    ) throws {
+        guard let transaction = self.transaction else {
+            preconditionFailure("Updating backing data is only allowed during a transaction.")
+        }
+        let entityName = newSnapshot.entityName
+        let primaryKey = newSnapshot.primaryKey
+        let export = newSnapshot.export
+        var columnsToUpdate = [String]()
+        var valuesToUpdate = [any Sendable]()
+        var propertiesChanges = [String]()
+        var oldValues = [any Sendable]()
+        var newValues = [any Sendable]()
+        _ = oldSnapshot?.diff(from: newSnapshot) { property, lhs, rhs in
+            if let column = property.column,
+               let index = export.columns.firstIndex(of: column) {
+                columnsToUpdate.append(export.columns[index])
+                valuesToUpdate.append(export.values[index])
+            }
+            propertiesChanges.append(property.name)
+            oldValues.append(lhs)
+            newValues.append(rhs)
+        }
+        if !columnsToUpdate.isEmpty {
+            let _ = try execute.update(
+                table: newSnapshot.entityName,
+                columns: columnsToUpdate,
+                values: valuesToUpdate,
+                where: "\(pk) = ?",
+                bindings: [primaryKey]
+            )
+        }
+        try transaction.externalStorageTransaction.apply(export.externalStorageData)
+        if !propertiesChanges.isEmpty {
+            transaction.informDidUpdateRow(
+                for: primaryKey,
+                in: entityName,
+                columns: propertiesChanges,
+                oldValues: oldValues,
+                newValues: newValues
+            )
+        }
+    }
+    
+    nonisolated private func deleteRow(_ snapshot: consuming Store.Snapshot) throws {
+        guard let transaction = self.transaction else {
+            preconditionFailure("Deleting backing data is only allowed during a transaction.")
+        }
+        let entityName = snapshot.entityName
+        let primaryKey = snapshot.primaryKey
+        let delete = snapshot.delete
+        let _ = try execute.delete(from: entityName, where: "\(pk) = ?", bindings: [primaryKey])
+        try transaction.externalStorageTransaction.apply(delete.externalStorageData)
+        transaction.informDidDeleteRow(
+            primaryKey,
+            in: entityName,
+            preservedColumns: delete.columns.isEmpty ? nil : delete.columns,
+            preservedValues: delete.values.isEmpty ? nil : delete.values
+        )
     }
 }

@@ -87,34 +87,72 @@ extension DatabaseSnapshot {
             throw SchemaError.entityNotRegistered
         }
         var properties = properties
-        logger.trace("Creating \(entity.name) snapshot: \(zip(properties.map(\.name), values))")
         let persistentIdentifier = try PersistentIdentifier.identifier(
             for: storeIdentifier,
             entityName: entity.name,
             primaryKey: primaryKey
         )
-        var inheritedValues = [String: any DataStoreSnapshotValue]()
-        if entity.superentity != nil || !entity.subentities.isEmpty {
-            inheritedValues = try Self.fetchInheritanceDependencies(
+        let connection = try queue.request(.reader)
+        let resolvedEntity: Schema.Entity
+        let inheritedValues: [String: any DataStoreSnapshotValue]
+        do {
+            resolvedEntity = try Self.fetchInheritanceEntity(
                 for: persistentIdentifier,
                 on: entity,
-                connection: queue.connection(nil),
-                direction: .both,
-                excludeExistingValues: true
+                connection: connection
             )
+            if entity.superentity != nil || !entity.subentities.isEmpty {
+                inheritedValues = try Self.fetchInheritanceDependencies(
+                    for: persistentIdentifier,
+                    on: entity,
+                    connection: connection,
+                    direction: .both,
+                    excludeExistingValues: true
+                )
+            } else {
+                inheritedValues = [:]
+            }
+        } catch {
+            queue.release(consume connection)
+            throw error
         }
+        queue.release(consume connection)
+        let resolvedType = (Schema.type(for: resolvedEntity.name)) ?? type
         if let relatedSnapshot = relatedSnapshots[persistentIdentifier] {
-            logger.trace("\(entity.name) snapshot found in related snapshots: \(primaryKey)")
+            logger.trace("\(resolvedEntity.name) snapshot found in related snapshots: \(primaryKey)")
             self = consume relatedSnapshot
             return
         }
         try self.init(
             primaryKey: primaryKey,
             storeIdentifier: storeIdentifier,
-            type: type,
-            entityName: entity.name,
-            properties: .init(type.databaseSchemaMetadata)
+            type: resolvedType,
+            entityName: resolvedEntity.name,
+            properties: .init(resolvedType.databaseSchemaMetadata)
         )
+        if !inheritedValues.isEmpty {
+            logger.debug("Creating snapshot for \(resolvedEntity.name) that inherits from \(entity.name).", metadata: [
+                "type": "\(type)",
+                "resolvedType": "\(resolvedType)",
+                "row": "\(zip(properties.map(\.name), values))"
+            ])
+            for index in properties.indices {
+                let existing = properties[index]
+                if inheritedValues[existing.name] != nil {
+                    continue
+                }
+                guard var resolvedProperty = resolvedType.schemaMetadata(for: existing.name) else {
+                    continue
+                }
+                resolvedProperty.isSelected = existing.isSelected
+                properties[index] = resolvedProperty
+            }
+        } else {
+            logger.debug("Creating snapshot for \(entity.name).", metadata: [
+                "type": "\(type)",
+                "row": "\(zip(properties.map(\.name), values))"
+            ])
+        }
         let configuration = configuration
         var excludedProperties = [PropertyMetadata]()
         var cursor = values.index(after: values.startIndex)
@@ -123,18 +161,9 @@ extension DatabaseSnapshot {
             let offset = cursor
             let description = "\(primaryKey) \(discriminator.index)-\(entityName).\(property)"
             logger.trace("Assigning result set column \(offset) to property \(index): \(description)")
-            if let inheritedValue = inheritedValues[property.name] {
-                logger.trace("Property has an inherited value: \(description) = \(inheritedValue)")
-                try setValue(
-                    inheritedValue,
-                    at: property,
-                    storeIdentifier: storeIdentifier,
-                    externalStorageURL: configuration.externalStorageURL
-                )
-                continue
-            }
             if !property.isSelected {
-                logger.debug("Property was not a selected result set column: \(description)")
+                // Copy state to snapshot.
+                logger.trace("Property was not a selected result set column: \(description)")
                 self.properties[property.index] = property
                 excludedProperties.append(property)
                 continue

@@ -320,7 +320,7 @@ extension SQLPredicateTranslator {
         var columns = [String]()
         var foreignKeyColumns = [PropertyMetadata]()
         let entityAlias = alias
-        loadSchemaMetadata(for: Model.self)
+        loadSchemaMetadata(for: Model.self, key: key)
         guard var primaryKeyColumn = self.keyPaths[\Model.persistentModelID] else {
             preconditionFailure("Primary key was not registered in context: \(type)")
         }
@@ -334,11 +334,20 @@ extension SQLPredicateTranslator {
             defer { properties.append(property) }
             switch property.metadata {
             case is Schema.Attribute:
+                let columnAlias: String
+                if property.isInherited,
+                   let ownerEntity = entityOwningProperty(named: property.name, startingAt: entity),
+                   let inheritedAlias = createInheritedAlias(key, from: entity, as: entityAlias, to: ownerEntity) {
+                    columnAlias = inheritedAlias
+                } else {
+                    columnAlias = entityAlias
+                }
                 if !propertiesToFetch.isEmpty && !propertiesToFetch.contains(property.keyPath) {
                     property.isSelected = false
                 } else {
-                    columns.append(clause(entityAlias, property.name))
+                    columns.append(clause(columnAlias, property.name))
                 }
+                continue
             case let relationship as Schema.Relationship:
                 if relationshipKeyPathsForPrefetching.contains(property.keyPath) {
                     property.flags.insert(.prefetch)
@@ -680,7 +689,6 @@ extension SQLPredicateTranslator {
 #if DEBUG
             print(
                 """
-                Affected key path: \(keyPath)
                 The parsed key path could not match to any PropertyMetadata in the schema.
                 It might be present with an identical description with mismatching Equatable/Hashable.
                 Using a protocol or generic constraint can affect matching to a key path.
@@ -817,6 +825,89 @@ extension SQLPredicateTranslator {
         return alias
     }
     
+    nonisolated internal mutating func createInheritedAlias(
+        _ key: PredicateExpressions.VariableID?,
+        from sourceEntity: Schema.Entity,
+        as sourceAlias: String,
+        to destinationEntity: Schema.Entity
+    ) -> String? {
+        if sourceEntity.name == destinationEntity.name {
+            return sourceAlias
+        }
+        if let path = inheritancePath(descendingFrom: sourceEntity, to: destinationEntity) {
+            return append(path, startingAt: (sourceEntity, sourceAlias))
+        }
+        if let path = inheritancePath(ascendingFrom: sourceEntity, to: destinationEntity) {
+            return append(path, startingAt: (sourceEntity, sourceAlias))
+        }
+        return nil
+        func append(_ path: [Schema.Entity], startingAt current: consuming (entity: Schema.Entity, alias: String)) -> String {
+            for entity in path {
+                let alias = createTableAlias(key, entity.name)
+                if alias == current.alias {
+                    current = (entity, alias)
+                    continue
+                }
+                let reference = TableReference(
+                    sourceAlias: current.alias,
+                    sourceTable: current.entity.name,
+                    sourceColumn: pk,
+                    destinationAlias: alias,
+                    destinationTable: entity.name,
+                    destinationColumn: pk
+                )
+                if !containsReference(reference, in: implicitReferences),
+                   !containsReference(reference, in: key.flatMap { references[$0] }) {
+                    implicitReferences.append(reference)
+                }
+                current = (entity, alias)
+            }
+            return current.alias
+        }
+        func containsReference(_ reference: TableReference, in references: OrderedSet<TableReference>?) -> Bool {
+            guard let references else { return false }
+            return references.contains(where: { existing in
+                existing.sourceAlias == reference.sourceAlias &&
+                existing.sourceTable == reference.sourceTable &&
+                existing.sourceColumn == reference.sourceColumn &&
+                existing.destinationAlias == reference.destinationAlias &&
+                existing.destinationTable == reference.destinationTable &&
+                existing.destinationColumn == reference.destinationColumn
+            })
+        }
+        func inheritancePath(descendingFrom current: Schema.Entity, to target: Schema.Entity) -> [Schema.Entity]? {
+            for subentity in current.subentities {
+                if subentity.name == target.name { return [subentity] }
+                if let path = inheritancePath(descendingFrom: subentity, to: target) { return [subentity] + path }
+            }
+            return nil
+        }
+        func inheritancePath(ascendingFrom current: Schema.Entity, to target: Schema.Entity) -> [Schema.Entity]? {
+            var path = [Schema.Entity]()
+            var currentEntity: Schema.Entity? = current
+            while let superentity = currentEntity?.superentity {
+                path.append(superentity)
+                if superentity.name == target.name { return path }
+                currentEntity = superentity
+            }
+            return nil
+        }
+    }
+    
+    nonisolated internal func entityOwningProperty(
+        named name: String,
+        startingAt entity: Schema.Entity
+    ) -> Schema.Entity? {
+        var entity: Schema.Entity? = entity
+        while let currentEntity = entity {
+            if currentEntity.storedPropertiesByName[name] != nil && currentEntity.inheritedPropertiesByName[name] == nil {
+                return currentEntity
+            }
+            entity = currentEntity.superentity
+        }
+        return nil
+    }
+    
     /// Registers the model and prepares a discriminator with its schema metadata.
     ///
     /// - Parameters:
@@ -870,11 +961,7 @@ extension SQLPredicateTranslator {
                 loadSchemaMetadata(for: superclass, key: key)
                 return try Variable.schemaMetadata(for: keyPath)
                 ?? parseKeyPathForProperty(keyPath)
-                ?? lookupPropertyMetadata(
-                    superclass: superclass,
-                    subclass: Variable.self,
-                    keyPath: keyPath
-                )
+                ?? lookupPropertyMetadata(superclass: superclass, subclass: Variable.self, keyPath: keyPath)
             } else {
                 loadSchemaMetadata(for: Variable.self, key: key)
                 return try Variable.schemaMetadata(for: keyPath)
@@ -894,6 +981,22 @@ extension SQLPredicateTranslator {
             return nil
         }
         #endif
+        guard let metadata = KeyPathDescription.parse(keyPath: keyPath),
+              let propertyName = metadata.components.compactMap(\.property).last else {
+            return nil
+        }
+        var superclass: (any PersistentModel.Type)? = superclass
+        while let currentSuperclass = superclass {
+            if let property = currentSuperclass.databaseSchemaMetadata.first(where: { $0.name == propertyName }) {
+                if allowKeyPathVariantsForPropertyLookup {
+                    subclass.addKeyPathVariantToPropertyMetadata(keyPath, for: property)
+                }
+                let property = property.copy(keyPath: keyPath)
+                self.keyPaths[keyPath] = property
+                return property
+            }
+            superclass = class_getSuperclass(currentSuperclass) as? any PersistentModel.Type
+        }
         return nil
     }
     
@@ -902,10 +1005,8 @@ extension SQLPredicateTranslator {
         mutating get throws { try getProperty(at: keyPath) }
     }
     
-    nonisolated internal subscript<Variable>(
-        keyPath: AnyKeyPath & Sendable,
-        type: Variable.Type
-    ) -> PropertyMetadata? where Variable: PersistentModel & SendableMetatype {
+    nonisolated internal subscript<Variable>(keyPath: AnyKeyPath & Sendable, type: Variable.Type)
+    -> PropertyMetadata? where Variable: PersistentModel & SendableMetatype {
         mutating get throws {
             guard let keyPath = keyPath as? PartialKeyPath<Variable>,
                   let keyPath: (PartialKeyPath<Variable> & Sendable) = sendable(cast: keyPath) else {
@@ -919,27 +1020,6 @@ extension SQLPredicateTranslator {
     where Model: PersistentModel & SendableMetatype {
         mutating get { Model.databaseSchemaMetadata }
     }
-}
-
-nonisolated internal func appendKeyPath<Root, Value>(
-    from lhsKeyPath: AnyKeyPath & Sendable,
-    to rhsKeyPath: any KeyPath<Root, Value> & Sendable
-) -> (AnyKeyPath & Sendable)? {
-    let lhsKeyPath = lhsKeyPath as AnyKeyPath
-    guard let keyPath = lhsKeyPath.appending(path: rhsKeyPath) else {
-        return nil
-    }
-    guard let keyPath: (AnyKeyPath & Sendable) = sendable(cast: keyPath) else {
-        return nil
-    }
-    return keyPath
-}
-
-nonisolated internal func appendKeyPath<LHSRoot, LHSValue, RHSValue>(
-    _ lhsKeyPath: KeyPath<LHSRoot, LHSValue>,
-    _ rhsKeyPath: KeyPath<LHSValue, RHSValue>
-) -> KeyPath<LHSRoot, RHSValue> {
-    lhsKeyPath.appending(path: rhsKeyPath)
 }
 
 extension SQLPredicateTranslator {

@@ -873,6 +873,7 @@ public final class DatabaseStore: DataStore, Sendable {
                 }
                 let cachedSnapshot = connection.context?.snapshot(for: snapshot.persistentIdentifier)
                 let export = snapshot.export
+                let inheritedSnapshots = try connection.inheritedSnapshots(for: snapshot)
                 try connection.update(from: cachedSnapshot, to: snapshot)
                 if !export.toManyDependencies.isEmpty {
                     dependencies[snapshot.persistentIdentifier, default: []]
@@ -880,6 +881,10 @@ public final class DatabaseStore: DataStore, Sendable {
                 }
                 operation[.update, default: []].append(snapshot.persistentIdentifier)
                 snapshots[snapshot.persistentIdentifier] = snapshot
+                for inheritedSnapshot in inheritedSnapshots {
+                    operation[.update, default: []].append(inheritedSnapshot.persistentIdentifier)
+                    snapshots[inheritedSnapshot.persistentIdentifier] = inheritedSnapshot
+                }
                 logger.info("Updated snapshot: \(snapshot.persistentIdentifier)")
             }
             for (persistentIdentifier, indices) in dependencies {
@@ -955,11 +960,18 @@ public final class DatabaseStore: DataStore, Sendable {
                             "cascaded": "\(results.cascaded)"
                         ]
                     )
+                    let inheritedSnapshots = try connection.inheritedSnapshots(for: snapshot)
                     try connection.delete(snapshot)
                     operation[.delete, default: []].append(snapshot.persistentIdentifier)
                     invalidatedIdentifiers.insert(snapshot.persistentIdentifier)
                     snapshots[snapshot.persistentIdentifier] = nil
                     snapshotsToReregister[snapshot.persistentIdentifier] = snapshot
+                    for inheritedSnapshot in inheritedSnapshots {
+                        operation[.delete, default: []].append(inheritedSnapshot.persistentIdentifier)
+                        invalidatedIdentifiers.insert(inheritedSnapshot.persistentIdentifier)
+                        snapshots[inheritedSnapshot.persistentIdentifier] = nil
+                        snapshotsToReregister[inheritedSnapshot.persistentIdentifier] = inheritedSnapshot
+                    }
                     logger.notice(
                         "Deleted snapshot: \(snapshot.persistentIdentifier)",
                         metadata: ["preserved_values": "\(export.values)"]

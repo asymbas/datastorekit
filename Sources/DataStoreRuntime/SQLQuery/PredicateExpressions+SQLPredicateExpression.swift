@@ -219,6 +219,19 @@ where Root: SQLPredicateExpression {
         case is Schema.CompositeAttribute:
             context.log(.debug, "Property is a composite attribute: \(description)")
             clause = "\(quote(sourceAlias)).\(quote(property.name))"
+        case is Schema.Attribute where property.isInherited:
+            context.log(.debug, "Property is an inherited attribute: \(description)")
+            guard let entity = root.entity,
+                  let ownerEntity = context.entityOwningProperty(named: property.name, startingAt: entity),
+                  let inheritedAlias = context.createInheritedAlias(root.key, from: entity, as: sourceAlias, to: ownerEntity) else {
+                return .invalid("Unable to resolve inherited attribute", description)
+            }
+            return root.copy(
+                clause: "\(quote(inheritedAlias)).\(quote(property.name))",
+                alias: inheritedAlias,
+                keyPath: keyPath,
+                kind: .columnReference
+            )
         case is Schema.Attribute where property.enclosing is Schema.Relationship:
             context.log(.debug, "Property is an attribute of a relationship: \(description)")
             clause = "\(quote(root.clause)).\(quote(property.name))"
