@@ -28,13 +28,6 @@ private typealias ForEach = SQLForEach
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.query")
 
-@inline(__always) nonisolated internal func createAlias(
-    _ key: PredicateExpressions.VariableID?,
-    _ table: String
-) -> String {
-    key == nil ? table : "\(key.unsafelyUnwrapped)_\(table)"
-}
-
 extension SQLPredicateTranslator {
     nonisolated internal var isCachingPredicates: Bool {
         options.contains(.isCachingPredicates)
@@ -56,8 +49,6 @@ extension SQLPredicateTranslator {
     }
 }
 
-// TODO: Learn how to increase precendence with parenthesis.
-// TODO: Using `Hasher` may be unnecessary, try using the description for `Predicate`.
 // FIXME: Unable to match to key paths due to generic and protocol constraints.
 // FIXME: Unable to match to key paths related to inheritance.
 // FIXME: Unable to access a relationship's attribute to sort without a predicate.
@@ -115,15 +106,15 @@ where T: PersistentModel & SendableMetatype {
     /// All CTEs that will be inserted after walking through the predicate tree.
     nonisolated internal var ctes: [CommonTableExpression] = [] {
         didSet {
+            #if DEBUG
             if let key = self.path.last, let cte = self.ctes.last {
                 ctesMap[key, default: []].append(cte)
             }
+            #endif
         }
     }
     /// A last-in-first-out stack that appends when a fragment is being evaluated (diverges). The LHS shifts to the next on append.
-    nonisolated internal var path: [PredicateExpressions.VariableID] = [] {
-        didSet(newValue) {}
-    }
+    nonisolated internal var path: [PredicateExpressions.VariableID] = []
     
     /// Total number of `PersistentIdentifier` bindings.
     internal lazy var bindingsCount: Int? = {
@@ -197,14 +188,8 @@ where T: PersistentModel & SendableMetatype {
             alias: baseAlias,
             entity: baseEntity,
             type: T.self,
-            propertiesToFetch: Set(descriptor
-                .propertiesToFetch
-                .lazy
-                .compactMap(sendable(cast:))),
-            relationshipKeyPathsForPrefetching: Set(descriptor
-                .relationshipKeyPathsForPrefetching
-                .lazy
-                .compactMap(sendable(cast:)))
+            propertiesToFetch: Set(descriptor.propertiesToFetch.lazy.compactMap(sendable(cast:))),
+            relationshipKeyPathsForPrefetching: Set(descriptor.relationshipKeyPathsForPrefetching.lazy.compactMap(sendable(cast:)))
         )
         if !self.references.isEmpty {
             // FIXME: Handle non-consumed references, issue occurs on real devices.
@@ -275,19 +260,14 @@ where T: PersistentModel & SendableMetatype {
         #if DEBUG
         if (true || minimumLogLevel <= .debug || tags == nil),
            requestedIdentifiers == nil && clause != nil,
-           options.contains(.useVerboseLogging) {
-            logger.log(
-                level: .info,
-                "\n“\(baseEntity.name)” translated predicate (\(combinedHash)):\n\(statement)"
-            )
+           options.contains(.useVerboseLogging) || options.contains(.logAllPredicateExpressions) {
+            logger.log(level: .info, "\n“\(baseEntity.name)” translated predicate (\(combinedHash)):\n\(statement)")
             fflush(stdout)
         }
         #endif
         if (shouldLogInformation || attachment != nil), let view = self.attachment {
             let statementArray = [statement.sql, "Bindings: \(statement.bindings)"]
-            let joins = self.references
-                .sorted { "\($0.key)" < "\($1.key)" }
-                .map { "\($0.key): \($0.value)" }
+            let joins = self.references.sorted { "\($0.key)" < "\($1.key)" }.map { "\($0.key): \($0.value)" }
             nodes.append(.init(
                 key: baseKey,
                 title: "Generated SQL",
@@ -315,9 +295,6 @@ where T: PersistentModel & SendableMetatype {
                 await MainActor.run { view.resolveTranslation(translation) }
             }
         }
-        #if RELEASE
-        precondition(path.isEmpty)
-        #endif
         return .init(
             hash: combinedHash,
             statement: statement,
@@ -325,74 +302,9 @@ where T: PersistentModel & SendableMetatype {
             requestedIdentifiers: requestedIdentifiers
         )
     }
-    
-    nonisolated internal mutating func node(
-        atTerminal: Bool,
-        in expression: Any.Type?,
-        title: String,
-        content: [String]
-    ) {
-        self.nodes.append(.init(
-            path: path,
-            key: key,
-            expression: expression,
-            title: title,
-            content: content,
-            level: level,
-            isComplete: atTerminal
-        ))
-    }
-    
-    nonisolated internal mutating func log(
-        _ type: Logger.Level?,
-        _ message: @autoclosure () -> String,
-        metadata: [Logger.Metadata.Key: Logger.MetadataValue]? = nil,
-        function: String = #function
-    ) {
-        #if DEBUG
-        log(as: type, input: message(), function: function)
-        #endif
-    }
-    
-    nonisolated internal mutating func log(
-        as logLevel: Logger.Level?,
-        input messages: Any...,
-        metadata: [Logger.Metadata.Key: Logger.MetadataValue]? = nil,
-        function: String = #function
-    ) {
-        // Skip logging that assumes SwiftData is resolving a fault.
-        guard requestedIdentifiers == nil else {
-            return
-        }
-        // Skip if no log level is specified and is below the minimum.
-        guard let logLevel, shouldLogInformation || logLevel >= minimumLogLevel else {
-            return
-        }
-        // Skip if a tag filter exists and the current tag is not in the allowed set.
-        if let tagFilter = self.tags,
-           let tag = self.tag, !tagFilter.contains(tag.lowercased()) {
-            return
-        }
-        let output = messages.map(String.init(describing:)).joined(separator: " ")
-        if shouldLogInformation || logLevel >= minimumLogLevel {
-            let tag = self.tag ?? "<nil>"
-            if options.contains(.preferStandardOutput) {
-                let position = "[Predicate #\(counter) @ lvl-\(level)]"
-                let context = "\(tag).\(function)"
-                print(
-                    "\(logLevel) \(position) \(context) \(output)",
-                    "metadata: \(String(describing: metadata))"
-                )
-            } else {
-                var metadata = metadata ?? .init()
-                metadata["position"] = "predicate #\(counter) (level \(level))"
-                metadata["context"] = "\(tag).\(function)"
-                if !path.isEmpty { metadata["path"] = .array(path.map { "\($0)" }) }
-                logger.log(level: logLevel, "\(output)", metadata: metadata)
-            }
-        }
-    }
-    
+}
+
+extension SQLPredicateTranslator {
     /// Disambiguates the names of result columns.
     nonisolated internal mutating func selectResultColumns<Model>(
         key: PredicateExpressions.VariableID?,
@@ -410,7 +322,7 @@ where T: PersistentModel & SendableMetatype {
         let entityAlias = alias
         loadSchemaMetadata(for: Model.self)
         guard var primaryKeyColumn = self.keyPaths[\Model.persistentModelID] else {
-            fatalError("Primary key was not registered in context: \(type)")
+            preconditionFailure("Primary key was not registered in context: \(type)")
         }
         let schemaMetadata = type.databaseSchemaMetadata
         primaryKeyColumn.index = self.resultIndex
@@ -445,9 +357,7 @@ where T: PersistentModel & SendableMetatype {
         }
         if let key, let references = self.references[key], !references.isEmpty {
             for (index, reference) in references.enumerated() {
-                guard let property = foreignKeyColumns.first(where: {
-                    reference.sourceColumn.hasPrefix($0.name)
-                }) else {
+                guard let property = foreignKeyColumns.first(where: { reference.sourceColumn.hasPrefix($0.name) }) else {
                     continue
                 }
                 guard !relationshipKeyPathsForPrefetching.contains(property.keyPath) else {
@@ -462,7 +372,7 @@ where T: PersistentModel & SendableMetatype {
                 }
                 guard let entityType = (self.types[joinEntity.name] ?? joinEntity.type),
                       let type = entityType as? any PersistentModel.Type else {
-                    fatalError(SwiftDataError.modelValidationFailure.localizedDescription)
+                    preconditionFailure()
                 }
                 self.resultIndex += 1
                 log(.debug, "Selecting columns from JOIN reference: \(joinEntity.name)")
@@ -484,10 +394,10 @@ where T: PersistentModel & SendableMetatype {
                 continue
             }
             guard let relationship = property.metadata as? Schema.Relationship else {
-                fatalError("Expected property metadata to reference a Schema.Relationship.")
+                preconditionFailure("Expected property metadata to reference a Schema.Relationship.")
             }
             guard let destinationEntity = self.schema.entitiesByName[relationship.destination] else {
-                fatalError(SwiftDataError.unknownSchema.localizedDescription)
+                preconditionFailure("Expected schema to contain a destination entity for the relationship.")
             }
             if relationship.isToOneRelationship,
                let type = unwrapOptionalMetatype(relationship.valueType) as? any PersistentModel.Type {
@@ -626,8 +536,7 @@ where T: PersistentModel & SendableMetatype {
     }
     
     /// Parses the description of a key path to gather enough metadata to resolve for a `PropertyMetadata`.
-    nonisolated private mutating
-    func parseKeyPathForProperty<Model>(_ keyPath: PartialKeyPath<Model> & Sendable)
+    nonisolated private mutating func parseKeyPathForProperty<Model>(_ keyPath: PartialKeyPath<Model> & Sendable)
     throws -> PropertyMetadata? where Model: PersistentModel {
         guard !options.contains(.disableKeyPathPropertyLookupFallbacks) else {
             return nil
@@ -768,7 +677,7 @@ where T: PersistentModel & SendableMetatype {
            let type = self.types[currentTable] as? any (PersistentModel & SendableMetatype).Type,
            let property = type.databaseSchemaMetadata.first(where: { $0.name == metadata.name }) {
             log(.notice, "Resorting to slowest path lookup for PropertyMetadata: \(currentTable).\(property.name)")
-            #if DEBUG
+#if DEBUG
             print(
                 """
                 Affected key path: \(keyPath)
@@ -776,9 +685,13 @@ where T: PersistentModel & SendableMetatype {
                 It might be present with an identical description with mismatching Equatable/Hashable.
                 Using a protocol or generic constraint can affect matching to a key path.
                 Consider constraining to only PersistentModel when possible.
+                Affected key path: \(keyPath)
+                Metadata: \(metadata)
+                Type: \(type)
+                Property: \(property)
                 """
             )
-            #endif
+#endif
             return property
         }
         log(.warning, "Traversed entire path but found no terminal value: \(keyPath)")
@@ -789,15 +702,9 @@ where T: PersistentModel & SendableMetatype {
         _ baseType: Base.Type,
         from lhsKeyPath: AnyKeyPath & Sendable,
         to rhsKeyPath: any KeyPath<Root, Value> & Sendable
-    ) -> (
-        entity: Schema.Entity,
-        property: PropertyMetadata,
-        keyPath: AnyKeyPath & Sendable
-    )? where Base: PersistentModel {
-        assert(
-            lhsKeyPath is PartialKeyPath<Base>,
-            "\(lhsKeyPath) LHS key path root type is not \(Base.self)."
-        )
+    ) -> (entity: Schema.Entity, property: PropertyMetadata, keyPath: AnyKeyPath & Sendable)?
+    where Base: PersistentModel {
+        assert(lhsKeyPath is PartialKeyPath<Base>, "\(lhsKeyPath) LHS key path root type is not \(Base.self).")
         let description = "\(Base.self)-\(Root.self).\(Value.self).self \(lhsKeyPath) -> \(rhsKeyPath)"
         log(.trace, "Bridging relationship: \(description)")
         guard let fullKeyPath = appendKeyPath(from: lhsKeyPath, to: rhsKeyPath) else {
@@ -810,7 +717,8 @@ where T: PersistentModel & SendableMetatype {
         }
         guard let rhsType = type as? any (PersistentModel & SendableMetatype).Type,
               let rhsEntity = self.schema.entity(for: rhsType) else {
-            fatalError(SwiftDataError.unknownSchema.localizedDescription)
+            log(.notice, "RHS model is not a valid PersistentModel type or is not in the schema: \(description)")
+            return nil
         }
         guard let lhsKeyPath: PartialKeyPath<Base> & Sendable = sendable(cast: lhsKeyPath),
               let lhsProperty = Base.schemaMetadata(for: lhsKeyPath) else {
@@ -830,7 +738,7 @@ where T: PersistentModel & SendableMetatype {
         }
         rhsProperty.enclosing = lhsProperty.metadata
         rhsProperty.keyPath = fullKeyPath
-        log(.debug, "Key path bridged relationship: \(lhsProperty.name) + \(rhsProperty.name)")
+        log(.debug, "Key path bridged relationship: \(lhsProperty.name).\(rhsProperty.name)")
         self.keyPaths[fullKeyPath] = rhsProperty
         return (rhsEntity, rhsProperty, fullKeyPath)
     }
@@ -853,16 +761,16 @@ where T: PersistentModel & SendableMetatype {
             return nil
         }
         guard composite.valueType is Root.Type else {
-            fatalError("Root type of key path does not match the type in the schema: \(description)")
+            preconditionFailure("Root type of key path does not match the type in the schema: \(description)")
         }
         guard composite.valueType is any RawRepresentable.Type else {
-            fatalError("Root type of key path does not match the type in the schema: \(description)")
+            preconditionFailure("Root type of key path does not match the type in the schema: \(description)")
         }
         guard !composite.properties.isEmpty else {
-            fatalError("Sub-attributes not found for composite attribute: \(description)")
+            preconditionFailure("Sub-attributes not found for composite attribute: \(description)")
         }
         guard !components.isEmpty else {
-            fatalError("Unable to extract sub-attribute from composite attribute: \(description)")
+            preconditionFailure("Unable to extract sub-attribute from composite attribute: \(description)")
         }
         let subAttributeIndex: Int
         switch composite.properties.firstIndex(where: { components.contains($0.name) }) {
@@ -873,26 +781,24 @@ where T: PersistentModel & SendableMetatype {
             subAttributeIndex = 0
             log(.debug, "Composite attribute inferred as enum-based value type: \(description)")
         default:
-            log(.warning, "No metadata found for RHS attribute: \(description)",
-                metadata: [
-                    "composite_attribute": "\(composite.properties.map(\.name))",
-                    "components": "\(components)"
-                ]
-            )
+            log(.warning, "No metadata found for RHS attribute: \(description)", metadata: [
+                "composite_attribute_properties": "\(composite.properties.map(\.name))",
+                "components": "\(components)"
+            ])
             return nil
         }
-        let attribute = composite.properties[subAttributeIndex]
-        guard attribute.valueType is Value.Type else {
-            fatalError("Value type of key path does not match the type in the schema: \(description)")
+        let subAttribute = composite.properties[subAttributeIndex]
+        guard subAttribute.valueType is Value.Type else {
+            preconditionFailure("Value type of key path does not match the type in the schema: \(description)")
         }
         let subProperty = PropertyMetadata(
             index: subAttributeIndex,
-            name: attribute.name,
+            name: subAttribute.name,
             keyPath: fullKeyPath,
-            metadata: attribute,
+            metadata: subAttribute,
             enclosing: composite
         )
-        log(.debug, "Key path bridged composite attribute: \(property.name) + \(subProperty.name)")
+        log(.debug, "Key path bridged composite attribute: \(property.name).\(subProperty.name)")
         self.keyPaths[fullKeyPath] = subProperty
         return (subProperty, fullKeyPath)
     }
@@ -957,8 +863,7 @@ extension SQLPredicateTranslator {
 extension SQLPredicateTranslator {
     /// - Important:
     ///   Protocols and generics can affect how key paths can be matched.
-    nonisolated fileprivate mutating
-    func getProperty<Variable>(at keyPath: PartialKeyPath<Variable> & Sendable)
+    nonisolated private mutating func getProperty<Variable>(at keyPath: PartialKeyPath<Variable> & Sendable)
     throws -> PropertyMetadata? where Variable: PersistentModel & SendableMetatype {
         guard let property = self.keyPaths[keyPath] else {
             if let superclass = class_getSuperclass(Variable.self) as? any PersistentModel.Type {
@@ -979,9 +884,7 @@ extension SQLPredicateTranslator {
         return property
     }
     
-    // FIXME: Unable to cast key paths on inherited properties.
-    
-    nonisolated private func lookupPropertyMetadata<Super, Sub>(
+    nonisolated private mutating func lookupPropertyMetadata<Super, Sub>(
         superclass: Super.Type,
         subclass: Sub.Type,
         keyPath: PartialKeyPath<Sub> & Sendable
@@ -1039,9 +942,78 @@ nonisolated internal func appendKeyPath<LHSRoot, LHSValue, RHSValue>(
     lhsKeyPath.appending(path: rhsKeyPath)
 }
 
-nonisolated internal func compose<Root, Wrapped, Value>(
-    _ base: KeyPath<Root, Wrapped?>,
-    _ next: KeyPath<Wrapped, Value>
-) -> (Root) -> Value? {
-    { root in root[keyPath: base].map { $0[keyPath: next] } }
+extension SQLPredicateTranslator {
+    nonisolated internal mutating func node(
+        atTerminal: Bool,
+        in expression: Any.Type?,
+        title: String,
+        content: [String]
+    ) {
+        self.nodes.append(.init(
+            path: path,
+            key: key,
+            expression: expression,
+            title: title,
+            content: content,
+            level: level,
+            isComplete: atTerminal
+        ))
+    }
+    
+    nonisolated internal mutating func log(
+        _ type: Logger.Level?,
+        _ message: @autoclosure () -> String,
+        metadata: [Logger.Metadata.Key: Logger.MetadataValue]? = nil,
+        function: String = #function
+    ) {
+        #if DEBUG
+        log(as: type, input: message(), metadata: metadata, function: function)
+        #endif
+    }
+    
+    nonisolated internal mutating func log(
+        as logLevel: Logger.Level?,
+        input messages: Any...,
+        metadata: [Logger.Metadata.Key: Logger.MetadataValue]? = nil,
+        function: String = #function
+    ) {
+        #if DEBUG
+        log(logLevel: logLevel, messages: messages, metadata: metadata, function: function)
+        #endif
+    }
+    
+    nonisolated private mutating func log(
+        logLevel: Logger.Level?,
+        messages: Any...,
+        metadata: [Logger.Metadata.Key: Logger.MetadataValue]? = nil,
+        function: String = #function
+    ) {
+        // Skip logging that assumes SwiftData is resolving a fault.
+        guard requestedIdentifiers == nil else {
+            return
+        }
+        // Skip if no log level is specified and is below the minimum.
+        guard let logLevel, shouldLogInformation || logLevel >= minimumLogLevel else {
+            return
+        }
+        // Skip if a tag filter exists and the current tag is not in the allowed set.
+        if let tagFilter = self.tags, let tag = self.tag, !tagFilter.contains(tag.lowercased()) {
+            return
+        }
+        let output = messages.map(String.init(describing:)).joined(separator: " ")
+        if shouldLogInformation || logLevel >= minimumLogLevel {
+            let tag = self.tag ?? "<nil>"
+            if options.contains(.preferStandardOutput) {
+                let position = "[Predicate #\(counter) @ lvl-\(level)]"
+                let context = "\(tag).\(function)"
+                print("\(logLevel) \(position) \(context) \(output)", "metadata: \(String(describing: metadata))")
+            } else {
+                var metadata = metadata ?? .init()
+                metadata["position"] = "predicate #\(counter) (level \(level))"
+                metadata["context"] = "\(tag).\(function)"
+                if !path.isEmpty { metadata["path"] = .array(path.map { "\($0)" }) }
+                logger.log(level: logLevel, "\(output)", metadata: metadata)
+            }
+        }
+    }
 }

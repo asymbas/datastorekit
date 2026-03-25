@@ -7,8 +7,44 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
+import DataStoreSupport
 import Foundation
 import SwiftData
+
+@inline(__always) nonisolated internal func createAlias(
+    _ key: PredicateExpressions.VariableID?,
+    _ table: String
+) -> String {
+    key == nil ? table : "\(key.unsafelyUnwrapped)_\(table)"
+}
+
+nonisolated internal func appendKeyPath<Root, Value>(
+    from lhsKeyPath: AnyKeyPath & Sendable,
+    to rhsKeyPath: any KeyPath<Root, Value> & Sendable
+) -> (AnyKeyPath & Sendable)? {
+    let lhsKeyPath = lhsKeyPath as AnyKeyPath
+    guard let keyPath = lhsKeyPath.appending(path: rhsKeyPath) else {
+        return nil
+    }
+    guard let keyPath: (AnyKeyPath & Sendable) = sendable(cast: keyPath) else {
+        return nil
+    }
+    return keyPath
+}
+
+nonisolated internal func appendKeyPath<LHSRoot, LHSValue, RHSValue>(
+    _ lhsKeyPath: KeyPath<LHSRoot, LHSValue>,
+    _ rhsKeyPath: KeyPath<LHSValue, RHSValue>
+) -> KeyPath<LHSRoot, RHSValue> {
+    lhsKeyPath.appending(path: rhsKeyPath)
+}
+
+nonisolated internal func compose<Root, Wrapped, Value>(
+    _ base: KeyPath<Root, Wrapped?>,
+    _ next: KeyPath<Wrapped, Value>
+) -> (Root) -> Value? {
+    { root in root[keyPath: base].map { $0[keyPath: next] } }
+}
 
 internal protocol SQLPredicateExpression {
     typealias Context = SQLPredicateTranslator

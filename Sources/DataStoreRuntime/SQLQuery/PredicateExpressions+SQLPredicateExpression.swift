@@ -28,7 +28,7 @@ private typealias ForEach = SQLForEach
 /// `0`
 extension PredicateExpressions.Value: SQLPredicateExpression {
     func evaluate<T>(_ context: inout Context<T>) -> Fragment {
-        context.log(.trace, "Value received binding: \(value) as \(Output.self).self.")
+        context.log(.trace, "Received bindable value: \(value) as \(Output.self).self")
         if let hashValue = self.value as? (any Hashable) {
             context.hasher.combine(hashValue)
         }
@@ -66,27 +66,26 @@ extension PredicateExpressions.Value: SQLPredicateExpression {
             clause = "(\(placeholders))"
             bindings = values.map(SQLValue.text)
         case _ where SQLType(equivalentRawValueType: type(of: value)) == nil:
-            context.log(.debug, "Binding as Any: \(type(of: value)) == \(Output.self).self")
+            // This path is followed by the key path expression to extract its bindable value.
+            context.log(.debug, "Binding as Any: \(type(of: value)) == \(Output.self)")
             clause = "?"
             bindings = [value]
         default:
-            context.log(.debug, "Binding as SQLValue: \(type(of: value)) == \(Output.self).self")
+            // This path defaults to being the bindable value.
+            context.log(.debug, "Binding as SQLValue: \(type(of: value)) == \(Output.self)")
             clause = "?"
             bindings = [SQLValue(any: value)]
         }
-        return .init(
-            clause: clause,
-            bindings: bindings,
-            type: Output.self,
-            kind: .bindParameter
-        )
+        return .init(clause: clause, bindings: bindings, type: Output.self, kind: .bindParameter)
     }
 }
 
 /// `$0`
+///
+/// The closure-scoped parameter that is uniquely identified by its `VariableID`.
 extension PredicateExpressions.Variable: SQLPredicateExpression {
     func evaluate<T>(_ context: inout Context<T>) -> Fragment {
-        context.log(.trace, "Variable received where Output.Type is \(Output.self).self.")
+        context.log(.trace, "Entering closure in variable: Output.Type is \(Output.self).self")
         switch Output.self as Any.Type {
         case var type where type is any RelationshipCollection.Type:
             type = unwrapArrayMetatype(type)
@@ -95,7 +94,7 @@ extension PredicateExpressions.Variable: SQLPredicateExpression {
         case let type where type is any PersistentModel.Type:
             guard let type = type as? any (PersistentModel & SendableMetatype).Type,
                   let entity = context.schema.entity(for: type) ?? Schema([type]).entity(for: type) else {
-                fatalError(SwiftDataError.unknownSchema.localizedDescription)
+                preconditionFailure("Schema could not resolve entity for \(type).self variable.")
             }
             context.log(.trace, "Variable conforms to PersistentModel.Type: \(type).self")
             let alias = context.createTableAlias(key, entity.name)
@@ -103,7 +102,7 @@ extension PredicateExpressions.Variable: SQLPredicateExpression {
             context.hasher.combine(entity.name)
             return .init(clause: alias, key: key, alias: alias, type: Output.self, entity: entity, kind: .scope)
         default:
-            context.log(.trace, "Variable is a non-entity value type: \(Output.self).self")
+            context.log(.trace, "Variable is a value type: \(Output.self).self")
             return .init(clause: "", key: key, type: Output.self, kind: .scope)
         }
     }
@@ -116,19 +115,19 @@ where Root: SQLPredicateExpression {
         var root = self.root.query(&context)
         let description = "\\\(Root.Output.self).\(Output.self) == \(keyPath) -> \(root.description)"
         context.log(.debug, "Evaluating KeyPath for \(T.self).self: \(description)")
-        guard kind == nil else { return resolveComputedPropertyFragment(&context, root) }
+        guard kind == nil else { return resolveComputedProperty(&context, root) }
         switch root.kind {
         case .scope:
             assert(root.entity != nil, "No entity associated to fragment when accessing a property.")
             guard let type = Root.Output.self as? any PersistentModel.Type else {
-                fatalError("Root.Output.self is not a PersistentModel.Type: \(description)")
+                preconditionFailure("Root.Output.self is not a PersistentModel.Type: \(description)")
             }
             context.loadSchemaMetadata(for: type)
             guard let property = try? context[keyPath, type] else {
-                fatalError("No PropertyMetadata found in schema: \(description)")
+                preconditionFailure("No PropertyMetadata found in schema: \(description)")
             }
             context.log(.trace, "Key path resolved top-level property: \(property.name) \(description)")
-            return resolvePropertyFragment(&context, root.copy(property: property))
+            return resolveStoredProperty(&context, root.copy(property: property))
         case .columnReference:
             assert(root.entity != nil, "No entity associated to fragment when accessing a property.")
             guard let keyPath = root.keyPath else {
@@ -139,9 +138,7 @@ where Root: SQLPredicateExpression {
                 guard let type = root.type as? any PersistentModel.Type else {
                     return root.invalid("Root.Output.self is not a PersistentModel.Type", description)
                 }
-                guard let _ = Root.Output.self as? any PersistentModel.Type else {
-                    return root.invalid("Root.Output.self is not a PersistentModel.Type", description)
-                }
+                assert(Root.Output.self is any PersistentModel.Type)
                 context.loadSchemaMetadata(for: type)
                 guard let result = context.bridgeAsRelationship(type, from: keyPath, to: self.keyPath) else {
                     return root.invalid("Missing relationship", description)
@@ -159,7 +156,7 @@ where Root: SQLPredicateExpression {
                 if let key = root.key, context.references[key, default: []].append(reference).inserted {
                     context.log(.debug, "Inserted JOIN clause reference (to-one): \(reference)")
                 }
-                return resolvePropertyFragment(&context, root.copy(
+                return resolveStoredProperty(&context, root.copy(
                     clause: destinationAlias,
                     alias: destinationAlias,
                     type: type,
@@ -175,7 +172,7 @@ where Root: SQLPredicateExpression {
                     return .invalid("Missing composite attribute", description)
                 }
                 context.log(.debug, "Resolved bridging composite attribute: \(description)")
-                return resolvePropertyFragment(&context, root.copy(
+                return resolveStoredProperty(&context, root.copy(
                     entity: entity,
                     property: result.property,
                     keyPath: result.keyPath
@@ -185,10 +182,10 @@ where Root: SQLPredicateExpression {
             }
         case .bindParameter where root.bindings.last is Root.Output:
             guard let object = root.bindings.popLast() as? Root.Output else {
-                fatalError("Unable to extract Root.Output from bindings: \(root.bindings)")
+                preconditionFailure("Expected Root.Output.Type binding: \(root.bindings)")
             }
             let value = object[keyPath: keyPath]
-            context.log(.trace, "Extracted value to bind from object: \(description) = \(value)")
+            context.log(.trace, "Extracted bindable value from object: \(description) = \(value)")
             switch Swift.type(of: value) {
             case let type as any PersistentModel.Type:
                 guard let entity = context.schema.entity(for: type) else {
@@ -206,19 +203,9 @@ where Root: SQLPredicateExpression {
         }
     }
     
-    /// Uses the matched `PropertyMetadata` to convert data into an SQL expression.
-    ///
-    /// - Only to-one relationships handle a JOIN inline on the same key as they do not enter any closure.
-    /// - Self-referencing is handled by `context.path`, which concatenates nested access of types.
-    /// - Unidirectional relationships are ignored.
-    /// - Creates a `Join` on the current `VariableID` closure and query for relationships.
-    private func resolvePropertyFragment<T>(
-        _ context: inout Context<T>,
-        _ root: consuming Fragment
-    ) -> Fragment {
+    private func resolveStoredProperty<T>(_ context: inout Context<T>, _ root: consuming Fragment) -> Fragment {
         let description = "\\\(Root.Output.self).\(Output.self) == \(keyPath) -> \(root.description)"
-        guard let sourceAlias = root.alias,
-              let property = root.property else {
+        guard let sourceAlias = root.alias, let property = root.property else {
             return .invalid("Incomplete KeyPath.root", description)
         }
         let clause: String?
@@ -260,10 +247,7 @@ where Root: SQLPredicateExpression {
         return root.copy(clause: clause, keyPath: keyPath, kind: .columnReference)
     }
     
-    private func resolveComputedPropertyFragment<T>(
-        _ context: inout Context<T>,
-        _ root: consuming Fragment
-    ) -> Fragment {
+    private func resolveComputedProperty<T>(_ context: inout Context<T>, _ root: consuming Fragment) -> Fragment {
         switch kind {
         case .collectionFirst:
             return resolve { _, _ in
@@ -346,7 +330,7 @@ where Root: SQLPredicateExpression {
         default:
             fatalError("Unknown KeyPath.kind case: \(String(describing: kind))")
         }
-        /// - To-many relationship metatypes are wrapped as `Array<Root.Output>.self`.
+        // To-many relationship types are wrapped as `Array<Root.Output>.self`.
         func resolve(
             error errorHandler: () -> String = {
                 print("Error occurred resolving computed property: \(root.description)")
@@ -370,8 +354,7 @@ where Root: SQLPredicateExpression {
         ) -> Fragment {
             let description = "\\\(Root.Output.self).\(Output.self) == \(keyPath) -> \(root.description)"
             context.log(.debug, "Resolving computed property: \(description)")
-            guard Root.Output.self is any RelationshipCollection.Type
-                    || Root.Output.self is any PersistentModel.Type else {
+            guard Root.Output.self is any RelationshipCollection.Type || Root.Output.self is any PersistentModel.Type else {
                 switch root.bindings.popLast() {
                 case let value as Root.Output:
                     context.log(.debug, "Binding cast as Root.Output: \(value[keyPath: keyPath])")
@@ -418,7 +401,6 @@ where Root: SQLPredicateExpression {
                         reference.destinationColumn,
                         context.createTableAlias(root.key, reference.sourceTable)
                     )
-                    // MARK: Is now inverted compared to previous implementation.
                     return root.copy(clause: "(\(sql))", kind: .functionCall)
                 case let reference?:
                     let joinTuple = (
@@ -436,10 +418,7 @@ where Root: SQLPredicateExpression {
                         reference[1].destinationColumn
                     )
                     let sql = intermediaryHandler(joinTuple, sourceTuple, destinationTuple)
-                    return root.copy(
-                        clause: "(\(sql))",
-                        kind: .functionCall
-                    )
+                    return root.copy(clause: "(\(sql))", kind: .functionCall)
                 default:
                     return .invalid
                 }
@@ -481,7 +460,7 @@ where repeat each Input: SQLPredicateExpression,
                 var body = sql.query(&context)
                 if body.type is Bool.Type, body.clause == "?" {
                     guard let value = body.bindings.popLast() else {
-                        fatalError("Expected Boolean value from bindings.")
+                        preconditionFailure("Expected Boolean value from bindings.")
                     }
                     context.log(.trace, "Short-circuiting Boolean expression.")
                     body = body.copy(clause: "(1 = \(value))")
@@ -607,7 +586,7 @@ where repeat each Input: SQLPredicateExpression,
                 var body = sql.query(&context)
                 if body.type is Bool.Type, body.clause == "?" {
                     guard let value = body.bindings.popLast() else {
-                        fatalError("Expected Boolean value from bindings.")
+                        preconditionFailure("Expected Boolean value from bindings.")
                     }
                     context.log(.trace, "Short-circuiting Boolean expression.")
                     body = body.copy(clause: "(1 = \(value))")
@@ -765,14 +744,8 @@ where LHS: SQLPredicateExpression,
         let element = self.variable.query(&context)
         context.log(.trace, "Element fragment: \(element.description)")
         #if DEBUG
-        assert(
-            element.key == self.variable.key,
-            "Element fragment variable closure is misaligned: \(element.description)"
-        )
-        assert(
-            element.type is Element.Type,
-            "Element fragment expected to return \(Element.self).self: \(element.description)"
-        )
+        assert(element.type is Element.Type, "Element fragment expected to return \(Element.self).self: \(element.description)")
+        assert(element.key == self.variable.key, "Element fragment variable closure is misaligned: \(element.description)")
         #endif
         let conditional = self.test.query(&context)
         context.log(.trace, "Conditional fragment: \(conditional.description)")
@@ -796,7 +769,7 @@ where LHS: SQLPredicateExpression,
                     return element.invalid("Missing inverse relationship metadata")
                 }
                 guard var reference = sequence.property?.reference else {
-                    fatalError("Relationship is missing reference metadata: \(sequence.description)")
+                    preconditionFailure("Relationship is missing reference metadata: \(sequence.description)")
                 }
                 if reference.count == 2 {
                     isManyToManyRelationship = true
@@ -845,9 +818,9 @@ where LHS: SQLPredicateExpression,
                         """
                         /*
                         SequenceContainsWhere (\(cardinality), #\(context.level), \(debug))
-                            - sequence alias: \(sequence.alias ?? "n/a")
-                            - element alias: \(element.alias ?? "n/a")
-                            - conditional alias: \(conditional.alias ?? "n/a")
+                            - sequence alias: \(sequence.alias ?? "nil")
+                            - element alias: \(element.alias ?? "nil")
+                            - conditional alias: \(conditional.alias ?? "nil")
                         */
                         """
                     }
@@ -902,8 +875,8 @@ where LHS: SQLPredicateExpression,
 extension PredicateExpressions.OptionalFlatMap: SQLPredicateExpression
 where LHS: SQLPredicateExpression, RHS: SQLPredicateExpression {
     func evaluate<T>(_ context: inout Context<T>) -> Fragment {
-        context.log(.trace, "Unwrapping Optional<\(Wrapped.self)>.Type to \(Wrapped.self).Type.")
-        context.log(.trace, "Result type expects \(Output.self).self == \(Result.self).self.")
+        context.log(.trace, "Unwrapping Optional<\(Wrapped.self)>.self to \(Wrapped.self).Type.")
+        context.log(.trace, "Result type expects \(Output.self).self == \(Result.self).Type.")
         let wrapped = self.wrapped.query(&context)
         context.log(.trace, "Wrapped fragment: \(wrapped.description)")
         guard let wrappedKey = wrapped.key, let wrappedAlias = wrapped.alias else {
@@ -945,8 +918,8 @@ where LHS: SQLPredicateExpression, RHS: SQLPredicateExpression {
                     """
                     /*
                     OptionalFlatMap (#\(context.level), \(debug))
-                        - wrapped alias: \(wrapped.alias ?? "n/a")
-                        - transform alias: \(transform.alias ?? "n/a")
+                        - wrapped alias: \(wrapped.alias ?? "nil")
+                        - transform alias: \(transform.alias ?? "nil")
                     */
                     """
                 }
@@ -974,28 +947,16 @@ where LHS: SQLPredicateExpression, RHS: SQLPredicateExpression {
                     }
                 }
             }
-            return wrapped.copy(
-                clause: clause.sql,
-                bindings: wrapped.bindings + transform.bindings,
-                kind: .existsClause
-            )
+            return wrapped.copy(clause: clause.sql, bindings: wrapped.bindings + transform.bindings, kind: .existsClause)
         default:
             context.log(.trace, "Unwrapping binded parameter value: \(wrapped.description)")
             if let binding = transform.bindings.popLast() {
                 guard binding is Wrapped else {
                     return wrapped.invalid("Unhandled OptionalFlatMap case: \(binding)")
                 }
-                return wrapped.copy(
-                    clause: "TRUE",
-                    bindings: wrapped.bindings + transform.bindings,
-                    kind: .existsClause
-                )
+                return wrapped.copy(clause: "TRUE", bindings: wrapped.bindings + transform.bindings, kind: .existsClause)
             } else {
-                return wrapped.copy(
-                    clause: "FALSE",
-                    bindings: wrapped.bindings + transform.bindings,
-                    kind: .existsClause
-                )
+                return wrapped.copy(clause: "FALSE", bindings: wrapped.bindings + transform.bindings, kind: .existsClause)
             }
         }
     }
@@ -1084,15 +1045,11 @@ where Test: SQLPredicateExpression,
         default:
             let trueBranch = self.trueBranch.query(&context)
             let falseBranch = self.falseBranch.query(&context)
-            context.log(
-                as: .trace,
-                input: "Reached conditional default case.",
-                metadata: [
-                    "test": .string(test.description),
-                    "true_branch": .string(trueBranch.description),
-                    "false_branch": .string(falseBranch.description)
-                ]
-            )
+            context.log(.trace, "Reached conditional default case.", metadata: [
+                "test": .string(test.description),
+                "true_branch": .string(trueBranch.description),
+                "false_branch": .string(falseBranch.description)
+            ])
             return .init(
                 clause: """
                 (
@@ -1109,8 +1066,6 @@ where Test: SQLPredicateExpression,
         }
     }
 }
-
-// TODO: Implementation is incomplete and does not fully support inheritance yet.
 
 /// `$0 as? Object`
 extension PredicateExpressions.ConditionalCast: SQLPredicateExpression
@@ -1195,11 +1150,10 @@ where Wrapped: SQLPredicateExpression, Index: SQLPredicateExpression {
         let index = self.index.query(&context)
         let wrappedClause = wrapped.clause
         let indexClause = index.clause
-        context.log(
-            as: .debug,
-            input: "CollectionIndexSubscript fragments: \(description)",
-            metadata: ["wrapped": .string(wrapped.description), "index": .string(index.description)]
-        )
+        context.log(.debug, "CollectionIndexSubscript fragments: \(description)", metadata: [
+            "wrapped": .string(wrapped.description),
+            "index": .string(index.description)
+        ])
         let normalizedIndex = """
             CASE WHEN (\(indexClause)) < 0
                 THEN json_array_length(\(wrappedClause)) + (\(indexClause))
@@ -1242,22 +1196,16 @@ where Wrapped: SQLPredicateExpression, Range: SQLPredicateExpression {
         }
         let count = range.bindings.count
         guard count == 2 else {
-            context.log(
-                .warning,
-                "CollectionRangeSubscript expected 2 range bindings, got \(count).",
-                metadata: ["range": .string(range.description)]
-            )
+            context.log(.warning, "CollectionRangeSubscript expected 2 range bindings, got \(count).", metadata: [
+                "range": .string(range.description)
+            ])
             return .invalid
         }
         let description = "\(Wrapped.self).self, \(outputType).self"
-        context.log(
-            as: .debug,
-            input: "CollectionRangeSubscript fragments: \(description)",
-            metadata: [
-                "wrapped": .string(wrapped.description),
-                "range": .string(range.description),
-            ]
-        )
+        context.log(.debug, "CollectionRangeSubscript fragments: \(description)", metadata: [
+            "wrapped": .string(wrapped.description),
+            "range": .string(range.description)
+        ])
         let upperBoundForBetween = isClosedRange ? "(bounds.upperbound)" : "((bounds.upperbound) - 1)"
         var expression = """
             (
@@ -1394,7 +1342,8 @@ where Wrapped: SQLPredicateExpression, Key: SQLPredicateExpression {
             switch outputType {
             case .integer, .real, .text, .blob:
                 expression = "CAST(\(expression) AS \(outputType.description))"
-            case .null: break
+            case .null:
+                break
             }
         }
         if context.shouldMarkStartOfPredicateExpression {
@@ -1569,7 +1518,7 @@ where Inner: SQLPredicateExpression {
         switch inner.kind {
         case .bindParameter where inner.bindings.count == 1:
             guard let unwrappedValue = inner.bindings.popLast() as? Output else {
-                fatalError("Unexpected bindable value for ForcedUnwrap: \(inner.description)")
+                preconditionFailure("Unexpected bindable value for ForcedUnwrap: \(inner.description)")
             }
             return inner.copy(bindings: [unwrappedValue], type: Output.self, kind: .bindParameter)
         default:
@@ -1767,11 +1716,7 @@ where Elements: SQLPredicateExpression {
             let debug = debugVariableIDs(("context", context.key))
             sql = "/* SequenceMaximum (#\(context.level), \(debug)) */\n" + sql
         }
-        return sequence.copy(
-            clause: sql,
-            bindings: bindings + bindings,
-            kind: .expression
-        )
+        return sequence.copy(clause: sql, bindings: bindings + bindings, kind: .expression)
     }
 }
 
@@ -1804,11 +1749,7 @@ where Elements: SQLPredicateExpression {
             let debug = debugVariableIDs(("context", context.key))
             sql = "/* SequenceMinimum (#\(context.level), \(debug)) */\n" + sql
         }
-        return sequence.copy(
-            clause: sql,
-            bindings: bindings + bindings,
-            kind: .expression
-        )
+        return sequence.copy(clause: sql, bindings: bindings + bindings, kind: .expression)
     }
 }
 
