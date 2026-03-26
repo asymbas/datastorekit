@@ -124,7 +124,7 @@ public struct IntermediaryTableReference: Equatable, Hashable, Sendable {
     nonisolated public let rhsColumn: String
     nonisolated public let rhsForeignKey: String
     
-    nonisolated package init(
+    nonisolated public init(
         name: String,
         lhsTable: String,
         lhsColumn: String,
@@ -209,7 +209,7 @@ public struct IntermediaryTableReference: Equatable, Hashable, Sendable {
         }
     }
     
-    nonisolated package static func split(from intermediaryTable: String) -> (
+    nonisolated public static func split(from intermediaryTable: String) -> (
         lhsTable: String,
         rhsTable: String
     )? {
