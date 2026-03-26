@@ -7,7 +7,6 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import AsyncAlgorithms
 import DataStoreCore
 import DataStoreSQL
 import DataStoreSupport
@@ -225,11 +224,9 @@ extension SnapshotRegistry {
                             try Task.checkCancellation()
                             async let fetchedFlag = resultReference
                                 .fetchedIdentifiers
-                                .async
                                 .contains(persistentIdentifier)
                             async let relatedFlag = resultReference
                                 .relatedIdentifiers
-                                .async
                                 .contains(persistentIdentifier)
                             let shouldInvalidateCache = await (fetchedFlag, relatedFlag)
                             if shouldInvalidateCache.0 || shouldInvalidateCache.1 {
