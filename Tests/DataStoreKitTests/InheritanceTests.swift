@@ -9,12 +9,11 @@
 
 import DataStoreKit
 import Foundation
-import Logging
 import SwiftData
 import Testing
 
 @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
-class InheritanceSchema: VersionedSchema {
+fileprivate struct InheritanceSchema: VersionedSchema {
     static let versionIdentifier: Schema.Version = .init(0, 0, 0)
     static let models: [any PersistentModel.Type] = [Entity.self, Person.self]
     
@@ -40,19 +39,6 @@ class InheritanceSchema: VersionedSchema {
     }
     
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
-    fileprivate static func makeModelContext() throws -> ModelContext {
-        let schema = Schema([Entity.self, Person.self])
-        let configuration = DatabaseConfiguration(
-            transient: (),
-            types: [Entity.self, Person.self],
-            schema: schema,
-            options: [.useDetailedLogging, .useVerboseLogging, ._internal]
-        )
-        let modelContainer = try ModelContainer(for: schema, configurations: [configuration])
-        return ModelContext(modelContainer)
-    }
-    
-    @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
     fileprivate static func seed(into modelContext: ModelContext) throws {
         let entity = Entity(id: "entity", type: "general")
         let person1 = Person(id: "person-0", type: "general", name: "Anferne Pineda")
@@ -67,30 +53,36 @@ class InheritanceSchema: VersionedSchema {
 @Suite("Inheritance", .serialized)
 struct InheritanceTests {
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
-    typealias Entity = InheritanceSchema.Entity
+    fileprivate typealias Entity = InheritanceSchema.Entity
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
-    typealias Person = InheritanceSchema.Person
+    fileprivate typealias Person = InheritanceSchema.Person
+    private let modelContext: ModelContext
+    private let modelContainer: ModelContainer
+    private let configuration: DatabaseConfiguration
     
-    private static let logging: Void = {
-        LoggingSystem.bootstrap { label in
-            if label.split(separator: ".").contains("query") {
-                var handler = StreamLogHandler.standardOutput(label: label)
-                handler.logLevel = .trace
-                return handler
-            } else {
-                return SwiftLogNoOpLogHandler()
-            }
-        }
-    }()
-    
-    init() {
-        _ = Self.logging
+    @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
+    init() throws {
+        _ = logging
+        let schema = Schema([Entity.self, Person.self])
+        var configuration = DatabaseConfiguration.transient(
+            types: [Entity.self, Person.self],
+            schema: schema,
+            options: .disableSnapshotCaching
+        )
+        configuration.configurations[.predicate] = SQLPredicateTranslatorOptions([
+            .useDetailedLogging,
+            .useVerboseLogging,
+            .logAllPredicateExpressions
+        ])
+        self.configuration = configuration
+
+        self.modelContainer = try ModelContainer(for: schema, configurations: [configuration])
+        self.modelContext = ModelContext(modelContainer)
     }
     
     @Test
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
     func fetchAllFromRootType() throws {
-        let modelContext = try InheritanceSchema.makeModelContext()
         try InheritanceSchema.seed(into: modelContext)
         let models = try modelContext.fetch(FetchDescriptor<Entity>())
         #expect(models.count == 3)
@@ -102,7 +94,6 @@ struct InheritanceTests {
     @Test
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
     func conditionalCastPredicateExpression() throws {
-        let modelContext = try InheritanceSchema.makeModelContext()
         try InheritanceSchema.seed(into: modelContext)
         let descriptor = FetchDescriptor<Entity>(predicate: #Predicate<Entity> { entity in
             (entity as? Person) != nil
@@ -116,7 +107,6 @@ struct InheritanceTests {
     @Test
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
     func typeCheckPredicateExpression() throws {
-        let modelContext = try InheritanceSchema.makeModelContext()
         try InheritanceSchema.seed(into: modelContext)
         let descriptor = FetchDescriptor<Entity>(predicate: #Predicate<Entity> { entity in
             entity is Person
@@ -130,7 +120,6 @@ struct InheritanceTests {
     @Test
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
     func typeCheckMatchesConditionalCast() throws {
-        let modelContext = try InheritanceSchema.makeModelContext()
         try InheritanceSchema.seed(into: modelContext)
         let typeCheckDescriptor = FetchDescriptor<Entity>(predicate: #Predicate<Entity> { entity in
             entity is Person
@@ -148,7 +137,6 @@ struct InheritanceTests {
     @Test
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
     func subclassPredicateByOwnProperty() throws {
-        let modelContext = try InheritanceSchema.makeModelContext()
         try InheritanceSchema.seed(into: modelContext)
         let descriptor = FetchDescriptor<Person>(predicate: #Predicate<Person> { person in
             person.name == "Anferne Pineda"
@@ -163,7 +151,6 @@ struct InheritanceTests {
     @Test
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
     func subclassPredicateByInheritedProperty() throws {
-        let modelContext = try InheritanceSchema.makeModelContext()
         try InheritanceSchema.seed(into: modelContext)
         let idDescriptor = FetchDescriptor<Person>(predicate: #Predicate<Person> { person in
             person.id == "person-1"
