@@ -7,4 +7,23 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
+import DataStoreKit
 import Testing
+import SwiftData
+
+@Suite("Schema")
+struct SchemaTests {
+    @Model class EntityImplicitSchemaProperty {
+        var id: String
+        
+        init(id: String) {
+            self.id = id
+        }
+    }
+    
+    
+    
+    @Test func test() async throws {
+        
+    }
+}
