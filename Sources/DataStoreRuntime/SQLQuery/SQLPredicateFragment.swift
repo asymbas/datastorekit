@@ -20,7 +20,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
 
 #if swift(>=6.2) && !SwiftPlaygrounds
 nonisolated internal struct SQLPredicateFragment: ~Copyable {
-    nonisolated internal static let shouldDebug: Bool = {
+    nonisolated internal var shouldDebug: Bool = {
         DataStoreDebugging.mode == .trace
     }()
     nonisolated internal let id: String
@@ -48,7 +48,8 @@ nonisolated internal struct SQLPredicateFragment: ~Copyable {
         kind: SQLExpressionKind? = nil,
         expression: (any PredicateExpression.Type)? = nil,
         tag: String? = nil,
-        id: String? = nil
+        id: String? = nil,
+        shouldDebug: Bool? = nil
     ) {
         self.clause = clause
         self.bindings = bindings
@@ -62,11 +63,14 @@ nonisolated internal struct SQLPredicateFragment: ~Copyable {
         self.expression = expression
         self.tag = tag ?? ""
         self.id = Self.randomID()
+        if let shouldDebug {
+            self.shouldDebug = shouldDebug
+        }
     }
 }
 #else
 internal final class SQLPredicateFragment {
-    nonisolated internal static let shouldDebug: Bool = {
+    nonisolated internal var shouldDebug: Bool = {
         DataStoreDebugging.mode == .trace
     }()
     nonisolated internal let id: String
@@ -94,7 +98,8 @@ internal final class SQLPredicateFragment {
         kind: SQLExpressionKind? = nil,
         expression: (any PredicateExpression.Type)? = nil,
         tag: String? = nil,
-        id: String? = nil
+        id: String? = nil,
+        shouldDebug: Bool? = nil
     ) {
         self.clause = clause
         self.bindings = bindings
@@ -108,13 +113,16 @@ internal final class SQLPredicateFragment {
         self.expression = expression
         self.tag = tag ?? ""
         self.id = Self.randomID()
+        if let shouldDebug {
+            self.shouldDebug = shouldDebug
+        }
     }
 }
 #endif
 
 extension SQLPredicateFragment {
     /// Creates a copy of the instance and applies updates provided as arguments.
-    nonisolated internal /*mutating*/ func copy(
+    nonisolated internal func copy(
         clause: String? = nil,
         bindings: [Any]? = nil,
         key: PredicateExpressions.VariableID? = nil,
@@ -139,7 +147,8 @@ extension SQLPredicateFragment {
             kind: kind ?? self.kind,
             expression: expression ?? self.expression,
             tag: tag ?? self.tag,
-            id: id
+            id: id,
+            shouldDebug: shouldDebug
         )
     }
     
@@ -248,7 +257,7 @@ extension SQLPredicateFragment {
 
 extension SQLPredicateFragment {
     nonisolated public var description: String {
-        guard Self.shouldDebug == true else { return label }
+        guard shouldDebug == true else { return label }
         return debugDescription
     }
     

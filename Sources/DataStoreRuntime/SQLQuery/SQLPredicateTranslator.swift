@@ -124,7 +124,7 @@ where T: PersistentModel & SendableMetatype {
     nonisolated public init(
         schema: Schema,
         attachment: (any DataStoreObservable)? = nil,
-        options: consuming SQLPredicateTranslatorOptions,
+        options: consuming SQLPredicateTranslatorOptions = [],
         minimumLogLevel: consuming Logger.Level = .notice,
         tags: consuming Set<String>? = []
     ) {
@@ -260,7 +260,7 @@ where T: PersistentModel & SendableMetatype {
         #if DEBUG
         if (true || minimumLogLevel <= .debug || tags == nil),
            requestedIdentifiers == nil && clause != nil,
-           options.contains(.useVerboseLogging) || options.contains(.logAllPredicateExpressions) {
+           options.contains(.useVerboseLogging) || options.contains(.logAllPredicateExpressions) || options.contains(.generateSQLStatement) {
             logger.log(level: .info, "\n“\(baseEntity.name)” translated predicate (\(combinedHash)):\n\(statement)")
             fflush(stdout)
         }

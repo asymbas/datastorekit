@@ -11,10 +11,8 @@ import DataStoreSupport
 import Foundation
 import SwiftData
 
-@inline(__always) nonisolated internal func createAlias(
-    _ key: PredicateExpressions.VariableID?,
-    _ table: String
-) -> String {
+@inline(__always)
+nonisolated internal func createAlias(_ key: PredicateExpressions.VariableID?, _ table: String) -> String {
     key == nil ? table : "\(key.unsafelyUnwrapped)_\(table)"
 }
 
@@ -85,8 +83,8 @@ extension SQLPredicateExpression {
     ///
     /// - Describes the closure's metatype when entering and exiting.
     /// - Handles metadata for debugging the predicate tree.
-    nonisolated public func query<T>(_ context: inout Context<T>) -> Fragment {
-        let metatype = Self.self as? any PredicateExpression.Type
+    nonisolated internal func query<T>(_ context: inout Context<T>) -> Fragment {
+        let type = Self.self as? any PredicateExpression.Type
         let previousTag = context.tag
         let label = Self.baseTypeLabel
         context.tag = label
@@ -97,26 +95,29 @@ extension SQLPredicateExpression {
         }
         #if DEBUG
         let pathStart = context.path.isEmpty ? "" : " (Path: \(debugVariableIDs(context.path.map { ("", $0) })))"
-        context.log(/*nil*/ .debug, "ENTERING as \(T.self).self...\(pathStart)")
+        context.log(.debug, "ENTERING as \(T.self).self...\(pathStart)")
         if context.shouldLogInformation {
-            context.node(atTerminal: false, in: metatype, title: label, content: [Self.fullTypeLabel])
+            context.node(atTerminal: false, in: type, title: label, content: [Self.fullTypeLabel])
         }
         context.counter += 1
         context.level += 1
         #endif
         var fragment = evaluate(&context)
         #if DEBUG
+        if context.options.contains(.useDetailedLogging) {
+            fragment.shouldDebug = true
+        }
         context.tag = label
         fragment.tag = label
         fragment.expression = Self.self as? any PredicateExpression.Type
         context.hasher.combine(ObjectIdentifier(Self.self))
         context.level -= 1
-        if context.options.contains(.useVerboseLogging), context.minimumLogLevel == .trace {
+        if context.options.contains(.useVerboseLogging) {
             print("\(fragment.description)")
         }
         let pathEnd = context.path.isEmpty ?
         "" : " (Path: \(debugVariableIDs(context.path.map { ("", $0) })))"
-        context.log(/*nil*/ .debug, "EXITING as \(T.self).self...\(pathEnd) -> \(fragment.description)")
+        context.log(.debug, "EXITING as \(T.self).self...\(pathEnd) -> \(fragment.description)")
         if context.shouldLogInformation {
             var outputTrace = [
                 fragment.clause,
@@ -136,7 +137,7 @@ extension SQLPredicateExpression {
                 }
                 outputTrace = outputTrace + ["Fragment Key: \(key)"]
             }
-            context.node(atTerminal: true, in: metatype, title: label, content: outputTrace)
+            context.node(atTerminal: true, in: type, title: label, content: outputTrace)
         }
         #endif
         return fragment

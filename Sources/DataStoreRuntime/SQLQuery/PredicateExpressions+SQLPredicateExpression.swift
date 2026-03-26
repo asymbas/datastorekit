@@ -26,6 +26,9 @@ import SwiftData
 private typealias ForEach = SQLForEach
 
 /// `0`
+///
+/// The input value referenced in a predicate expression.
+/// - `value` is `Output` type.
 extension PredicateExpressions.Value: SQLPredicateExpression {
     func evaluate<T>(_ context: inout Context<T>) -> Fragment {
         context.log(.trace, "Received bindable value: \(value) as \(Output.self).self")
