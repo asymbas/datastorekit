@@ -560,6 +560,9 @@ extension SnapshotRegistry {
             fetchedIdentifiers: fetchedIdentifiers,
             relatedIdentifiers: relatedIdentifiers
         )
+        cachedFetchResultMapping.withLock { cachedFetchResults in
+            cachedFetchResults[key] = entry
+        }
         touchFetchResultKey(key)
         scheduleEvictionIfNeeded()
     }
