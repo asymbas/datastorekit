@@ -34,7 +34,7 @@ extension DatabaseStore: DataStoreBatching {
         try connection.withTransaction(nil) {
             var relatedSnapshots = [PersistentIdentifier: Snapshot]()
             for row in try connection.fetch(translation.statement) {
-                logger.debug("Iterating batched delete on row: \((row.first as? String) ?? "N/A")")
+                logger.debug("Iterating batched \(entityName) delete on row: \((row.first as? String) ?? "N/A")")
                 var snapshot = try Snapshot(
                     store: self,
                     properties: translation.properties[...],

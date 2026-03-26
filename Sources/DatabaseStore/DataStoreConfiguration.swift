@@ -47,7 +47,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     
     /// The `DataStore` instantiated by the `ModelContainer`.
     nonisolated public var store: Store? {
-        try! storage.container.load()?.load() as? Store
+        try? storage.container.load()?.load() as? Store
     }
     
     /// The attachment assigned when this object was created.
@@ -106,9 +106,14 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     }
     
     /// The options that configure additional flags related to the data store runtime.
-    nonisolated internal var options: DataStoreOptions {
+    nonisolated public var options: DataStoreOptions {
         get { storage.options.withLock(\.self) }
         set { ensureUniqueStorage(); storage.options.withLock { $0 = newValue } }
+    }
+    
+    nonisolated public var configurations: [Key: any OptionSet & Sendable] {
+        get { storage.configurations.withLock(\.self) }
+        set { ensureUniqueStorage(); storage.configurations.withLock { $0 = newValue } }
     }
     
     /// The cache policy used by the data store for managing in-memory object lifetimes.
@@ -140,6 +145,10 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         }
     }
     
+    public enum Key: Equatable, Hashable, Sendable {
+        case predicate
+    }
+    
     nonisolated private init(
         name: String,
         types: [any (PersistentModel & SendableMetatype).Type] = [],
@@ -164,10 +173,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             guard url.hasDirectoryPath else {
                 return location
             }
-            let storeURL = url.appending(
-                component: name + ".store",
-                directoryHint: .notDirectory
-            )
+            let storeURL = url.appending(component: name + ".store", directoryHint: .notDirectory)
             return .file(path: storeURL.path)
         }()
         let externalStorageURL: URL = {
@@ -204,7 +210,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             case let type as any (PersistentModel & AnyObject).Type:
                 TypeRegistry.register(type, typeName: entity.name, metadata: entity)
             default:
-                fatalError("Entity has an unknown type: \(entity.name)")
+                preconditionFailure("Entity has an unknown type: \(entity.name)")
             }
         }
         let constraints = (schema?.entities ?? []).reduce(into: [String: [[String]]]()) { result, entity in
@@ -294,6 +300,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             schema: schema,
             migrationPlan: migrationPlan,
             constraints: constraints,
+            configurations: [:],
             options: options,
             location: location,
             externalStorageURL: externalStorageURL,
@@ -364,7 +371,11 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             }
             return "Data"
         }()
+        let isTransient = options.contains(.temporary)
         let resolvedURL: URL = {
+            if isTransient {
+                return Self.transientStoreURL(for: url, name: resolvedName)
+            }
             guard let url else {
                 return defaultStoreURL(in: .applicationSupportDirectory)
             }
@@ -407,23 +418,13 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     }
     
     /// Creates a transient data store configuration.
-    ///
-    /// - Parameters:
-    ///   - transient:
-    ///     Pass `()` to select the transient initializer.
-    ///   - types:
-    ///     Model types to manually register into the data store.
-    ///   - schema:
-    ///     A schema that maps model classes to the associated data in the persistent storage.
-    ///   - options:
-    ///     Configures additional flags related to the data store runtime.
-    ///   - attachment:
-    ///     Assign a type that conforms to `DataStoreDelegate` and `DataStoreObservable`.
+    @available(*, deprecated, message: "Use DatabaseConfiguration.transient(types:schema:options:size:attachment:) instead.")
     nonisolated public init(
         transient: Void,
         types: [any (PersistentModel & SendableMetatype).Type] = [],
         schema: Schema? = nil,
         options: DataStoreOptions = [],
+        size: Int = 1,
         attachment: (any DataStoreDelegate)? = nil
     ) {
         self.init(
@@ -435,7 +436,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             location: .inMemory,
             externalStorageURL: nil,
             allowsSave: true,
-            size: 1,
+            size: size,
             attachment: attachment
         )
     }
@@ -448,6 +449,27 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             location: .inMemory,
             allowsSave: true,
             size: 1 // Cannot be more than 1, because each handle is its own database.
+        )
+    }
+    
+    nonisolated public static func transient(
+        types: [any (PersistentModel & SendableMetatype).Type] = [],
+        schema: Schema? = nil,
+        options: DataStoreOptions = [],
+        size: Int = 1,
+        attachment: (any DataStoreDelegate)? = nil
+    ) -> Self {
+        self.init(
+            name: UUID().uuidString,
+            types: types,
+            schema: schema,
+            options: options,
+            flags: [.memory, .readWrite, .create, .fullMutex],
+            location: .inMemory,
+            externalStorageURL: nil,
+            allowsSave: true,
+            size: size,
+            attachment: attachment
         )
     }
     
@@ -547,6 +569,13 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                     metadata: ["url": .stringConvertible(storeURL)]
                 )
             }
+            if FileManager.default.fileExists(atPath: externalStorageURL.path) {
+                try FileManager.default.removeItem(at: externalStorageURL)
+                logger.notice(
+                    "Database deleted external storage on initialization.",
+                    metadata: ["url": .stringConvertible(storeURL)]
+                )
+            }
         }
         if FileManager.default.fileExists(atPath: storeURL.path) {
             do {
@@ -589,12 +618,43 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         storage.synchronizers.withLock { $0.append(synchronizer) }
     }
     
+    nonisolated private static func transientBaseURL() -> URL {
+        URL.temporaryDirectory
+            .appending(path: "DataStoreKit", directoryHint: .isDirectory)
+    }
+    
+    nonisolated private static func transientStoreURL(
+        for url: URL?,
+        name: String
+    ) -> URL {
+        let baseURL = transientBaseURL()
+        guard let url else {
+            return baseURL.appending(
+                component: name + ".store",
+                directoryHint: .notDirectory
+            )
+        }
+        if url.hasDirectoryPath {
+            let directoryName = url.lastPathComponent.isEmpty
+            ? name
+            : url.lastPathComponent
+            return baseURL
+                .appending(path: directoryName, directoryHint: .isDirectory)
+                .appending(component: name + ".store", directoryHint: .notDirectory)
+        }
+        return baseURL.appending(
+            component: url.lastPathComponent,
+            directoryHint: .notDirectory
+        )
+    }
+    
     fileprivate final class Storage: Sendable {
         nonisolated fileprivate final let name: Mutex<String>
         nonisolated fileprivate final let schema: AtomicLazyReference<Schema>
         nonisolated fileprivate final let migrationPlan: Mutex<(any SchemaMigrationPlan.Type)?>
         nonisolated fileprivate final let constraints: [String: [[String]]]
         nonisolated fileprivate final let options: Mutex<DataStoreOptions>
+        nonisolated fileprivate final let configurations: Mutex<[Key: any OptionSet & Sendable]>
         nonisolated fileprivate final let location: Mutex<SQLite.StoreType>
         nonisolated fileprivate final let externalStorageURL: URL
         nonisolated fileprivate final let allowsSave: Mutex<Bool>
@@ -610,6 +670,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             schema: Schema?,
             migrationPlan: (any SchemaMigrationPlan.Type)?,
             constraints: [String: [[String]]],
+            configurations: [Key: any OptionSet & Sendable],
             options: DataStoreOptions,
             location: SQLite.StoreType,
             externalStorageURL: URL,
@@ -625,6 +686,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             self.schema = .init()
             self.migrationPlan = .init(migrationPlan)
             self.constraints = constraints
+            self.configurations = .init(configurations)
             self.options = .init(options)
             self.location = .init(location)
             self.externalStorageURL = externalStorageURL
@@ -644,6 +706,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                 schema: schema.load(),
                 migrationPlan: migrationPlan.withLock(\.self),
                 constraints: constraints,
+                configurations: configurations.withLock(\.self),
                 options: options.withLock(\.self),
                 location: location.withLock(\.self),
                 externalStorageURL: externalStorageURL,

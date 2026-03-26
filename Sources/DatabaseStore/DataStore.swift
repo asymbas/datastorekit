@@ -647,7 +647,7 @@ public final class DatabaseStore: DataStore, Sendable {
             "author": "\(request.editingState.author ?? "nil")"
         ]
         logger.log(
-            level: configuration.options.contains(.logSaveRequest) ? .notice : .info,
+            level: configuration.options.contains(.logSaveRequests) ? .notice : .info,
             "DataStore save request: \(count.0) inserts, \(count.1) updates, \(count.2) deletes.",
             metadata: metadata
         )

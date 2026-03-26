@@ -12,7 +12,13 @@ import DataStoreRuntime
 
 extension SQLPredicateTranslator {
     nonisolated public init(configuration: DatabaseConfiguration) {
-        var options = SQLPredicateTranslatorOptions()
+        var options =
+        if let options = configuration.configurations[.predicate],
+           let options = options as? SQLPredicateTranslatorOptions {
+            options
+        } else {
+            SQLPredicateTranslatorOptions()
+        }
         if !configuration.options.contains(.disablePredicateCaching) {
             options.insert(.isCachingPredicates)
         }

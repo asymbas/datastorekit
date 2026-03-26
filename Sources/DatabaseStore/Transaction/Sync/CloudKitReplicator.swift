@@ -784,9 +784,6 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                     "primary_key": "\(identifier.primaryKey)",
                     "changed_property_names": "\(existing.changedPropertyNames, default: "nil")"
                 ])
-            default:
-                logger.trace("Skipped unknown history change type.", metadata: ["change_type": "\(row.changeType)"])
-                continue
             }
         }
         let result = changes.values.sorted { $0.historyPrimaryKey < $1.historyPrimaryKey }

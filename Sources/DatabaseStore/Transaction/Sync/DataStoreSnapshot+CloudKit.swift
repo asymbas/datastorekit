@@ -89,6 +89,9 @@ extension DatabaseSnapshot {
                 if let existingSnapshot {
                     self.values[property.index] = existingSnapshot.values[property.index]
                     logger.debug("Incoming snapshot copied existing to-many relationships: \(property)")
+                } else if !relationship.isOptional && !relationship.isToOneRelationship {
+                    self.values[property.index] = [PersistentIdentifier]()
+                    logger.debug("Incoming snapshot initialized default empty to-many relationships: \(property)")
                 }
             default:
                 continue
@@ -208,7 +211,7 @@ extension DatabaseSnapshot {
                 }
             case let relationship as Schema.Relationship where relationship.isToOneRelationship:
                 if let identifier = value as? PersistentIdentifier {
-                    let relatedPrimaryKey = store.manager.primaryKey(for: identifier) ?? identifier.primaryKey()
+                    let relatedPrimaryKey = store.manager.primaryKey(for: identifier)
                     let relatedRecordName = try resolveRelationshipRecordName(relationship.destination, relatedPrimaryKey)
                     record[property.name] = relatedRecordName as CKRecordValue
                     logger.trace("CKRecord to-one relationship value set: \(property) = \(primaryKey)")
@@ -256,7 +259,7 @@ extension DatabaseSnapshot {
             let sourceFieldName = "key_" + reference[0].rhsColumn
             let destinationFieldName = "key_" + reference[1].lhsColumn
             for identifier in identifiers {
-                let destinationPrimaryKey = store.manager.primaryKey(for: identifier) ?? identifier.primaryKey()
+                let destinationPrimaryKey = store.manager.primaryKey(for: identifier)
                 let recordName = try validateCloudKitRecordName(referenceRecordName(
                     intermediaryTableName,
                     destinationPrimaryKey
@@ -294,7 +297,7 @@ extension DatabaseSnapshot {
         switch value {
         case is SQLNull, is NSNull:
             return nil
-        case let value where attribute.options.contains(.externalStorage):
+        case _ where attribute.options.contains(.externalStorage):
             let relativePath = "\(entityName)/\(attribute.name)/\(primaryKey)"
             let url = externalStorageURL.appending(path: relativePath)
             guard FileManager.default.fileExists(atPath: url.path) else {

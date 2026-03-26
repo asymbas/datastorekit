@@ -304,7 +304,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
         let schemaMetadata = self.type.databaseSchemaMetadata
         for (snapshotProperty, schemaProperty) in zip(self.properties, schemaMetadata) {
             if snapshotProperty != schemaProperty {
-                throw Self.Error.propertyDoesNotMatchSchema(snapshotProperty, schemaProperty)
+                throw .propertyDoesNotMatchSchema(snapshotProperty, schemaProperty)
             }
         }
         return consume self

@@ -86,7 +86,7 @@ extension ModelContext {
     ) async throws -> SectionedFetchResults<SectionID, T>
     where T: PersistentModel, SectionID: Hashable & Sendable {
         let editingState = self.editingState
-        try await Task { @concurrent in
+        _ = try await Task { @concurrent in
             try await ModelContext.preload(sectionedDescriptor.descriptor, for: editingState)
         }.value
         return try fetchSectioned(sectionedDescriptor)

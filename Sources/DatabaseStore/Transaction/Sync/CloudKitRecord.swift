@@ -90,7 +90,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     internal func resolveRootRecordOwnership(for record: CKRecord) throws -> RecordIdentifier? {
         switch record[pk] as? String {
         case let primaryKey?:
-            try .init(
+            .init(
                 for: store.identifier,
                 tableName: makeEntityName(fromRecordType: record.recordType),
                 primaryKey: primaryKey
@@ -103,11 +103,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     internal func resolveRootRecordOwnership(for recordID: CKRecord.ID) throws -> RecordIdentifier? {
         switch try loadRecordMetadata(recordName: recordID.recordName) {
         case let metadata? where metadata.recordType == makeRecordType(metadata.entityName):
-            try .init(
-                for: store.identifier,
-                tableName: metadata.entityName,
-                primaryKey: metadata.primaryKey
-            )
+            .init(for: store.identifier, tableName: metadata.entityName, primaryKey: metadata.primaryKey)
         default:
             nil
         }
@@ -167,7 +163,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
             )
         }
         logger.trace("Failed to resolve projected record ownership.", metadata: [
-            "record_type": "\(recordType)",
+            "record_type": "\(recordType ?? "nil")",
             "record_name": "\(recordID.recordName)"
         ])
         return nil
@@ -524,7 +520,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
             entityName: entityName,
             primaryKey: primaryKey,
             targetPrimaryKey: targetPrimaryKey,
-            systemFields: try savedRecord.systemFieldsData(),
+            systemFields: savedRecord.systemFieldsData(),
             connection: connection
         )
     }
