@@ -50,11 +50,11 @@ struct DatabaseConfigurationLifecycleTests {
         let schema = Schema()
         var configuration = DatabaseConfiguration.transient(types: [], schema: schema)
         do {
-            let modelContainer = try ModelContainer(for: Schema([]), configurations: [configuration])
+            let modelContainer = try ModelContainer(for: schema, configurations: [configuration])
             #expect(configuration.store != nil)
         }
         #expect(configuration.store == nil)
-        let modelContainer = try ModelContainer(for: Schema([]), configurations: [configuration])
+        let modelContainer = try ModelContainer(for: schema, configurations: [configuration])
         #expect(configuration.store != nil)
     }
 
