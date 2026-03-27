@@ -77,4 +77,9 @@ public actor CustomModelActor {
     @inlinable nonisolated public final var unownedExecutor: UnownedSerialExecutor {
         executor.asUnownedSerialExecutor()
     }
+    
+    public subscript<T>(persistentIdentifier: PersistentIdentifier, as type: T.Type) -> T?
+    where T: PersistentModel {
+        modelContext.registeredModel(for: persistentIdentifier)
+    }
 }
