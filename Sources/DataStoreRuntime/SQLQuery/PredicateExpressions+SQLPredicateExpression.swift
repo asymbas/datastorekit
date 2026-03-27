@@ -244,7 +244,7 @@ where Root: SQLPredicateExpression {
                 clause = "\(quote(sourceAlias)).\(quote(property.enclosing!.name))"
                 break
             }
-            clause = context.useFallbackOnCompositeAttributes ?
+            clause = context.options.contains(.useFallbackOnCompositeAttributes) ?
                 """
                 COALESCE (
                     json_extract(CAST(\(root.clause) AS TEXT), '$."\(property.name)"'),
@@ -511,7 +511,7 @@ where repeat each Input: SQLPredicateExpression,
                 }()
                 let cte = CommonTableExpression("CTE_\(outerKey)_\(outerIndex)") {
                     #if DEBUG
-                    if context.shouldMarkStartOfPredicateExpression {
+                    if context.options.contains(.shouldMarkStartOfPredicateExpression) {
                         let debug = debugVariableIDs(
                             ("path", context.path.last),
                             ("context", context.key),
@@ -548,7 +548,7 @@ where repeat each Input: SQLPredicateExpression,
                 ctes.append(cte)
                 clauses.append(SQL {
                     Exists {
-                        if context.shouldMarkStartOfPredicateExpression {
+                        if context.options.contains(.shouldMarkStartOfPredicateExpression) {
                             "/* Outer CTE ExpressionEvaluate */"
                         }
                         Select(1)
@@ -637,7 +637,7 @@ where repeat each Input: SQLPredicateExpression,
                 }()
                 let cte = CommonTableExpression("CTE_\(outerKey)_\(outerIndex)") {
                     #if DEBUG
-                    if context.shouldMarkStartOfPredicateExpression {
+                    if context.options.contains(.shouldMarkStartOfPredicateExpression) {
                         let debug = debugVariableIDs(
                             ("path", context.path.last),
                             ("context", context.key),
@@ -674,7 +674,7 @@ where repeat each Input: SQLPredicateExpression,
                 ctes.append(cte)
                 clauses.append(SQL {
                     Exists {
-                        if context.shouldMarkStartOfPredicateExpression {
+                        if context.options.contains(.shouldMarkStartOfPredicateExpression) {
                             "/* Outer CTE PredicateEvaluate */"
                         }
                         Select(1)
@@ -822,7 +822,7 @@ where LHS: SQLPredicateExpression,
             let clause = SQL {
                 Exists {
                     #if DEBUG
-                    if context.shouldMarkStartOfPredicateExpression {
+                    if context.options.contains(.shouldMarkStartOfPredicateExpression) {
                         let debug = debugVariableIDs(
                             ("path", context.path.last),
                             ("context", context.key),
@@ -924,7 +924,7 @@ where LHS: SQLPredicateExpression, RHS: SQLPredicateExpression {
             }
             let clause = SQL {
                 #if DEBUG
-                if context.shouldMarkStartOfPredicateExpression {
+                if context.options.contains(.shouldMarkStartOfPredicateExpression) {
                     let debug = debugVariableIDs(
                         ("path", context.path.last),
                         ("context", context.key),
@@ -1164,7 +1164,7 @@ where Wrapped: SQLPredicateExpression, Index: SQLPredicateExpression {
             END
             """
         var expression = "json_extract(\(wrapped.clause), '$[' || (\(normalizedIndex)) || ']')"
-        if context.shouldMarkStartOfPredicateExpression {
+        if context.options.contains(.shouldMarkStartOfPredicateExpression) {
             let debug = debugVariableIDs(("context", context.key))
             expression = "/* CollectionIndexSubscript (#\(context.level), \(debug)) */ " + expression
         }
@@ -1226,7 +1226,7 @@ where Wrapped: SQLPredicateExpression, Range: SQLPredicateExpression {
                 BETWEEN (bounds.lowerbound) AND \(upperBoundForBetween)
             )
             """
-        if context.shouldMarkStartOfPredicateExpression {
+        if context.options.contains(.shouldMarkStartOfPredicateExpression) {
             let debug = debugVariableIDs(("context", context.key))
             expression = "/* CollectionRangeSubscript<\(outputType)> (#\(context.level), \(debug)) */\n"
             + expression
@@ -1285,7 +1285,7 @@ where Wrapped: SQLPredicateExpression,
         ? `default`.clause
         : cast(`default`.clause, as: outputType)
         var expression = "COALESCE(\(extracted), \(defaultExpression))"
-        if context.shouldMarkStartOfPredicateExpression {
+        if context.options.contains(.shouldMarkStartOfPredicateExpression) {
             let debug = debugVariableIDs(("context", context.key))
             expression = "/* DictionaryKeyDefaultValueSubscript (#\(context.level), \(debug)) */\n"
             + expression
@@ -1349,7 +1349,7 @@ where Wrapped: SQLPredicateExpression, Key: SQLPredicateExpression {
                 break
             }
         }
-        if context.shouldMarkStartOfPredicateExpression {
+        if context.options.contains(.shouldMarkStartOfPredicateExpression) {
             let debug = debugVariableIDs(("context", context.key))
             expression = "\n/* DictionaryKeySubscript (#\(context.level), \(debug)) */\n"
             + expression
@@ -1715,7 +1715,7 @@ where Elements: SQLPredicateExpression {
                 )
             )
             """
-        if context.shouldMarkStartOfPredicateExpression {
+        if context.options.contains(.shouldMarkStartOfPredicateExpression) {
             let debug = debugVariableIDs(("context", context.key))
             sql = "/* SequenceMaximum (#\(context.level), \(debug)) */\n" + sql
         }
@@ -1748,7 +1748,7 @@ where Elements: SQLPredicateExpression {
                 )
             )
             """
-        if context.shouldMarkStartOfPredicateExpression {
+        if context.options.contains(.shouldMarkStartOfPredicateExpression) {
             let debug = debugVariableIDs(("context", context.key))
             sql = "/* SequenceMinimum (#\(context.level), \(debug)) */\n" + sql
         }

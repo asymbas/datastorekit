@@ -493,7 +493,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                 entityName: root.tableName,
                 primaryKey: root.primaryKey.description,
                 targetPrimaryKey: nil,
-                systemFields: try savedRecord.systemFieldsData(),
+                systemFields: savedRecord.systemFieldsData(),
                 connection: connection
             )
             return

@@ -109,17 +109,16 @@ nonisolated package func fetchToOneReference<Result>(
 nonisolated package func fetchExternalReferences(
     for persistentIdentifier: PersistentIdentifier,
     in property: PropertyMetadata,
-    graph: ReferenceGraph? = nil,
     connection: borrowing DatabaseConnection<DatabaseStore>
 ) throws -> any DataStoreSnapshotValue {
     guard let relationship = property.metadata as? Schema.Relationship else {
-        fatalError("\(ModelMappingError.metadataKindMismatch)")
+        preconditionFailure("Property should have been a relationship: \(property)")
     }
     guard let storeIdentifier = persistentIdentifier.storeIdentifier else {
-        fatalError("References cannot be fetched for a temporary identifier.")
+        preconditionFailure("References cannot be fetched for a temporary identifier.")
     }
     let description = "\(persistentIdentifier.entityName).\(property)"
-    if let graph,
+    if let graph = connection.context?.graph,
        let cachedTargets = graph.cachedReferencesIfPresent(
         for: persistentIdentifier,
         at: property.name
@@ -151,7 +150,7 @@ nonisolated package func fetchExternalReferences(
             if relationship.isToOneRelationship { Limit(1) }
         }
     default:
-        fatalError("Invalid table reference and relationship combination.")
+        preconditionFailure("Invalid table reference and relationship combination.")
     }
     let relatedIdentifiers = try results.compactMap { result -> PersistentIdentifier? in
         try (result[relationshipAlias] as? String).flatMap { foreignKey -> PersistentIdentifier? in
@@ -162,7 +161,7 @@ nonisolated package func fetchExternalReferences(
             )
         }
     }
-    if let graph {
+    if let graph = connection.context?.graph {
         graph.setReferences(for: persistentIdentifier, at: property.name, to: relatedIdentifiers)
     }
     logger.trace(
@@ -297,7 +296,7 @@ nonisolated package func fetchExternalRowsBatched(
                 WHERE "\(destinationAlias)"."\(ownerForeignKeyInDestination)" IN (\(placeholders))
                 """
         default:
-            fatalError()
+            preconditionFailure()
         }
         let rows = try connection.fetch(sql, bindings: bindings)
         for row in rows {

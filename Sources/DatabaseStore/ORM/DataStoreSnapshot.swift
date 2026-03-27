@@ -70,12 +70,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
     }
     
     /// The `PersistentModel` type associated to this entity.
-    nonisolated public var type: any (PersistentModel & SendableMetatype).Type {
-        guard let type = Schema.type(for: entityName) else {
-            preconditionFailure()
-        }
-        return type
-    }
+    nonisolated public var type: any (PersistentModel & SendableMetatype).Type
     
     internal struct Flags: AtomicRepresentable, OptionSet, Sendable {
         typealias RawValue = UInt16
@@ -133,8 +128,9 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
     ) {
         let entityName = persistentIdentifier.entityName
         guard let type = type ?? Schema.type(for: entityName) else {
-            preconditionFailure("\(SchemaError.entityNotRegistered)")
+            preconditionFailure("A type was not provided for the entity named \(entityName).")
         }
+        self.type = type
         self.persistentIdentifier = persistentIdentifier
         self.primaryKey = primaryKey.description
         self.properties = !properties.isEmpty ? properties : .init(type.databaseSchemaMetadata)
@@ -793,7 +789,7 @@ extension DatabaseSnapshot {
                 guard let relationship = property.metadata as? Schema.Relationship else {
                     preconditionFailure("Property should have been a relationship: \(property)")
                 }
-                if let graph,
+                if let graph = graph ?? connection.context?.graph,
                    let cachedTargets = graph.cachedReferencesIfPresent(for: persistentIdentifier, at: property.name) {
                     if relationship.isToOneRelationship {
                         oldValue = cachedTargets.first ?? SQLNull()
@@ -1773,7 +1769,7 @@ extension DatabaseSnapshot {
     nonisolated public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: DataStoreSnapshotCodingKey.self)
         try container.encode(persistentIdentifier, forKey: .persistentIdentifier)
-        for (index, key) in properties.enumerated() {
+        for (index, key) in properties.enumerated() where !key.flags.contains(.isExternal) {
             switch true {
             case key.metadata is Schema.Attribute: try setValue(attribute: key, index: index)
             case key.metadata is Schema.Relationship: try setValue(relationship: key, index: index)

@@ -236,7 +236,6 @@ extension DatabaseSnapshot {
                         value = try fetchExternalReferences(
                             for: persistentIdentifier,
                             in: property,
-                            graph: registry?.graph,
                             connection: connection
                         )
                         if let graph = registry?.graph,
@@ -312,7 +311,6 @@ extension DatabaseSnapshot {
                 let value = try fetchExternalReferences(
                     for: persistentIdentifier,
                     in: property,
-                    graph: store.manager.graph,
                     connection: connection
                 )
                 try setValue(value, at: property, store: store)

@@ -36,13 +36,8 @@ extension SQLPredicateTranslator {
         options.contains(.allowKeyPathVariantsForPropertyLookup)
     }
     
-    nonisolated internal var useFallbackOnCompositeAttributes: Bool {
-        options.contains(.useFallbackOnCompositeAttributes)
-    }
-    
-    nonisolated internal var shouldMarkStartOfPredicateExpression: Bool {
-        options.contains(.shouldMarkStartOfPredicateExpression)
-    }
+
+
     
     nonisolated internal var shouldLogInformation: Bool {
         options.contains(.useVerboseLogging)
@@ -54,7 +49,7 @@ extension SQLPredicateTranslator {
 // FIXME: Unable to access a relationship's attribute to sort without a predicate.
 // FIXME: When the fragment returns mismatching entity at root, it has relationship destination issues.
 
-/// An object that translates a `FetchDescriptor` into an SQL DQL statement.
+/// A type that translates a `FetchDescriptor<T>` into an SQL statement object.
 public struct SQLPredicateTranslator<T>: ~Copyable, Sendable
 where T: PersistentModel & SendableMetatype {
     /// The stable identity of the translator.
@@ -128,15 +123,12 @@ where T: PersistentModel & SendableMetatype {
         minimumLogLevel: consuming Logger.Level = .notice,
         tags: consuming Set<String>? = []
     ) {
-        if false {
-            options.insert(.preferStandardOutput)
-        }
-        if attachment != nil {
-            options.insert(.useVerboseLogging)
-            minimumLogLevel = .trace
-        }
+        #if DEBUG
         if let values = SQLPredicateTranslatorOptions.tags {
             tags = values
+            minimumLogLevel = .trace
+        }
+        if attachment != nil, options.insert(.useVerboseLogging).inserted {
             minimumLogLevel = .trace
         }
         if options.contains(.logAllPredicateExpressions) ||
@@ -145,6 +137,7 @@ where T: PersistentModel & SendableMetatype {
             minimumLogLevel = .trace
             tags = nil
         }
+        #endif
         self.schema = schema
         self.attachment = attachment
         self.options = options
@@ -200,10 +193,7 @@ where T: PersistentModel & SendableMetatype {
         let statement = SQL {
             if options.contains(.explainQueryPlan) { "\nEXPLAIN QUERY PLAN\n" }
             if !ctes.isEmpty { With { SQLForEach(ctes) { $0 } } }
-            Select(
-                select == nil ? selectedColumns : [select.unsafelyUnwrapped],
-                qualified: true
-            )
+            Select(select == nil ? selectedColumns : [select.unsafelyUnwrapped], qualified: true)
             From(baseEntity.name, as: baseAlias)
             if !references.isEmpty {
                 ForEach(references) {
@@ -240,8 +230,7 @@ where T: PersistentModel & SendableMetatype {
         do {
             let placeholders = statement.sql.filter { $0 == "?" }.count
             let bindings = statement.bindings.count
-            assert(
-                placeholders == bindings,
+            assert(placeholders == bindings,
                 "Translation produced mismatched placeholders and bindings: \(placeholders) != \(bindings)"
             )
         }
@@ -249,18 +238,18 @@ where T: PersistentModel & SendableMetatype {
         if !self.references.isEmpty {
             print("References not fully consumed: \(references) \(self.references)")
         }
-        if let predicate = descriptor.predicate {
-            hasher.combine(predicate.description)
-        }
+        if let predicate = descriptor.predicate { hasher.combine(predicate.description) }
         hasher.combine(baseEntity.name)
         hasher.combine(bindingsCount)
         hasher.combine(descriptor.fetchLimit)
         hasher.combine(descriptor.fetchOffset)
         let combinedHash = self.hasher.finalize()
         #if DEBUG
-        if (true || minimumLogLevel <= .debug || tags == nil),
+        if (minimumLogLevel <= .debug || tags == nil),
            requestedIdentifiers == nil && clause != nil,
-           options.contains(.useVerboseLogging) || options.contains(.logAllPredicateExpressions) || options.contains(.generateSQLStatement) {
+           options.contains(.useVerboseLogging)
+            || options.contains(.logAllPredicateExpressions)
+            || options.contains(.generateSQLStatement) {
             logger.log(level: .info, "\n“\(baseEntity.name)” translated predicate (\(combinedHash)):\n\(statement)")
             fflush(stdout)
         }
@@ -518,7 +507,7 @@ extension SQLPredicateTranslator {
                     break
                 }
                 let qualifiedName = "\(quote(alias)).\(quote(composite.name))"
-                clause = useFallbackOnCompositeAttributes
+                clause = self.options.contains(.useFallbackOnCompositeAttributes)
                 ?
                     """
                     COALESCE (
@@ -686,7 +675,7 @@ extension SQLPredicateTranslator {
            let type = self.types[currentTable] as? any (PersistentModel & SendableMetatype).Type,
            let property = type.databaseSchemaMetadata.first(where: { $0.name == metadata.name }) {
             log(.notice, "Resorting to slowest path lookup for PropertyMetadata: \(currentTable).\(property.name)")
-#if DEBUG
+            #if DEBUG
             print(
                 """
                 The parsed key path could not match to any PropertyMetadata in the schema.
@@ -699,7 +688,7 @@ extension SQLPredicateTranslator {
                 Property: \(property)
                 """
             )
-#endif
+            #endif
             return property
         }
         log(.warning, "Traversed entire path but found no terminal value: \(keyPath)")
@@ -844,10 +833,7 @@ extension SQLPredicateTranslator {
         func append(_ path: [Schema.Entity], startingAt current: consuming (entity: Schema.Entity, alias: String)) -> String {
             for entity in path {
                 let alias = createTableAlias(key, entity.name)
-                if alias == current.alias {
-                    current = (entity, alias)
-                    continue
-                }
+                if alias == current.alias { current = (entity, alias); continue }
                 let reference = TableReference(
                     sourceAlias: current.alias,
                     sourceTable: current.entity.name,

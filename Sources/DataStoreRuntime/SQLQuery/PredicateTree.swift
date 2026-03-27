@@ -9,7 +9,7 @@
 
 import Foundation
 
-public struct PredicateTree: Equatable, Hashable, Sendable {
+public struct PredicateTree: Equatable, Hashable, Identifiable, Sendable {
     nonisolated public let id: UUID
     nonisolated public var path: [PredicateTree.Node]
     
