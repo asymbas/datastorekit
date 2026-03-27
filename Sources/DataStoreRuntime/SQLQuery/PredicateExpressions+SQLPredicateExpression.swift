@@ -105,8 +105,12 @@ extension PredicateExpressions.Variable: SQLPredicateExpression {
             context.hasher.combine(entity.name)
             return .init(clause: alias, key: key, alias: alias, type: Output.self, entity: entity, kind: .scope)
         default:
+            /*
+             This path is for entering a closure of a collection where the element is a value type.
+             e.g. `model.values.contains(where: { $0.rawValue == rawValue })`
+             */
             context.log(.trace, "Variable is a value type: \(Output.self).self")
-            return .init(clause: "", key: key, type: Output.self, kind: .scope)
+            return .init(clause: "json_each.value", key: key, type: Output.self, kind: .scope)
         }
     }
 }
@@ -121,9 +125,10 @@ where Root: SQLPredicateExpression {
         guard kind == nil else { return resolveComputedProperty(&context, root) }
         switch root.kind {
         case .scope:
-            assert(root.entity != nil, "No entity associated to fragment when accessing a property.")
             guard let type = Root.Output.self as? any PersistentModel.Type else {
-                preconditionFailure("Root.Output.self is not a PersistentModel.Type: \(description)")
+                context.log(.notice, "Root.Output.self is not a PersistentModel.Type: \(description)")
+                // Path where value the key path is applied to `SequenceContainsWhere`.
+                return root
             }
             context.loadSchemaMetadata(for: type)
             guard let property = try? context[keyPath, type] else {
@@ -871,13 +876,13 @@ where LHS: SQLPredicateExpression,
                 kind: .existsClause
             )
         default:
-            context.log(.warning, "SequenceContainsWhere on JSON columns is not yet supported.")
+            context.log(.debug, "SequenceContainsWhere on JSON columns.")
             return sequence.copy(
                 clause: """
                 EXISTS (
                     SELECT 1
                     FROM json_each(\(sequence.clause))
-                    WHERE json_each.value = \(conditional.clause)
+                    WHERE \(conditional.clause)
                 )
                 """,
                 bindings: sequence.bindings + element.bindings + conditional.bindings,
