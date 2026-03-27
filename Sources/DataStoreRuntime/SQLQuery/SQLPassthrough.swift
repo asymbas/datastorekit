@@ -11,9 +11,12 @@ import DataStoreSQL
 import SQLiteHandle
 import SQLiteStatement
 
-public protocol SQLQueryPassthrough {}
+@available(*, deprecated, renamed: "SQLPassthrough")
+public typealias SQLQueryPassthrough = SQLPassthrough
 
-extension SQLQueryPassthrough {
+public protocol SQLPassthrough {}
+
+extension SQLPassthrough {
     nonisolated public var sql: SQL { .init(Raw("")) }
 }
 

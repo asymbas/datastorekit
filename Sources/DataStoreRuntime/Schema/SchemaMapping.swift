@@ -85,7 +85,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                         }
                         logger.trace("Creating relationship column: \(description)")
                     }
-                case let compositeAttribute as Schema.CompositeAttribute:
+                case let compositeAttribute as Schema.CompositeAttribute where !property.flags.contains(.isExternal):
                     SQLCompositeAttributeColumn(
                         name: compositeAttribute.name,
                         valueType: compositeAttribute.options.contains(.externalStorage)
@@ -123,7 +123,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                             }
                         }
                     }
-                case let attribute as Schema.Attribute:
+                case let attribute as Schema.Attribute where !property.flags.contains(.isExternal):
                     SQLAttributeColumn(
                         name: attribute.name,
                         valueType: attribute.options.contains(.externalStorage)

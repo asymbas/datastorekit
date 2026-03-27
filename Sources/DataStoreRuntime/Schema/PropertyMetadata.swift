@@ -49,11 +49,16 @@ public struct PropertyMetadata: Equatable, Hashable, Sendable {
             .init(rawValue: 1 << 1)
         }
         
-        nonisolated package static var isUnique: Self {
+        nonisolated package static var isExternal: Self {
             .init(rawValue: 1 << 2)
         }
-        nonisolated package static var isOptional: Self {
+        
+        nonisolated package static var isUnique: Self {
             .init(rawValue: 1 << 3)
+        }
+        
+        nonisolated package static var isOptional: Self {
+            .init(rawValue: 1 << 4)
         }
         
         nonisolated package let rawValue: UInt8

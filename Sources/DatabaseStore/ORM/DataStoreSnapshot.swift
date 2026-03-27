@@ -189,6 +189,9 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
             for index in 0..<count {
                 let property = self.properties[index]
                 let value = self.values[index]
+                guard !property.flags.contains(.isExternal) else {
+                    continue
+                }
                 let description = "\(primaryKey) - \(entityName).\(property.name)"
                 switch property.metadata {
                 case let attribute as Schema.Attribute:
@@ -444,6 +447,7 @@ extension DatabaseSnapshot {
                     self.values[property.index] = SQLNull()
                     logger.trace("Received BackingData attribute: \(description) = NULL")
                 default:
+                    if property.flags.contains(.isExternal) { continue }
                     preconditionFailure("All attributes must carry over from BackingData: \(description)")
                 }
             case let relationship as Schema.Relationship:
@@ -476,6 +480,7 @@ extension DatabaseSnapshot {
                         logger.trace("Received BackingData relationship: \(description) = []")
                     }
                 default:
+                    if property.flags.contains(.isExternal) { continue }
                     preconditionFailure("All relationships must carry over from BackingData: \(description)")
                 }
             default:

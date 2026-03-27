@@ -142,12 +142,10 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
         )
         var resolvedKeyPath: (AnyKeyPath & Sendable)?
         if let type = type as? any PredicateCodableKeyPathProviding.Type,
-           let keyPath = getPredicateCodableKeyPath(for: type, property: property),
-           registerKeyPath(keyPath) {
+           let keyPath = getPredicateCodableKeyPath(for: type, property: property), registerKeyPath(keyPath) {
             logger.trace("Received supplied key path: \(description)", metadata: ["key_path": "\(keyPath)"])
         }
-        if let keyPath = (property as? Schema.Relationship)?.keypath,
-           registerKeyPath(keyPath) {
+        if let keyPath = (property as? Schema.Relationship)?.keypath, registerKeyPath(keyPath) {
             logger.trace("Received relationship key path: \(description)", metadata: ["key_path": "\(keyPath)"])
         }
         switch entity.inheritedPropertiesByName[property.name] != nil {
@@ -205,15 +203,12 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
         guard let keyPath = resolvedKeyPath else {
             fatalError("No key path found for property: \(description)")
         }
-        var canonicalProperty = PropertyMetadata(
-            index: index,
-            keyPath: keyPath,
-            metadata: property
-        )
+        var canonicalProperty = PropertyMetadata(index: index, keyPath: keyPath, metadata: property)
         try makeTableReferences(&canonicalProperty)
         try accumulate(&result, canonicalProperty)
-        if let type = Model.self as? any SQLQueryPassthrough.Type {
-            let property = insertSQLQueryPassthrough(for: type)
+        if let type = Model.self as? any SQLPassthrough.Type {
+            var property = insertSQLQueryPassthrough(for: type)
+            property.flags.insert(.isExternal)
             try accumulate(&result, property)
         }
         func makeTableReferences(_ property: inout PropertyMetadata) throws {

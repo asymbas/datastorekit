@@ -76,7 +76,7 @@ where T: PersistentModel & SendableMetatype {
     /// Flags configured for this translator.
     nonisolated internal let options: SQLPredicateTranslatorOptions
     /// The SQL query to use and skip anything else.
-    nonisolated internal var sqlQueryPassthrough: SQL?
+    nonisolated internal var sqlPassthrough: SQL?
     /// The current scope of a closure.
     nonisolated internal var key: PredicateExpressions.VariableID?
     /// The first occurrence of a closure.
@@ -159,7 +159,7 @@ where T: PersistentModel & SendableMetatype {
         _ = descriptor.includePendingChanges
         loadSchemaMetadata(for: T.self)
         var fragment = (descriptor.predicate?.expression as? SQLPredicateExpression)?.query(&self)
-        if let passthrough = self.sqlQueryPassthrough {
+        if let passthrough = self.sqlPassthrough {
             fragment = .init(clause: passthrough.sql, bindings: passthrough.bindings)
         }
         let clause = fragment?.clause
@@ -330,7 +330,7 @@ extension SQLPredicateTranslator {
         var properties = [PropertyMetadata]()
         properties.reserveCapacity(schemaMetadata.count + 1)
         properties.append(primaryKeyColumn)
-        for var property in schemaMetadata {
+        for var property in schemaMetadata where !property.flags.contains(.isExternal) {
             defer { properties.append(property) }
             switch property.metadata {
             case is Schema.Attribute:

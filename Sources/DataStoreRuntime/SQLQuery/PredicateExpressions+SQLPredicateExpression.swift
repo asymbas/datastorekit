@@ -53,8 +53,8 @@ extension PredicateExpressions.Value: SQLPredicateExpression {
         case let model as any PersistentModel:
             clause = "?"
             bindings = [model]
-        case let sqlQueryPassthrough as SQL:
-            context.sqlQueryPassthrough = sqlQueryPassthrough
+        case let sqlPassthrough as SQL:
+            context.sqlPassthrough = sqlPassthrough
             return .invalid
         case let values as any Swift.Collection<Int>:
             let placeholders = Array(repeating: "?", count: values.count).joined(separator: ", ")
