@@ -13,15 +13,34 @@ import SwiftData
 
 @Suite("Schema")
 struct SchemaTests {
-    @Model class EntityImplicitSchemaProperty {
+    @Model class ImplicitEntity {
         var id: String
+        var relationship: RelationshipEntity?
         
         init(id: String) {
             self.id = id
         }
     }
     
+    @Model class ExplicitEntity {
+        @Attribute var id: String
+        @Relationship(deleteRule: .cascade, inverse: \RelationshipEntity.explicit)
+        var relationship: RelationshipEntity?
+        
+        init(id: String) {
+            self.id = id
+        }
+    }
     
+    @Model class RelationshipEntity {
+        var id: String
+        @Relationship var implicit: ImplicitEntity?
+        @Relationship var explicit: ExplicitEntity?
+        
+        init(id: String) {
+            self.id = id
+        }
+    }
     
     @Test func test() async throws {
         
