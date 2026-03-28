@@ -1,5 +1,5 @@
 //
-//  Environment.swift
+//  SQLFragment.swift
 //  DataStoreKit
 //
 //  Copyright 2025 Asymbas and Anferne Pineda.
@@ -8,8 +8,6 @@
 //
 
 import Foundation
-
-#if !SwiftPlaygrounds
 
 nonisolated package func getEnvironmentValue(for key: String) -> String? {
     if let value = ProcessInfo.processInfo.environment[key] {
@@ -28,29 +26,5 @@ nonisolated package func _getEnvironmentValue(for key: String) -> String? {
         return nil
     }
 }
-
-#endif
-
-#else
-
-nonisolated public func getEnvironmentValue(for key: String) -> String? {
-    if let value = ProcessInfo.processInfo.environment[key] {
-        return value
-    } else {
-        return nil
-    }
-}
-
-#if false
-
-nonisolated public func _getEnvironmentValue(for key: String) -> String? {
-    if let value = getenv(key) {
-        return String(cString: value)
-    } else {
-        return nil
-    }
-}
-
-#endif
 
 #endif
