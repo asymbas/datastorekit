@@ -7,13 +7,10 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-@_exported import SwiftData
-
-#if true || !SwiftPlaygrounds
 @_exported import _DatabaseStore
 @_exported import DataStoreCore
 @_exported import DataStoreRuntime
 @_exported import DataStoreSQL
 @_exported import DataStoreSupport
 @_exported import SQLiteHandle
-#endif
+@_exported import SwiftData
