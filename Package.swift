@@ -137,7 +137,7 @@ let package = Package(
     ]
 )
 
-#if swift(>=6.2)
+#if compiler(>=6.2)
 let swiftSettings: [SwiftSetting] = [.unsafeFlags(["-package-name", "DataStoreKit"])]
 #else
 let swiftSettings: [SwiftSetting] = []
