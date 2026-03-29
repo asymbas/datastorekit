@@ -99,10 +99,7 @@ extension DatabaseSnapshot {
         }
     }
     
-    nonisolated private func setValue(
-        _ value: any Sendable,
-        attribute: Schema.Attribute
-    ) throws -> any Sendable {
+    nonisolated private func setValue(_ value: any Sendable, attribute: Schema.Attribute) throws -> any Sendable {
         let description = "\(entityName).\(attribute.name) as \(attribute.valueType).self"
         guard let valueType = unwrapOptionalMetatype(attribute.valueType) as? any DataStoreSnapshotValue.Type else {
             preconditionFailure("Attribute must conform to DataStoreSnapshotValue: \(description)")

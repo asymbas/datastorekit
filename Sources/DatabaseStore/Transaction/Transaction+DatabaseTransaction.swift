@@ -71,7 +71,7 @@ public final class TransactionObject: DatabaseTransaction {
         do {
             self._externalStorageTransaction = .init(try ExternalStorageTransaction(baseURL: externalStorageURL))
         } catch {
-            fatalError("Unable to initialize transaction: \(error)")
+            preconditionFailure("Unable to initialize transaction: \(error)")
         }
     }
     
@@ -115,17 +115,14 @@ public final class TransactionObject: DatabaseTransaction {
     ) {
         guard table != HistoryTable.tableName else { return }
         do {
-            try record(.insert, tableName: table, primaryKey: primaryKey, context: nil)
+            try record(.insert, tableName: table, primaryKey: primaryKey, propertyNames: nil, preservedValues: nil)
         } catch {
-            logger.error(
-                "Failed to record insert history.",
-                metadata: [
-                    "table": "\(table)",
-                    "columns": "\(columns)",
-                    "values": "\(values)",
-                    "error": "\(error)"
-                ]
-            )
+            logger.error("Failed to record insert history.", metadata: [
+                "table": "\(table)",
+                "columns": "\(columns)",
+                "values": "\(values)",
+                "error": "\(error)"
+            ])
         }
     }
     
@@ -145,8 +142,7 @@ public final class TransactionObject: DatabaseTransaction {
                 if !isResolved, let oldValues, let entity = self.schema?.entitiesByName[table] {
                     for index in diff(columns: columns, old: oldValues, new: newValues, ignoring: [pk]) {
                         let column = columns[index]
-                        let resolvedPropertyName = column.hasSuffix("_pk")
-                        ? String(column.dropLast(3)) : column
+                        let resolvedPropertyName = column.hasSuffix("_pk") ? String(column.dropLast(3)) : column
                         if let property = entity.storedPropertiesByName[resolvedPropertyName] {
                             affectedColumns.append(property.name)
                         }
@@ -163,18 +159,15 @@ public final class TransactionObject: DatabaseTransaction {
                 return
             }
             let list = changedProperties.joined(separator: ",")
-            try record(.update, tableName: table, primaryKey: primaryKey, context: list)
+            try record(.update, tableName: table, primaryKey: primaryKey, propertyNames: list, preservedValues: nil)
         } catch {
-            logger.error(
-                "Failed to record update history.",
-                metadata: [
-                    "table": "\(table)",
-                    "columns": "\(columns)",
-                    "oldValues": "\(oldValues ?? [])",
-                    "newValues": "\(newValues)",
-                    "error": "\(error)"
-                ]
-            )
+            logger.error("Failed to record update history.", metadata: [
+                "table": "\(table)",
+                "columns": "\(columns)",
+                "oldValues": "\(oldValues ?? [])",
+                "newValues": "\(newValues)",
+                "error": "\(error)"
+            ])
         }
     }
     
@@ -186,21 +179,31 @@ public final class TransactionObject: DatabaseTransaction {
     ) {
         guard table != HistoryTable.tableName else { return }
         do {
-            var context: String?
+            var propertyNames: String?
+            var serializedValues: Data?
             if let preservedColumns, let preservedValues {
-                context = try makeDeleteContext(columns: preservedColumns, values: preservedValues)
+                propertyNames = preservedColumns.joined(separator: ",")
+                let baseValues = preservedValues.map { value -> Any in
+                    let base = SQLValue(any: value).base
+                    if base is SQLNull { return NSNull() }
+                    return base
+                }
+                serializedValues = try JSONSerialization.data(withJSONObject: baseValues)
             }
-            try record(.delete, tableName: table, primaryKey: primaryKey, context: context)
-        } catch {
-            logger.error(
-                "Failed to record delete history.",
-                metadata: [
-                    "table": "\(table)",
-                    "preservedColumns": "\(preservedColumns ?? [])",
-                    "preservedValues": "\(preservedValues ?? [])",
-                    "error": "\(error)"
-                ]
+            try record(
+                .delete,
+                tableName: table,
+                primaryKey: primaryKey,
+                propertyNames: propertyNames,
+                preservedValues: serializedValues
             )
+        } catch {
+            logger.error("Failed to record delete history.", metadata: [
+                "table": "\(table)",
+                "preservedColumns": "\(preservedColumns ?? [])",
+                "preservedValues": "\(preservedValues ?? [])",
+                "error": "\(error)"
+            ])
         }
     }
     
@@ -208,7 +211,8 @@ public final class TransactionObject: DatabaseTransaction {
         _ event: DataStoreOperation,
         tableName: String,
         primaryKey: some LosslessStringConvertible & Sendable,
-        context: (any Sendable)?
+        propertyNames: String?,
+        preservedValues: Data?
     ) throws {
         _ = try handle.unsafelyUnwrapped.fetch(
             """
@@ -219,8 +223,9 @@ public final class TransactionObject: DatabaseTransaction {
                 "\(HistoryTable.author.rawValue)",
                 "\(HistoryTable.entityName.rawValue)",
                 "\(HistoryTable.entityPrimaryKey.rawValue)",
-                "\(HistoryTable.context.rawValue)"
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                "\(HistoryTable.propertyNames.rawValue)",
+                "\(HistoryTable.preservedValues.rawValue)"
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             bindings: [
                 event.rawValue,
@@ -229,18 +234,16 @@ public final class TransactionObject: DatabaseTransaction {
                 author,
                 tableName,
                 primaryKey,
-                context
+                propertyNames,
+                preservedValues
             ]
         )
-        logger.info(
-            "Recorded into transaction history.",
-            metadata: [
-                "event": "\(event)",
-                "tableName": "\(tableName)",
-                "primaryKey": "\(primaryKey)",
-                "context": "\(context, default: "nil")"
-            ]
-        )
+        logger.info("Recorded into transaction history.", metadata: [
+            "event": "\(event)",
+            "tableName": "\(tableName)",
+            "primaryKey": "\(primaryKey)",
+            "propertyNames": "\(propertyNames, default: "nil")"
+        ])
     }
     
     nonisolated private func makeDeleteContext(

@@ -83,16 +83,11 @@ extension DataStoreSynchronizerConfiguration {
         self.archiveBatchSize = archiveBatchSize
         self.archiveMaxBatches = archiveMaxBatches
         let now = Date()
-        let initialNextDelay = Self.randomHistoryPurgeDelay(
-            ttl: historyTTL,
-            calendar: calendar,
-            now: now
-        )
+        let initialNextDelay = Self.randomHistoryPurgeDelay(ttl: historyTTL, calendar: calendar, now: now)
         let initialBackfill = TimeInterval.random(in: 0 ... max(0, initialNextDelay))
         self.historyPurgeState = shouldPurgeOnInitialTransaction ? .pending : .idle
         self.lastHistoryPurgeDate = now.addingTimeInterval(-initialBackfill)
-        self.nextHistoryPurgeDate = shouldPurgeOnInitialTransaction
-        ? now : now.addingTimeInterval(initialNextDelay)
+        self.nextHistoryPurgeDate = shouldPurgeOnInitialTransaction ? now : now.addingTimeInterval(initialNextDelay)
         let initialArchiveDelay = Self.randomHistoryArchiveDelay()
         let initialArchiveBackfill = TimeInterval.random(in: 0 ... max(0, initialArchiveDelay))
         self.historyArchiveState = .idle
@@ -103,11 +98,7 @@ extension DataStoreSynchronizerConfiguration {
             synchronizerConfiguration.makeDatabaseSynchronizer(store: store)
         }
         self.synchronizers = synchronizers
-        self.synchronizationStatusesByID = Dictionary(
-            uniqueKeysWithValues: synchronizers.map {
-                ($0.id, .init(id: $0.id))
-            }
-        )
+        self.synchronizationStatusesByID = .init(uniqueKeysWithValues: synchronizers.map { ($0.id, .init(id: $0.id)) })
     }
     
     @discardableResult
@@ -166,12 +157,8 @@ extension DataStoreSynchronizerConfiguration {
             let shouldArchive = beginHistoryArchive(now: now, force: force)
             let shouldPurge = beginHistoryPurge(now: now, force: force)
             guard shouldArchive || shouldPurge else { return }
-            if shouldArchive {
-                finishHistoryArchive(at: now)
-            }
-            if shouldPurge {
-                finishHistoryPurge(at: now)
-            }
+            if shouldArchive { finishHistoryArchive(at: now) }
+            if shouldPurge { finishHistoryPurge(at: now) }
             do {
                 try store.queue.withConnection(.writer) { connection in
                     try HistoryTable.maintainHistory(
@@ -186,15 +173,12 @@ extension DataStoreSynchronizerConfiguration {
                         deleteAfterArchiveAndTTL: shouldPurge ? deleteArchivedExpiredTransactions : false
                     )
                 }
-                logger.debug(
-                    "Executed history maintenance: \(store.identifier)",
-                    metadata: [
-                        "archive_due": "\(shouldArchive)",
-                        "purge_due": "\(shouldPurge)",
-                        "require_archive_before_delete": "\(requireArchivedBeforeDelete)",
-                        "delete_archived_expired": "\(shouldPurge ? deleteArchivedExpiredTransactions : false)",
-                    ]
-                )
+                logger.debug("Executed history maintenance: \(store.identifier)", metadata: [
+                    "archive_due": "\(shouldArchive)",
+                    "purge_due": "\(shouldPurge)",
+                    "require_archive_before_delete": "\(requireArchivedBeforeDelete)",
+                    "delete_archived_expired": "\(shouldPurge ? deleteArchivedExpiredTransactions : false)",
+                ])
             } catch {
                 logger.error("Failed to maintain history: \(error)")
             }
@@ -302,13 +286,10 @@ extension HistoryState {
                 try await synchronizer.sync()
                 updateSynchronizationStatus(for: synchronizer.id, phase: .finished)
             } catch {
-                logger.error(
-                    "Synchronizer error: \(error)",
-                    metadata: [
-                        "store_identifier": "\(store.identifier)",
-                        "synchronizer_id": "\(synchronizer.id)"
-                    ]
-                )
+                logger.error("Synchronizer error: \(error)", metadata: [
+                    "store_identifier": "\(store.identifier)",
+                    "synchronizer_id": "\(synchronizer.id)"
+                ])
                 updateSynchronizationStatus(for: synchronizer.id, phase: .failed, error: error)
             }
         }
@@ -344,10 +325,7 @@ extension HistoryState {
         }
     }
     
-    internal func updateCloudKitSyncStatus(
-        phase: SynchronizationPhase,
-        error: (any Swift.Error)? = nil
-    ) {
+    internal func updateCloudKitSyncStatus(phase: SynchronizationPhase, error: (any Swift.Error)? = nil) {
         guard let cloudKitSynchronizer = self.synchronizers.first(where: { $0 is DatabaseConfiguration.CloudKitDatabase.Replicator }) else {
             return
         }

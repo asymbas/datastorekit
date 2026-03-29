@@ -658,7 +658,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                 \(HistoryTable.entityName.rawValue) AS entity_name,
                 \(HistoryTable.entityPrimaryKey.rawValue) AS entity_pk,
                 \(HistoryTable.author.rawValue) AS author,
-                \(HistoryTable.context.rawValue) AS context
+                \(HistoryTable.propertyNames.rawValue) AS property_names
             FROM \(databaseName).\(HistoryTable.tableName)
             WHERE \(HistoryTable.storeIdentifier.rawValue) = ?
             AND \(HistoryTable.pk.rawValue) > ?
@@ -684,7 +684,8 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                 entityName: entityName,
                 entityPrimaryKey: entityPrimaryKey,
                 author: row["author"] as? String,
-                context: row["context"] as? String
+                propertyNames: row["property_names"] as? String,
+                preservedValues: nil
             )
         }
     }
@@ -724,7 +725,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                 "change_type": "\(row.changeType)",
                 "transaction_identifier": "\(row.transactionIdentifier)",
                 "author": "\(row.author, default: "nil")",
-                "context": "\(row.context, default: "nil")"
+                "propertyNames": "\(row.propertyNames, default: "nil")"
             ])
             guard configuration.delegate.shouldSyncEntity(row.entityName) else {
                 logger.trace("Skipped entity because syncing is disabled by the delegate: \(row.entityName)")
@@ -776,7 +777,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                 existing.transactionIdentifier = row.transactionIdentifier
                 existing.author = row.author
                 if existing.changedPropertyNames != nil {
-                    existing.changedPropertyNames?.formUnion(HistoryTable.changedPropertyNames(row.context))
+                    existing.changedPropertyNames?.formUnion(HistoryTable.changedPropertyNames(row.propertyNames))
                 }
                 changes[identifier] = existing
                 logger.trace("Merged update change.", metadata: [

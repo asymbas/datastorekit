@@ -30,59 +30,50 @@ extension DatabaseStore: HistoryProviding {
     }
     
     /// Inherited from `HistoryProviding.fetchHistory(_:)`.
-    ///
-    /// Fetches the transaction history stored inline with the data store or archived.
-    /// - Parameter descriptor: The fetch request.
-    nonisolated public func fetchHistory(_ descriptor: HistoryDescriptor<HistoryType>)
-    throws -> [HistoryType] {
-        let connection = try self.queue.connection(nil)
+    nonisolated public func fetchHistory(_ descriptor: HistoryDescriptor<HistoryType>) throws -> [HistoryType] {
+        let connection = try self.queue.connection(.reader)
+        return try fetchHistory(descriptor, connection: connection)
+    }
+    
+    nonisolated public func fetchHistory(
+        _ descriptor: HistoryDescriptor<HistoryType>,
+        connection: borrowing DatabaseConnection<DatabaseStore>
+    ) throws -> [HistoryType] {
         #if DEBUG
         let translator = SQLHistoryTranslator<HistoryType>()
         _ = try translator.translate(descriptor)
         let start = Date()
-        let logThisCall = shouldLogHistoryFetch(
-            limit: descriptor.fetchLimit,
-            hasPredicate: descriptor.predicate != nil
-        )
+        let logThisCall = shouldLogHistoryFetch(limit: descriptor.fetchLimit, hasPredicate: descriptor.predicate != nil)
         if logThisCall {
             let counts = HistoryTable.counts(in: self.identifier, connection: connection)
-            logger.debug(
-                "History fetch (start).",
-                metadata: [
-                    "limit": "\(descriptor.fetchLimit)",
-                    "duration": "\(Date().timeIntervalSince(start))s",
-                    "rows": "\(counts.rows)",
-                    "transactions": "\(counts.transactions)",
-                    "thread": "\(threadDescription)"
-                ]
-            )
+            logger.debug("History fetch (start).", metadata: [
+                "limit": "\(descriptor.fetchLimit)",
+                "duration": "\(Date().timeIntervalSince(start))s",
+                "rows": "\(counts.rows)",
+                "transactions": "\(counts.transactions)",
+                "thread": "\(threadDescription)"
+            ])
             logger.trace("History fetch call stack:\n\(Thread.callStackSymbols.joined(separator: "\n"))")
         }
         #endif
-        let storeIdentifierKey = HistoryTable.storeIdentifier.rawValue
-        let transactionIdentifierKey = HistoryTable.timestamp.rawValue
-        let pkKey = HistoryTable.pk.rawValue
-        let fetchLimit: Int = descriptor.fetchLimit > UInt64(Int.max)
-        ? Int.max
-        : Int(descriptor.fetchLimit)
+        let storeIdentifierColumn = HistoryTable.storeIdentifier.rawValue
+        let transactionIdentifierColumn = HistoryTable.timestamp.rawValue
+        let primaryKeyColumn = HistoryTable.pk.rawValue
+        let fetchLimit: Int = descriptor.fetchLimit > UInt64(Int.max) ? Int.max : Int(descriptor.fetchLimit)
         let shouldLimit = descriptor.fetchLimit > 0
         let pageSize: Int = {
-            if shouldLimit {
-                return max(64, min(512, fetchLimit))
+            switch shouldLimit {
+            case true: max(64, min(512, fetchLimit))
+            case false: 256
             }
-            return 256
         }()
         var results = [DatabaseHistoryTransaction]()
         results.reserveCapacity(shouldLimit ? fetchLimit : 0)
         var seenTransactionIdentifiers = Set<Int64>()
-        if shouldLimit {
-            seenTransactionIdentifiers.reserveCapacity(fetchLimit)
-        }
-        func shouldStop() -> Bool {
-            shouldLimit && results.count >= fetchLimit
-        }
-        func parseTransactions(from rows: [[String: Any]]) throws -> [DatabaseHistoryTransaction] {
-            var transactions = [DatabaseHistoryTransaction]()
+        if shouldLimit { seenTransactionIdentifiers.reserveCapacity(fetchLimit) }
+        func shouldStop() -> Bool { shouldLimit && results.count >= fetchLimit }
+        func parseTransactions(from rows: [[String: any Sendable]]) throws -> [HistoryType] {
+            var transactions = [HistoryType]()
             transactions.reserveCapacity(shouldLimit ? min(pageSize, fetchLimit) : pageSize)
             var currentTransactionIdentifier: Int64?
             var currentStoreIdentifier: String?
@@ -108,11 +99,11 @@ extension DatabaseStore: HistoryProviding {
                 ))
             }
             for row in rows {
-                let transactionIdentifier = row[transactionIdentifierKey] as? Int64 ?? -1
+                let transactionIdentifier = row[transactionIdentifierColumn] as? Int64 ?? -1
                 if currentTransactionIdentifier != transactionIdentifier {
                     flushCurrent()
                     currentTransactionIdentifier = transactionIdentifier
-                    currentStoreIdentifier = row[storeIdentifierKey] as? String ?? self.identifier
+                    currentStoreIdentifier = row[storeIdentifierColumn] as? String ?? self.identifier
                     currentAuthor = row[HistoryTable.author.rawValue] as? String
                     currentTimestamp = Date(timeIntervalSince1970: Double(transactionIdentifier) / 1_000_000)
                     currentChanges.removeAll(keepingCapacity: true)
@@ -124,13 +115,15 @@ extension DatabaseStore: HistoryProviding {
                     logger.warning("Unable to parse row for history transaction changes: \(row)")
                     continue
                 }
-                let storeIdentifier = currentStoreIdentifier ?? self.identifier
+                guard let storeIdentifier = currentStoreIdentifier else {
+                    throw Self.Error.invalidStoreIdentifier
+                }
                 let persistentIdentifier = try PersistentIdentifier.identifier(
                     for: storeIdentifier,
                     entityName: entityName,
                     primaryKey: entityPrimaryKey
                 )
-                let changeIdentifier = row[pkKey] as? Int64 ?? 0
+                let changeIdentifier = row[primaryKeyColumn] as? Int64 ?? 0
                 switch DataStoreOperation(rawValue: type) {
                 case .insert:
                     currentChanges.append(makeInsertChange(
@@ -145,63 +138,64 @@ extension DatabaseStore: HistoryProviding {
                         transactionIdentifier: transactionIdentifier,
                         changeIdentifier: changeIdentifier,
                         changedPersistentIdentifier: persistentIdentifier,
-                        keys: (row[HistoryTable.context.rawValue] as? String)?
-                            .split(separator: ",").map(String.init) ?? []
+                        changedPropertyNames: (row[HistoryTable.propertyNames.rawValue] as? String)?
+                            .split(separator: ",")
+                            .map(String.init) ?? []
                     ))
                 case .delete:
-                    let json = row[HistoryTable.context.rawValue] as? String ?? "{}"
                     currentChanges.append(makeDeleteChange(
                         as: modelType,
                         transactionIdentifier: transactionIdentifier,
                         changeIdentifier: changeIdentifier,
                         changedPersistentIdentifier: persistentIdentifier,
-                        preservedValues: json
+                        changedPropertyNames: (row[HistoryTable.propertyNames.rawValue] as? String)?
+                            .split(separator: ",")
+                            .map(String.init) ?? [],
+                        preservedValues: row[HistoryTable.preservedValues.rawValue] as? Data
                     ))
                 default:
-                    break
+                    preconditionFailure("Invalid history change type: \(type)")
                 }
             }
             flushCurrent()
             return transactions
         }
-        func fetchTransactionIdentifiers(databaseName: String, before: Int64?) throws -> [Int64] {
+        func fetchTransactionIdentifiers(in databaseName: String, before: Int64?) throws -> [Int64] {
             var sql: String
             var bindings: [any Sendable] = [self.identifier]
             if let before {
                 sql = """
-                SELECT DISTINCT \(transactionIdentifierKey) AS \(transactionIdentifierKey)
+                SELECT DISTINCT \(transactionIdentifierColumn) AS \(transactionIdentifierColumn)
                 FROM \(databaseName).\(HistoryTable.tableName)
-                WHERE \(storeIdentifierKey) = ?
-                AND \(transactionIdentifierKey) < ?
-                ORDER BY \(transactionIdentifierKey) DESC
+                WHERE \(storeIdentifierColumn) = ?
+                AND \(transactionIdentifierColumn) < ?
+                ORDER BY \(transactionIdentifierColumn) DESC
                 LIMIT ?
                 """
                 bindings.append(before)
                 bindings.append(Int64(pageSize))
             } else {
                 sql = """
-                SELECT DISTINCT \(transactionIdentifierKey) AS \(transactionIdentifierKey)
+                SELECT DISTINCT \(transactionIdentifierColumn) AS \(transactionIdentifierColumn)
                 FROM \(databaseName).\(HistoryTable.tableName)
-                WHERE \(storeIdentifierKey) = ?
-                ORDER BY \(transactionIdentifierKey) DESC
+                WHERE \(storeIdentifierColumn) = ?
+                ORDER BY \(transactionIdentifierColumn) DESC
                 LIMIT ?
                 """
                 bindings.append(Int64(pageSize))
             }
-            return try connection.query(sql, bindings: bindings).compactMap {
-                $0[transactionIdentifierKey] as? Int64
-            }
+            return try connection.fetch(sql, bindings: bindings).compactMap { $0[0] as? Int64 }
         }
-        func fetchRows(databaseName: String, transactionIdentifiers: [Int64]) throws -> [[String: Any]] {
+        func fetchRows(in databaseName: String, transactionIdentifiers: [Int64]) throws -> [[String: any Sendable]] {
             guard transactionIdentifiers.isEmpty == false else { return [] }
             let placeholders = Array(repeating: "?", count: transactionIdentifiers.count)
                 .joined(separator: ", ")
             let sql = """
                 SELECT * FROM \(databaseName).\(HistoryTable.tableName)
-                WHERE \(storeIdentifierKey) = ?
-                AND \(transactionIdentifierKey) IN (\(placeholders))
-                ORDER BY \(transactionIdentifierKey) DESC,
-                \(pkKey) DESC
+                WHERE \(storeIdentifierColumn) = ?
+                AND \(transactionIdentifierColumn) IN (\(placeholders))
+                ORDER BY \(transactionIdentifierColumn) DESC,
+                \(primaryKeyColumn) DESC
                 """
             var bindings: [any Sendable] = [self.identifier]
             bindings.append(contentsOf: transactionIdentifiers)
@@ -211,16 +205,10 @@ extension DatabaseStore: HistoryProviding {
             var before: Int64? = nil
             while true {
                 if shouldStop() { return }
-                let transactionIdentifiers = try fetchTransactionIdentifiers(
-                    databaseName: databaseName,
-                    before: before
-                )
+                let transactionIdentifiers = try fetchTransactionIdentifiers(in: databaseName, before: before)
                 guard let nextBefore = transactionIdentifiers.last else { return }
                 before = nextBefore
-                let rows = try fetchRows(
-                    databaseName: databaseName,
-                    transactionIdentifiers: transactionIdentifiers
-                )
+                let rows = try fetchRows(in: databaseName, transactionIdentifiers: transactionIdentifiers)
                 if rows.isEmpty { return }
                 var transactions = try parseTransactions(from: rows)
                 if let predicate = descriptor.predicate {
@@ -236,7 +224,7 @@ extension DatabaseStore: HistoryProviding {
         }
         func archivedYears(mainURL: URL) -> [Int] {
             do {
-                let years = try connection.query(
+                let years = try connection.fetch(
                     """
                     SELECT DISTINCT \(ArchiveTable.year.rawValue)
                     FROM \(ArchiveTable.tableName)
@@ -245,10 +233,10 @@ extension DatabaseStore: HistoryProviding {
                     """,
                     bindings: [self.identifier]
                 ).compactMap { row -> Int? in
-                    switch row[ArchiveTable.year.rawValue] {
+                    switch row[0] {
+                    case let value as String: Int(value)
                     case let value as Int64: Int(value)
                     case let value as Int: value
-                    case let value as String: Int(value)
                     default: nil
                     }
                 }
@@ -257,12 +245,12 @@ extension DatabaseStore: HistoryProviding {
                 // Fetch error is okay, because the archives are lazy.
                 logger.debug("Failed to read archived transactions: \(error)")
             }
-            let archiveDirectory = HistoryTable.archiveDirectoryURL(mainURL: mainURL)
+            let archiveDirectoryURL = HistoryTable.archiveDirectoryURL(mainURL: mainURL)
             let baseName = mainURL.deletingPathExtension().lastPathComponent
             let prefix = "\(baseName)-Transactions-"
             let suffix = ".archive"
             guard let urls = try? FileManager.default.contentsOfDirectory(
-                at: archiveDirectory,
+                at: archiveDirectoryURL,
                 includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles]
             ) else {
@@ -270,26 +258,23 @@ extension DatabaseStore: HistoryProviding {
             }
             let years = urls.compactMap { url -> Int? in
                 let fileName = url.lastPathComponent
-                guard fileName.hasPrefix(prefix), fileName.hasSuffix(suffix) else { return nil }
-                let yearString = String(
-                    fileName
-                        .dropFirst(prefix.count)
-                        .dropLast(suffix.count)
-                )
+                guard fileName.hasPrefix(prefix), fileName.hasSuffix(suffix) else {
+                    return nil
+                }
+                let yearString = String(fileName.dropFirst(prefix.count).dropLast(suffix.count))
                 return Int(yearString)
             }.sorted(by: >)
             return years
         }
         try scanDatabase(named: "main")
-        if shouldStop() == false,
+        if !shouldStop(),
            let mainURL = try connection.mainDatabaseURL() {
             for year in archivedYears(mainURL: mainURL) {
                 if shouldStop() { break }
-                let archiveURL = HistoryTable.makeYearlyArchiveDatabaseURL(
-                    year: year,
-                    mainURL: mainURL
-                )
-                guard FileManager.default.fileExists(atPath: archiveURL.path) else { continue }
+                let archiveURL = HistoryTable.makeYearlyArchiveDatabaseURL(year: year, mainURL: mainURL)
+                guard FileManager.default.fileExists(atPath: archiveURL.path) else {
+                    continue
+                }
                 let archiveName = "archive_\(year)"
                 do {
                     try connection.attachDatabase(at: archiveURL, as: archiveName)
@@ -302,13 +287,10 @@ extension DatabaseStore: HistoryProviding {
         }
         #if DEBUG
         if logThisCall {
-            logger.debug(
-                "History fetch (end).",
-                metadata: [
-                    "transactions": "\(results.count)",
-                    "duration": "\(Date().timeIntervalSince(start))s"
-                ]
-            )
+            logger.debug("History fetch (end).", metadata: [
+                "transactions": "\(results.count)",
+                "duration": "\(Date().timeIntervalSince(start))s"
+            ])
         }
         #endif
         return results
@@ -317,13 +299,37 @@ extension DatabaseStore: HistoryProviding {
     /// Inherited from `HistoryProviding.deleteHistory(_:)`.
     nonisolated public func deleteHistory(_ descriptor: HistoryDescriptor<HistoryType>) throws {
         let connection = try self.queue.connection(.writer)
-        let transactions = try fetchHistory(descriptor)
+        let transactions = try fetchHistory(descriptor, connection: connection)
         guard transactions.isEmpty == false else { return }
-        let transactionIdentifierKey = HistoryTable.timestamp.rawValue
-        let storeIdentifierKey = HistoryTable.storeIdentifier.rawValue
-        func deleteRows(in databaseName: String, transactionIdentifiers: [Int64]) throws {
-            guard transactionIdentifiers.isEmpty == false else { return }
-            let chunkSize = 500
+        let transactionIdentifierColumn = HistoryTable.timestamp.rawValue
+        let storeIdentifierColumn = HistoryTable.storeIdentifier.rawValue
+        let transactionIdentifiers = transactions.map(\.transactionIdentifier)
+        try deleteRows(in: "main", transactionIdentifiers: transactionIdentifiers)
+        guard let mainURL = try connection.mainDatabaseURL() else {
+            return
+        }
+        var utcCalendar = Calendar(identifier: .gregorian)
+        utcCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let archiveYears = Set(transactions.map { utcCalendar.component(.year, from: $0.timestamp) }).sorted(by: >)
+        for year in archiveYears {
+            let archiveURL = HistoryTable.makeYearlyArchiveDatabaseURL(year: year, mainURL: mainURL)
+            guard FileManager.default.fileExists(atPath: archiveURL.path) else {
+                continue
+            }
+            let archiveName = "archive_\(year)"
+            do {
+                try connection.attachDatabase(at: archiveURL, as: archiveName)
+                defer { try? connection.detachDatabaseIfAttached(named: archiveName) }
+                try deleteRows(in: archiveName, transactionIdentifiers: transactionIdentifiers)
+            } catch {
+                try? connection.detachDatabaseIfAttached(named: archiveName)
+                throw error
+            }
+        }
+        func deleteRows(in databaseName: String, transactionIdentifiers: [Int64], chunkSize: Int = 500) throws {
+            guard transactionIdentifiers.isEmpty == false else {
+                return
+            }
             var startIndex = 0
             while startIndex < transactionIdentifiers.count {
                 let endIndex = min(startIndex + chunkSize, transactionIdentifiers.count)
@@ -332,40 +338,13 @@ extension DatabaseStore: HistoryProviding {
                 try PreparedStatement(
                     sql: """
                     DELETE FROM \(databaseName).\(HistoryTable.tableName)
-                    WHERE \(storeIdentifierKey) = ?
-                    AND \(transactionIdentifierKey) IN (\(placeholders))
+                    WHERE \(storeIdentifierColumn) = ?
+                    AND \(transactionIdentifierColumn) IN (\(placeholders))
                     """,
                     bindings: [SQLValue.text(self.identifier)] + chunk.map { SQLValue.integer($0) },
                     handle: connection.handle
                 ).run()
                 startIndex = endIndex
-            }
-        }
-        let transactionIdentifiers = transactions.map(\.transactionIdentifier)
-        try deleteRows(in: "main", transactionIdentifiers: transactionIdentifiers)
-        guard let mainURL = try connection.mainDatabaseURL() else { return }
-        var utcCalendar = Calendar(identifier: .gregorian)
-        utcCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let archiveYears = Set(transactions.map {
-            utcCalendar.component(.year, from: $0.timestamp)
-        }).sorted(by: >)
-        for year in archiveYears {
-            let archiveURL = HistoryTable.makeYearlyArchiveDatabaseURL(
-                year: year,
-                mainURL: mainURL
-            )
-            guard FileManager.default.fileExists(atPath: archiveURL.path) else { continue }
-            let archiveName = "archive_\(year)"
-            do {
-                try connection.attachDatabase(at: archiveURL, as: archiveName)
-                defer { try? connection.detachDatabaseIfAttached(named: archiveName) }
-                try deleteRows(
-                    in: archiveName,
-                    transactionIdentifiers: transactionIdentifiers
-                )
-            } catch {
-                try? connection.detachDatabaseIfAttached(named: archiveName)
-                throw error
             }
         }
     }
@@ -390,14 +369,14 @@ nonisolated private func makeUpdateChange<T: PersistentModel & SendableMetatype>
     transactionIdentifier: DatabaseHistoryUpdate.TransactionIdentifier,
     changeIdentifier: DatabaseHistoryUpdate.ChangeIdentifier,
     changedPersistentIdentifier: PersistentIdentifier,
-    keys: [String]
+    changedPropertyNames keys: [String]
 ) -> HistoryChange {
     .update(DatabaseHistoryUpdate(
         as: type,
         transactionIdentifier: transactionIdentifier,
         changeIdentifier: changeIdentifier,
         changedPersistentIdentifier: changedPersistentIdentifier,
-        keys: keys
+        changedPropertyNames: keys
     ))
 }
 
@@ -406,13 +385,15 @@ nonisolated private func makeDeleteChange<T: PersistentModel & SendableMetatype>
     transactionIdentifier: DatabaseHistoryDelete.TransactionIdentifier,
     changeIdentifier: DatabaseHistoryDelete.ChangeIdentifier,
     changedPersistentIdentifier: PersistentIdentifier,
-    preservedValues: any DataStoreSnapshotValue
+    changedPropertyNames keys: [String],
+    preservedValues: Data?
 ) -> HistoryChange {
     .delete(DatabaseHistoryDelete(
         as: type,
         transactionIdentifier: transactionIdentifier,
         changeIdentifier: changeIdentifier,
         changedPersistentIdentifier: changedPersistentIdentifier,
+        changedPropertyNames: keys,
         preservedValues: preservedValues
     ))
 }
@@ -425,8 +406,12 @@ public struct DatabaseHistoryTransaction: HistoryTransaction {
     /// Inherited from `HistoryTransaction.TokenType`.
     public typealias TokenType = DatabaseHistoryToken
     /// Inherited from `HistoryTransaction.timestamp`.
+    ///
+    /// The timestamp when the transaction was created.
     nonisolated public var timestamp: Date
     /// Inherited from `HistoryTransaction.transactionIdentifier`.
+    ///
+    /// The raw value of the transaction creation timestamp.
     nonisolated public var transactionIdentifier: TransactionIdentifier
     /// Inherited from `HistoryTransaction.token`.
     nonisolated public var token: TokenType
@@ -438,9 +423,6 @@ public struct DatabaseHistoryTransaction: HistoryTransaction {
     nonisolated public var changes: [HistoryChange]
     
     /// Inherited from `Identifiable.id`.
-    ///
-    /// - Important:
-    ///   It is not the primary key, which is an auto-incrementing `INTEGER` value.
     nonisolated public var id: ID {
         transactionIdentifier
     }
@@ -469,7 +451,7 @@ public struct DatabaseHistoryTransaction: HistoryTransaction {
         self.changes = changes
     }
     
-    nonisolated internal func isNewer(than token: DatabaseHistoryToken?) -> Bool {
+    nonisolated public func isNewer(than token: DatabaseHistoryToken?) -> Bool {
         guard let token else { return true }
         return transactionIdentifier > token.watermark(for: storeIdentifier)
     }
@@ -493,7 +475,7 @@ public struct DatabaseHistoryToken: HistoryToken {
         lhs.id < rhs.id
     }
     
-    nonisolated internal func watermark(for storeIdentifier: String) -> Int64 {
+    nonisolated public func watermark(for storeIdentifier: String) -> Int64 {
         tokenValue?[storeIdentifier] ?? Int64(id)
     }
 }
@@ -507,10 +489,17 @@ where T: PersistentModel & SendableMetatype {
     /// Inherited from `HistoryInsert.ChangeIdentifier`.
     public typealias ChangeIdentifier = Int64
     /// Inherited from `HistoryInsert.transactionIdentifier`.
+    ///
+    /// The raw value of the transaction creation timestamp.
     nonisolated public var transactionIdentifier: TransactionIdentifier
     /// Inherited from `HistoryInsert.changeIdentifier`.
+    ///
+    /// The primary key in the `History` table. It is auto-incrementing for inline persistent history tracking.
+    /// In SQL, this value identifies the row for a single operation.
     nonisolated public var changeIdentifier: ChangeIdentifier
     /// Inherited from `HistoryInsert.changedPersistentIdentifier`.
+    ///
+    /// The persistent identifier of the inserted model.
     nonisolated public var changedPersistentIdentifier: PersistentIdentifier
     
     nonisolated fileprivate init(
@@ -536,12 +525,21 @@ where T: PersistentModel & SendableMetatype {
     /// Inherited from `HistoryUpdate.PropertyUpdate`.
     public typealias PropertyUpdate = any PartialKeyPath<Model> & Sendable
     /// Inherited from `HistoryUpdate.transactionIdentifier`.
+    ///
+    /// The raw value of the transaction creation timestamp.
     nonisolated public var transactionIdentifier: TransactionIdentifier
     /// Inherited from `HistoryUpdate.changeIdentifier`.
+    ///
+    /// The primary key in the `History` table. It is auto-incrementing for inline persistent history tracking.
+    /// In SQL, this value identifies the row for a single operation.
     nonisolated public var changeIdentifier: ChangeIdentifier
     /// Inherited from `HistoryUpdate.changedPersistentIdentifier`.
+    ///
+    /// The persistent identifier of the updated model.
     nonisolated public var changedPersistentIdentifier: PersistentIdentifier
     /// Inherited from `HistoryUpdate.updatedAttributes`.
+    ///
+    /// The key paths for the properties that were updated.
     nonisolated public var updatedAttributes: [PropertyUpdate]
     
     nonisolated fileprivate init(
@@ -549,20 +547,22 @@ where T: PersistentModel & SendableMetatype {
         transactionIdentifier: TransactionIdentifier,
         changeIdentifier: ChangeIdentifier,
         changedPersistentIdentifier: PersistentIdentifier,
-        keys: [String]
+        changedPropertyNames keys: [String]
     ) {
         self.transactionIdentifier = transactionIdentifier
         self.changeIdentifier = changeIdentifier
         self.changedPersistentIdentifier = changedPersistentIdentifier
-        self.updatedAttributes = keys.reduce(into: .init()) { partialResult, property in
-            switch T.schemaMetadata(for: property) {
+        self.updatedAttributes = keys.reduce(into: .init()) { partialResult, propertyName in
+            switch T.schemaMetadata(for: propertyName) {
             case let property?:
                 guard let keyPath: PartialKeyPath<T> & Sendable = sendable(cast: property.keyPath) else {
-                    preconditionFailure()
+                    preconditionFailure("The property key path does not conform to Sendable: \(property)")
                 }
                 partialResult.append(keyPath)
             case nil:
-                logger.warning("No such property: \(T.self).\(property)")
+                logger.warning("Unable to find a property that matches to the updated attribute name.", metadata: [
+                    "key": "\(Schema.entityName(for: type)).\(propertyName)"
+                ])
             }
         }
     }
@@ -577,24 +577,97 @@ where T: PersistentModel & SendableMetatype {
     /// Inherited from `HistoryDelete.ChangeIdentifier`.
     public typealias ChangeIdentifier = Int64
     /// Inherited from `HistoryDelete.transactionIdentifier`.
+    ///
+    /// The raw value of the transaction creation timestamp.
     nonisolated public var transactionIdentifier: TransactionIdentifier
     /// Inherited from `HistoryDelete.changeIdentifier`.
     ///
-    /// The auto-incrementing primary key for `_History` table.
+    /// The primary key in the `History` table. It is auto-incrementing for inline persistent history tracking.
+    /// In SQL, this value identifies the row for a single operation.
     nonisolated public var changeIdentifier: ChangeIdentifier
     /// Inherited from `HistoryDelete.changedPersistentIdentifier`.
     ///
-    /// The affected model's entity name and primary key preserved.
+    /// The persistent identifier of the deleted model.
     nonisolated public var changedPersistentIdentifier: PersistentIdentifier
     /// The preserved values mapped to the deleted model's key paths.
     nonisolated private var preservedValues: [PartialKeyPath<Model> & Sendable: any Sendable]
     
-    
-    nonisolated public subscript(keyPath: PartialKeyPath<Model> & Sendable)
-    -> (any Sendable)? {
+    nonisolated public subscript(keyPath: PartialKeyPath<Model> & Sendable) -> (any Sendable)? {
         preservedValues[keyPath]
     }
     
+    nonisolated fileprivate init(
+        as type: Model.Type,
+        transactionIdentifier: TransactionIdentifier,
+        changeIdentifier: ChangeIdentifier,
+        changedPersistentIdentifier: PersistentIdentifier,
+        changedPropertyNames keys: [String],
+        preservedValues: Data?
+    ) {
+        self.transactionIdentifier = transactionIdentifier
+        self.changeIdentifier = changeIdentifier
+        self.changedPersistentIdentifier = changedPersistentIdentifier
+        guard let preservedValues else {
+            self.preservedValues = [:]
+            return
+        }
+        do {
+            guard let values = try JSONSerialization.jsonObject(
+                with: preservedValues,
+                options: [.fragmentsAllowed]
+            ) as? [Any] else {
+                preconditionFailure("Preserved values must be a JSON array.")
+            }
+            guard keys.count == values.count else {
+                preconditionFailure("Property names count (\(keys.count)) does not match preserved values count (\(values.count)).")
+            }
+            self.preservedValues = .init(uniqueKeysWithValues: zip(keys, values).compactMap { propertyName, rawValue in
+                guard let property = type.schemaMetadata(for: propertyName) else {
+                    logger.warning("Unable to assign preserved value to a non-existent property.", metadata: [
+                        "key": "\(Schema.entityName(for: type)).\(propertyName)",
+                        "value": "\(rawValue)"
+                    ])
+                    return nil
+                }
+                let valueType = unwrapOptionalMetatype(property.valueType)
+                guard let valueType = valueType as? any DataStoreSnapshotValue.Type else {
+                    preconditionFailure("The property value type does not conform to DataStoreSnapshotValue: \(property)")
+                }
+                guard let keyPath: PartialKeyPath<T> & Sendable = sendable(cast: property.keyPath) else {
+                    preconditionFailure("The property key path does not conform to Sendable: \(property)")
+                }
+                if rawValue is NSNull {
+                    return nil
+                }
+                let sqlType = SQLType(for: valueType)
+                let bridgedValue: any Codable & Sendable
+                if let string = rawValue as? String {
+                    bridgedValue = string
+                } else if let number = rawValue as? NSNumber {
+                    if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                        bridgedValue = number.boolValue ? Int64(1) : Int64(0)
+                    } else if sqlType == .real {
+                        bridgedValue = number.doubleValue
+                    } else {
+                        bridgedValue = number.int64Value
+                    }
+                } else if let data = rawValue as? Data {
+                    bridgedValue = data
+                } else {
+                    preconditionFailure("Unsupported preserved value type: \(T.self).\(propertyName) = \(rawValue) as \(Swift.type(of: rawValue))")
+                }
+                guard let value = SQLValue.convert(bridgedValue, as: valueType) else {
+                    preconditionFailure("Unable to convert preserved value: \(T.self).\(propertyName) = \(rawValue) as \(Swift.type(of: rawValue)) to \(valueType)")
+                }
+                logger.debug("Tombstone value: \(T.self).\(propertyName) = \(value) as \(valueType)")
+                return (keyPath, value)
+            })
+        } catch {
+            fatalError("Failed to decode preserved values: \(error)")
+        }
+    }
+    
+    @available(*, unavailable, message: "")
     nonisolated fileprivate init(
         as type: Model.Type,
         transactionIdentifier: TransactionIdentifier,
@@ -607,7 +680,7 @@ where T: PersistentModel & SendableMetatype {
         self.changedPersistentIdentifier = changedPersistentIdentifier
         guard let preservedValues = preservedValues as? String,
               let data = preservedValues.data(using: .utf8) else {
-            preconditionFailure("Invalid preserved values payload: \(Swift.type(of: preservedValues))")
+            preconditionFailure()
         }
         do {
             guard let object = try JSONSerialization.jsonObject(
@@ -633,11 +706,10 @@ where T: PersistentModel & SendableMetatype {
                     options: [.fragmentsAllowed]
                 )
                 let value = try decoder.decode(valueType, from: fieldData)
-                logger.debug("Tombstone value: \(T.self).\(column) = \(value) as \(valueType)")
                 return (keyPath, value)
             })
         } catch {
-            fatalError("\(error)")
+            fatalError()
         }
     }
     
@@ -664,11 +736,13 @@ where T: PersistentModel & SendableMetatype {
             }
         }
         guard let tombstone = [temporaryModel] as? HistoryTombstone<Model> else {
-            fatalError("Unable to create tombstone value for \(Model.self).")
+            fatalError("HistoryTombstone<\(Model.self)> cannot be instantiated.")
         }
         return tombstone
     }
 }
+
+#if DEBUG
 
 nonisolated private let lastHistoryFetchLogTime: Mutex<TimeInterval> = .init(0)
 
@@ -688,3 +762,5 @@ nonisolated private func shouldLogHistoryFetch(
         return false
     }
 }
+
+#endif

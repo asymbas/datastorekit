@@ -419,11 +419,7 @@ extension HistoryTable {
         let yearEndTimestamp = Int64(yearEndDate.timeIntervalSince1970 * 1_000_000)
         let upperBoundTimestamp = min(yearEndTimestamp, cutoffTimestamp)
         guard upperBoundTimestamp > yearStartTimestamp else { return }
-        if let cursor = try readArchiveCursor(
-            year: year,
-            storeIdentifier: storeIdentifier,
-            connection: connection
-        ),
+        if let cursor = try readArchiveCursor(year: year, storeIdentifier: storeIdentifier, connection: connection),
            cursor.isComplete,
            nowTimestamp >= yearEndTimestamp {
             return
@@ -493,7 +489,8 @@ extension HistoryTable {
                 \(Self.author.rawValue),
                 \(Self.entityName.rawValue),
                 \(Self.entityPrimaryKey.rawValue),
-                \(Self.context.rawValue)
+                \(Self.propertyNames.rawValue),
+                \(Self.preservedValues.rawValue)
             )
             SELECT
                 \(pkKey),
@@ -503,7 +500,8 @@ extension HistoryTable {
                 \(Self.author.rawValue),
                 \(Self.entityName.rawValue),
                 \(Self.entityPrimaryKey.rawValue),
-                \(Self.context.rawValue)
+                \(Self.propertyNames.rawValue),
+                \(Self.preservedValues.rawValue)
             FROM main.\(Self.tableName)
             WHERE \(storeIdentifierKey) = ?
             AND \(timestampKey) >= ?

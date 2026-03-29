@@ -130,10 +130,10 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                             "record_type": "\(failedRecordSave.record.recordType)"
                         ])
                         let ownership = try resolveProjectedRecordOwnership(
-                            recordType: failedRecordSave.record.recordType, recordID: recordID
+                            recordType: failedRecordSave.record.recordType,
+                            recordID: recordID
                         )
-                        let isReferenceRecord = enqueuedChangesByRecordID[recordID]?.isReferenceRecord
-                        ?? {
+                        let isReferenceRecord = enqueuedChangesByRecordID[recordID]?.isReferenceRecord ?? {
                             if case .reference = ownership { return true }
                             return false
                         }()
@@ -302,10 +302,8 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
     }
     
     /// Inherited from `CKSyncEngineDelegate.nextRecordZoneChangeBatch(_:syncEngine:)`.
-    public func nextRecordZoneChangeBatch(
-        _ context: CKSyncEngine.SendChangesContext,
-        syncEngine: CKSyncEngine
-    ) async -> CKSyncEngine.RecordZoneChangeBatch? {
+    public func nextRecordZoneChangeBatch(_ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine)
+    async -> CKSyncEngine.RecordZoneChangeBatch? {
         let scope = context.options.scope
         let changes = syncEngine.state.pendingRecordZoneChanges.filter { scope.contains($0) }
         logger.trace("Creating record zone change batch.", metadata: [

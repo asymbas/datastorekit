@@ -8,6 +8,7 @@
 //
 
 import DataStoreCore
+import Foundation
 
 /// A type that defines the history table definition for tracking model changes.
 package enum HistoryTable: String {
@@ -20,8 +21,10 @@ package enum HistoryTable: String {
     case entityName = "entity_name"
     /// The primary key of the entity whose model data has changed.
     case entityPrimaryKey = "entity_pk"
-    /// The changed properties when it's an update or the preserved values keyed by their properties when its a delete.
-    case context
+    
+    case propertyNames = "property_names"
+    
+    case preservedValues = "preserved_values"
     /// The timestamp of the transaction before any change operations occur.
     case timestamp
     /// An author that was assigned in an `EditingState`.
@@ -46,7 +49,8 @@ package enum HistoryTable: String {
                 \(Self.event.rawValue) TEXT NOT NULL,
                 \(Self.entityName.rawValue) TEXT NOT NULL,
                 \(Self.entityPrimaryKey.rawValue) TEXT NOT NULL,
-                \(Self.context.rawValue) TEXT,
+                \(Self.propertyNames.rawValue) TEXT,
+                \(Self.preservedValues.rawValue) BLOB,
                 \(Self.timestamp.rawValue) INTEGER NOT NULL,
                 \(Self.author.rawValue) TEXT,
                 \(Self.storeIdentifier.rawValue) TEXT NOT NULL
@@ -54,9 +58,9 @@ package enum HistoryTable: String {
             """
     }
     
-    nonisolated package static func changedPropertyNames(_ context: String?) -> Set<String> {
-        guard let context, context.isEmpty == false else { return [] }
-        let names = Set(context.split(separator: ",").map(String.init))
+    nonisolated package static func changedPropertyNames(_ propertyNames: String?) -> Set<String> {
+        guard let propertyNames, propertyNames.isEmpty == false else { return [] }
+        let names = Set(propertyNames.split(separator: ",").map(String.init))
         return names
     }
     
@@ -67,7 +71,8 @@ package enum HistoryTable: String {
         nonisolated package let entityName: String
         nonisolated package let entityPrimaryKey: String
         nonisolated package let author: String?
-        nonisolated package let context: String?
+        nonisolated package let propertyNames: String?
+        nonisolated package let preservedValues: Data?
         
         nonisolated package init(
             pk: Int64,
@@ -76,7 +81,8 @@ package enum HistoryTable: String {
             entityName: String,
             entityPrimaryKey: String,
             author: String?,
-            context: String?
+            propertyNames: String?,
+            preservedValues: Data?
         ) {
             self.pk = pk
             self.changeType = changeType
@@ -84,7 +90,8 @@ package enum HistoryTable: String {
             self.entityName = entityName
             self.entityPrimaryKey = entityPrimaryKey
             self.author = author
-            self.context = context
+            self.propertyNames = propertyNames
+            self.preservedValues = preservedValues
         }
     }
 }
