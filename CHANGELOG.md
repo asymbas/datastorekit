@@ -15,7 +15,7 @@
     - `TypeCheck` uses the `is` keyword to check whether a value is a specific model type.
 - Reduced the package's Swift tools version and dependency version requirements so it can be added as a dependency in Swift Playground.
 
-## [0.0.1] - 2025-12-30
+## [0.0.1] - 2026-03-11
 
 ### Added
 
