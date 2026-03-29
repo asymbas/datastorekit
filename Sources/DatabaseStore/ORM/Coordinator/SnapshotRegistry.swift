@@ -36,10 +36,12 @@ public final class SnapshotRegistry: ObjectContextProtocol {
     nonisolated private unowned let manager: ModelManager
     /// Inherited from `Identifiable.id`.
     nonisolated public let id: EditingState.ID
+    nonisolated private let key: Int
     nonisolated private let storage: Mutex<[PersistentIdentifier: DatabaseBackingData]> = .init([:])
     nonisolated private let trackedIdentifiers: Mutex<Set<PersistentIdentifier>> = .init([])
     nonisolated private let pendingIdentifiers: Mutex<Set<PersistentIdentifier>> = .init([])
     nonisolated private let invalidatingIdentifiers: Mutex<Set<PersistentIdentifier>> = .init([])
+    nonisolated private let preloadedFetches: Mutex<[PreloadFetchKey: any Sendable]> = .init([:])
     nonisolated private let cachedFetchResultMapping: Mutex<[Int: DataStoreFetchResultMap]> = .init([:])
     nonisolated private let cachedFetchResultKeyOrder: Mutex<[Int]> = .init([])
     @DatabaseActor private var cachedFetchResultTotalCost: UInt64 = 0
@@ -64,6 +66,7 @@ public final class SnapshotRegistry: ObjectContextProtocol {
     nonisolated internal init(manager: ModelManager, id: EditingState.ID) {
         self.manager = manager
         self.id = id
+        self.key = Int.random(in: Int.min..<Int.max)
         self.independentlyManaged = manager.configuration.options.contains(.centralizedSnapshotCaching) == false
         self.shouldDebugOperations = DataStoreDebugging.mode == .trace
     }
@@ -93,6 +96,35 @@ extension SnapshotRegistry {
         } else {
             manager.backingData(for: persistentIdentifier)
         }
+    }
+}
+
+extension SnapshotRegistry {
+    nonisolated internal func preload<Result: FetchResult>(
+        for editingState: some EditingStateProviding,
+        as resultType: Result.Type = Result.self
+    ) -> PreloadFetchResult<Result.ModelType, Result.SnapshotType>? {
+        let key = PreloadFetchKey(
+            editingStateID: editingState.id,
+            modifier: editingState.author?.hasPrefix("\(key)") == true ? editingState.author : nil,
+            key: nil
+        )
+        return preloadedFetches.withLock {
+            $0[key].take()
+        } as? PreloadFetchResult<Result.ModelType, Result.SnapshotType>
+    }
+    
+    @concurrent internal func preload<T, Snapshot>(
+        _ result: PreloadFetchResult<T, Snapshot>,
+        for request: PreloadFetchRequest<T>
+    ) async -> PreloadFetchKey {
+        let key = PreloadFetchKey(
+            editingStateID: request.editingState.id,
+            modifier: request.modifier == nil ? nil : "\(key)-\(request.modifier!)",
+            key: result.key
+        )
+        preloadedFetches.withLock { $0[key] = result }
+        return key
     }
 }
 

@@ -17,7 +17,7 @@ extension ModelContext {
     package var store: DatabaseStore {
         guard let store = try? DataStoreAggregate.load(editingState: editingState),
               let store = store as? DatabaseStore else {
-            fatalError("Expected a DatabaseStore")
+            preconditionFailure("Expected a DatabaseStore")
         }
         return store
     }
@@ -49,19 +49,20 @@ extension ModelContext {
     ///   - editingState: The `EditingState` associated to the `ModelContext` you plan to use.
     nonisolated public static func preload<T>(
         _ descriptor: FetchDescriptor<T>,
-        for editingState: EditingState
-    ) async throws -> any Hashable & Sendable where T: PersistentModel {
+        for editingState: EditingState,
+        modifier: String? = nil
+    ) async throws -> String? where T: PersistentModel {
         guard let store = try? DataStoreAggregate.load(editingState: editingState),
               let store = store as? DatabaseStore else {
-            fatalError("Expected a DatabaseStore")
+            preconditionFailure("Expected a DatabaseStore")
         }
         try Task.checkCancellation()
         return try await store.preload(PreloadFetchRequest(
             isUnchecked: false,
-            modifier: nil,
+            modifier: modifier,
             descriptor: descriptor,
             editingState: .init(id: editingState.id, author: editingState.author)
-        ))
+        )).modifier
     }
     
     public func preloadedFetch<T>(
@@ -69,12 +70,16 @@ extension ModelContext {
         isolation: isolated (any Actor)? = #isolation
     ) async throws -> [T] where T: PersistentModel {
         let editingState = self.editingState
+        defer {
+            if self.editingState.author != editingState.author {
+                self.editingState.author = editingState.author
+            }
+        }
         let modifier = try await Task { @concurrent in
-            try await ModelContext.preload(descriptor, for: editingState)
+            try await ModelContext.preload(descriptor, for: editingState, modifier: UUID().uuidString)
         }.value
-        self.editingState.author = "\(modifier.hashValue)"
+        self.editingState.author = modifier
         let result = try fetch(descriptor)
-        self.editingState.author = editingState.author
         return result
     }
 }

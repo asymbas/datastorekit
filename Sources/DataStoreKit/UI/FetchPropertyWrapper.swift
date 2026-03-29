@@ -98,9 +98,10 @@ public struct Fetch<Model: PersistentModel>: @preconcurrency DynamicProperty, Se
     
     @concurrent private func execute(editingState: EditingState, runID: UInt64) async {
         let descriptor = self.makeFetchDescriptor()
+        let modifier: String?
         do {
-            try await DataStoreFetchIntentContext.$current.withValue(.preload) {
-                try await ModelContext.preload(descriptor, for: editingState)
+            modifier = try await DataStoreFetchIntentContext.$current.withValue(.preload) {
+                try await ModelContext.preload(descriptor, for: editingState, modifier: UUID().uuidString)
             }
         } catch {
             guard error is CancellationError == false else {
@@ -119,6 +120,15 @@ public struct Fetch<Model: PersistentModel>: @preconcurrency DynamicProperty, Se
         await MainActor.run {
             do {
                 try Task.checkCancellation()
+                let originalAuthor = self.modelContext.editingState.author
+                defer {
+                    if modifier != nil {
+                        self.modelContext.editingState.author = originalAuthor
+                    }
+                }
+                if let modifier {
+                    self.modelContext.editingState.author = modifier
+                }
                 let models = try DataStoreFetchIntentContext.$current.withValue(.ui) {
                     try self.modelContext.fetch(descriptor)
                 }
@@ -146,7 +156,7 @@ public struct Fetch<Model: PersistentModel>: @preconcurrency DynamicProperty, Se
     }
     
     @MainActor private func schedule(editingState: EditingState, runID: UInt64) {
-        #if !SwiftPlayground && swift(>=6.2)
+        #if swift(>=6.2) && !SwiftPlaygrounds
         if #available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *) {
             self.task = Task.immediate(priority: .userInitiated) { @concurrent in
                 await run(editingState: editingState, runID: runID)
@@ -185,13 +195,14 @@ public struct Fetch<Model: PersistentModel>: @preconcurrency DynamicProperty, Se
     }
     
     public var projectedValue: FetchProjection {
-        let editingState = self.modelContext.editingState
         let refreshAction = {
+            let editingState = self.modelContext.editingState
             self.lastIssuedRunID &+= 1
             let runID = self.lastIssuedRunID
             if self.task != nil {
                 self.pendingRunID = runID
                 self.pendingEditingState = editingState
+                return
             }
             self.schedule(editingState: editingState, runID: runID)
         }

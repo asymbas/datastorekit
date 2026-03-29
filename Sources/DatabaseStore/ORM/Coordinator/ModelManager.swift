@@ -20,7 +20,6 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
 public final class ModelManager: Sendable {
     internal typealias Snapshot = DatabaseSnapshot
     nonisolated private let storage: Mutex<[PersistentIdentifier: DatabaseBackingData]> = .init([:])
-    nonisolated private let preloadedFetches: Mutex<[EditingState.ID: any Sendable]> = .init([:])
     nonisolated private let entityCacheRevisions: Mutex<[String: UInt64]> = .init([:])
     nonisolated internal let globalCacheRevision: Atomic<UInt64> = .init(0)
     nonisolated internal let isCachingSnapshots: Bool
@@ -57,24 +56,6 @@ public final class ModelManager: Sendable {
     internal enum State: UInt8, AtomicRepresentable {
         case idle = 0
         case transaction
-    }
-}
-
-extension ModelManager {
-    nonisolated internal func preload<Result: FetchResult>(
-        for editingState: some EditingStateProviding,
-        as resultType: Result.Type = Result.self
-    ) -> PreloadFetchResult<Result.ModelType, Result.SnapshotType>? {
-        preloadedFetches.withLock {
-            $0[editingState.id].take()
-        } as? PreloadFetchResult<Result.ModelType, Result.SnapshotType>
-    }
-    
-    @concurrent internal func preload<T, Snapshot>(
-        _ result: PreloadFetchResult<T, Snapshot>,
-        for editingState: some EditingStateProviding
-    ) async {
-        preloadedFetches.withLock { $0[editingState.id] = result }
     }
 }
 
@@ -122,7 +103,6 @@ extension ModelManager {
     /// Invalidates the editing state and removes its associated registry after cleanup.
     /// - Parameter editingState: The `EditingState` to remove.
     nonisolated internal func invalidateState(for editingState: EditingState) {
-        preloadedFetches.withLock { $0[editingState.id] = nil }
         guard isCachingSnapshots else { return }
         guard let registry = self.registries.withLock({ $0[editingState.id] }) else {
             logger.warning("Unable to invalidate SnapshotRegistry: \(editingState)")

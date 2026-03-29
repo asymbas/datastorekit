@@ -7,17 +7,56 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
+import Foundation
 import SwiftData
+
+package struct PreloadFetchKey: Equatable, Hashable, Sendable {
+    nonisolated package let editingStateID: EditingState.ID
+    nonisolated package let modifier: String?
+    nonisolated package var key: Int?
+    
+    nonisolated package init(
+        editingStateID: EditingState.ID,
+        modifier: String?,
+        key: Int?
+    ) {
+        self.editingStateID = editingStateID
+        self.modifier = modifier
+        self.key = key
+    }
+    
+    nonisolated package init<each Value: Hashable & Sendable>(
+        _ editingStateID: EditingState.ID,
+        _ modifier: String?,
+        _ key: repeat each Value
+    ) {
+        self.editingStateID = editingStateID
+        self.modifier = modifier
+        var hasher = Hasher()
+        hasher.combine(editingStateID)
+        repeat hasher.combine(each key)
+        self.key = hasher.finalize()
+    }
+    
+    nonisolated package static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.editingStateID == rhs.editingStateID && lhs.modifier == rhs.modifier
+    }
+    
+    nonisolated package func hash(into hasher: inout Hasher) {
+        hasher.combine(editingStateID)
+        hasher.combine(modifier)
+    }
+}
 
 public struct PreloadFetchRequest<T>: FetchRequest where T: PersistentModel {
     nonisolated public var isUnchecked: Bool
-    nonisolated public var modifier: (any Hashable & Sendable)?
+    nonisolated public var modifier: String?
     nonisolated public var descriptor: FetchDescriptor<T>
     nonisolated public var editingState: DatabaseEditingState
     
     nonisolated public init(
         isUnchecked: Bool,
-        modifier: (any Hashable & Sendable)?,
+        modifier: String?,
         descriptor: FetchDescriptor<T>,
         editingState: DatabaseEditingState
     ) {
@@ -77,7 +116,7 @@ where T: PersistentModel, Snapshot: DataStoreSnapshot {
     ) {
         self.init(
             isUnchecked: false,
-            key: -1,
+            key: nil,
             editingState: nil,
             descriptor: descriptor,
             fetchedSnapshots: fetchedSnapshots,

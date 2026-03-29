@@ -216,8 +216,9 @@ public final class DatabaseStore: DataStore, Sendable {
         let entityName = Schema.entityName(for: Model.self)
         var translator = SQLPredicateTranslator<Model>(configuration: configuration)
         do {
+            let registry = self.manager.registry(for: request.editingState)
             var preloadedResult: PreloadFetchResult<Model, Snapshot>?
-            if let result = self.manager.preload(for: request.editingState, as: Result.self) {
+            if let result = registry?.preload(for: request.editingState, as: Result.self) {
                 guard !result.isUnchecked else {
                     return finalize(type: "preloaded", result: result.convert(into: Result.self))
                 }
@@ -231,7 +232,6 @@ public final class DatabaseStore: DataStore, Sendable {
                 }
                 return finalize(type: "preloaded", result: result.convert(into: Result.self))
             }
-            let registry = self.manager.registry(for: request.editingState)
             request: if !configuration.options.contains(.disablePredicateCaching),
                       let hash = translation.key,
                       let result = try? registry?.cachedFetchResult(forKey: hash, on: entityName) {
@@ -618,14 +618,14 @@ public final class DatabaseStore: DataStore, Sendable {
     
     /// Fetches the backing data asynchronously as a preload warm-up for the `EditingState` expected to request for it.
     /// - Parameter request: A specific preloading fetch request.
-    @concurrent @discardableResult
-    package final func preload<Model>(_ request: PreloadFetchRequest<Model>)
-    async throws -> any Hashable & Sendable {
+    @concurrent @discardableResult package final func preload<Model>(_ request: PreloadFetchRequest<Model>)
+    async throws -> PreloadFetchKey {
         let result: PreloadFetchResult = try fetch(request)
         try Task.checkCancellation()
-        // Is unchecked?
-        await manager.preload(result, for: request.editingState)
-        return result.key // modifier
+        guard let registry = self.manager.registry(for: request.editingState) else {
+            preconditionFailure("No registry to store preloaded fetch result.")
+        }
+        return await registry.preload(result, for: request)
     }
     
     // TODO: Inheritance has not been applied to update and delete operations.
