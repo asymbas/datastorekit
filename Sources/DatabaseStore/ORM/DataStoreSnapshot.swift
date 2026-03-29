@@ -41,9 +41,9 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
     /// The creation date of the snapshot.
     nonisolated package var timestamp: DispatchTime = .now()
     /// The properties that will describe how to map its value.
-    nonisolated public var properties: ContiguousArray<PropertyMetadata>
+    nonisolated package(set) public var properties: ContiguousArray<PropertyMetadata>
     /// The values associated with each property.
-    nonisolated public var values: ContiguousArray<any DataStoreSnapshotValue>
+    nonisolated package(set) public var values: ContiguousArray<any DataStoreSnapshotValue>
     /// The internal stable identity derived from its `PersistentIdentifier`.
     nonisolated public let primaryKey: String
     /// Inherited from `DataStoreSnapshot.persistentIdentifier`.
@@ -69,14 +69,17 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
         persistentIdentifier.storeIdentifier == nil
     }
     
+    nonisolated public var isModified: Bool {
+        !flags.contains(.isOriginal)
+    }
+    
     /// The `PersistentModel` type associated to this entity.
     nonisolated public var type: any (PersistentModel & SendableMetatype).Type
     
     internal struct Flags: AtomicRepresentable, OptionSet, Sendable {
         typealias RawValue = UInt16
         nonisolated internal let rawValue: RawValue
-        nonisolated static let isModified: Self = .init(rawValue: 1 << 0)
-        nonisolated static let isStale: Self = .init(rawValue: 1 << 1)
+        nonisolated static let isOriginal: Self = .init(rawValue: 1 << 0)
     }
     
     /// Creates an empty snapshot instance from the data store side.
@@ -197,6 +200,17 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
                         continue
                     }
                     switch value {
+                    case let value where attribute.options.contains(.ephemeral):
+                        if let valueType = attribute.valueType as? any DataStoreSnapshotValue.Type,
+                           let value = getValue(attribute.defaultValue, as: valueType) {
+                            self.values[property.index] = value
+                            logger.trace("Exporting ephemeral attribute: \(description) = \(value)")
+                        } else if attribute.isOptional {
+                            self.values[property.index] = SQLNull()
+                            logger.trace("Exporting ephemeral attribute: \(description) = NULL")
+                        } else {
+                            preconditionFailure("Ephemeral attributes must have a default value: \(description)")
+                        }
                     case let value as Encodable where attribute.options.contains(.externalStorage):
                         let relativePath = "\(entityName)/\(attribute.name)/\(primaryKey)"
                         let data = value is SQLNull
@@ -405,9 +419,54 @@ extension DatabaseSnapshot {
         relatedBackingDatas[persistentIdentifier] = backingData
         self.init(persistentIdentifier: persistentIdentifier, type: Self.getMetatype(backingData))
         extractBackingData(backingData, from: self.properties)
+        self.flags.insert(.isOriginal)
     }
     
     nonisolated private mutating func extractBackingData(
+        _ backingData: any BackingData,
+        from properties: ContiguousArray<PropertyMetadata>
+    ) {
+        for property in properties {
+            let description = "\(entityName).\(property.name) as \(property.valueType).self"
+            switch property.metadata {
+            case let attribute as Schema.Attribute:
+                if attribute.isTransformable, property.isInherited {
+                    logger.info("Received BackingData inherited transformed attribute: \(description)")
+                    continue
+                }
+                guard let valueType = unwrapOptionalMetatype(attribute.valueType) as? any DataStoreSnapshotValue.Type else {
+                    preconditionFailure("Attribute must conform to DataStoreSnapshotValue: \(description)")
+                }
+                let value = getValue(backingData, as: valueType, keyPath: property.keyPath)
+                setValue(value, for: property)
+            case let relationship as Schema.Relationship:
+                guard let keyPath = relationship.keypath else {
+                    preconditionFailure("Relationship must have a key path: \(description)")
+                }
+                switch unwrapOptionalMetatype(relationship.valueType) {
+                case let valueType as any PersistentModel.Type:
+                    if let model = getValue(backingData, as: valueType, keyPath: keyPath) {
+                        setValue(model.persistentModelID, for: property)
+                    } else {
+                        setValue(nil, for: property)
+                    }
+                case let valueType as any RelationshipCollection.Type:
+                    if let models = getValue(backingData, as: valueType, keyPath: keyPath) {
+                        setValue(models.map(\.persistentModelID), for: property)
+                    } else {
+                        setValue(nil, for: property)
+                    }
+                default:
+                    if property.flags.contains(.isExternal) { continue }
+                    preconditionFailure("All relationships must carry over from BackingData: \(description)")
+                }
+            default:
+                fatalError("Unhandled property type: \(property)")
+            }
+        }
+    }
+    
+    nonisolated private mutating func _extractBackingData(
         _ backingData: any BackingData,
         from properties: ContiguousArray<PropertyMetadata>
     ) {
@@ -426,8 +485,11 @@ extension DatabaseSnapshot {
                 case let value? where property.reference != nil:
                     self.values[property.index] = value
                     logger.trace("Received BackingData inherited attribute: \(description) = \(value)")
-                case _ where attribute.options.contains(.ephemeral):
-                    if let value = getValue(attribute.defaultValue, as: valueType) {
+                case let value where attribute.options.contains(.ephemeral):
+                    if let value {
+                        self.values[property.index] = value
+                        logger.trace("Received BackingData ephemeral attribute: \(description) = \(value)")
+                    } else if let value = getValue(attribute.defaultValue, as: valueType) {
                         self.values[property.index] = value
                         logger.trace("Received BackingData ephemeral attribute: \(description) = \(value)")
                     } else if attribute.isOptional {
@@ -1894,7 +1956,7 @@ extension DatabaseSnapshot: BidirectionalCollection, MutableCollection, RandomAc
         self.cache.countSignature = properties.count
     }
     
-    nonisolated public func rebuildIndexes() { cache.clear(); ensureIndexes() }
+    nonisolated internal func rebuildIndexes() { cache.clear(); ensureIndexes() }
     
     private final class Cache: Sendable {
         nonisolated private let _nameToIndex: Mutex<[String: Int]> = .init([:])
@@ -1961,39 +2023,72 @@ extension DatabaseSnapshot {
 }
 
 extension DatabaseSnapshot {
+    @discardableResult nonisolated internal mutating func setValue(
+        _ value: (any DataStoreSnapshotValue)?,
+        for property: PropertyMetadata
+    ) -> Bool {
+        let description = "\(entityName).\(property.name) as \(property.valueType).self"
+        switch property.metadata {
+        case let attribute as Schema.Attribute:
+            switch value {
+            case let value? where property.reference != nil:
+                self.values[property.index] = value
+                logger.trace("Set inherited attribute: \(description) = \(value)")
+            case let value where attribute.options.contains(.ephemeral):
+                if let value {
+                    self.values[property.index] = value
+                    logger.trace("Set ephemeral attribute: \(description) = \(value)")
+                } else if let valueType = attribute.valueType as? any DataStoreSnapshotValue.Type,
+                          let value = getValue(attribute.defaultValue, as: valueType) {
+                    self.values[property.index] = value
+                    logger.trace("Set ephemeral attribute default: \(description) = \(value)")
+                } else if attribute.isOptional {
+                    self.values[property.index] = SQLNull()
+                    logger.trace("Set ephemeral attribute: \(description) = NULL")
+                } else {
+                    preconditionFailure("Ephemeral attributes must have a default value: \(description)")
+                }
+            case let value?:
+                self.values[property.index] = value
+                logger.trace("Set attribute: \(description) = \(value)")
+            case nil where attribute.isOptional:
+                self.values[property.index] = SQLNull()
+                logger.trace("Set attribute: \(description) = NULL")
+            default:
+                if property.flags.contains(.isExternal) { return false }
+                preconditionFailure("All attributes must have a value: \(description)")
+            }
+        case let relationship as Schema.Relationship:
+            switch value {
+            case let identifier as PersistentIdentifier:
+                self.values[property.index] = identifier
+                logger.trace("Set relationship: \(description) = \(identifier)")
+            case let identifiers as [PersistentIdentifier]:
+                self.values[property.index] = identifiers
+                logger.trace("Set relationship: \(description) = \(identifiers)")
+            case nil where relationship.isOptional, is SQLNull:
+                self.values[property.index] = SQLNull()
+                logger.trace("Set relationship: \(description) = NULL")
+            case nil where !relationship.isToOneRelationship:
+                self.values[property.index] = [PersistentIdentifier]()
+                logger.trace("Set relationship: \(description) = []")
+            default:
+                if property.flags.contains(.isExternal) { return false }
+                preconditionFailure("Required relationship is missing: \(description)")
+            }
+        default:
+            fatalError("Unhandled property type: \(property)")
+        }
+        flags.remove(.isOriginal)
+        return true
+    }
+    
     @discardableResult nonisolated public mutating func setValue<T>(
         _ value: T,
         at index: Index
     ) -> Bool where T: DataStoreSnapshotValue {
         let property = self.properties[index]
-        #if DEBUG
-        if property.metadata.isOptional {
-            guard (
-                T.self is SQLNull.Type ||
-                T.self is NSNull.Type ||
-                T.self is Optional<T>.Type
-            ) else {
-                preconditionFailure("Type violation: \(T.self) is not Optional<T>")
-            }
-        }
-        switch property.metadata {
-        case let relationship as Schema.Relationship:
-            if relationship.isToOneRelationship, value is PersistentIdentifier == false {
-                preconditionFailure("Type violation: \(T.self) is not PersistentIdentifier")
-            }
-            if !relationship.isToOneRelationship, value is [PersistentIdentifier] == false {
-                preconditionFailure("Type violation: \(T.self) is not Array<PersistentIdentifier>")
-            }
-        case let attribute as Schema.Attribute:
-            if attribute.valueType is T.Type == false {
-                preconditionFailure("Type violation: \(T.self) is not \(attribute.valueType)")
-            }
-        default:
-            break
-        }
-        #endif
-        self.values[index] = value
-        return true
+        return setValue(value, for: property)
     }
     
     @discardableResult nonisolated public mutating func setValue<T>(
@@ -2016,23 +2111,21 @@ extension DatabaseSnapshot {
 }
 
 extension DatabaseSnapshot {
-    @discardableResult
-    nonisolated public mutating func remove(at index: Index) -> Element? {
+    @discardableResult nonisolated public mutating func remove(at index: Index) -> Element? {
         let removedProperty = self.properties.remove(at: index)
         let removedValue = self.values.remove(at: index)
         assert(properties.count == values.count)
+        flags.remove(.isOriginal)
         return (removedProperty, removedValue)
     }
     
-    @discardableResult
-    nonisolated public mutating func removeValue(name: String) -> Element? {
+    @discardableResult nonisolated public mutating func removeValue(name: String) -> Element? {
         ensureIndexes()
         guard let index = self.cache.nameToIndex[name] else { return nil }
         return remove(at: index)
     }
     
-    @discardableResult
-    nonisolated public mutating func removeValue(keyPath: AnyKeyPath & Sendable) -> Element? {
+    @discardableResult nonisolated public mutating func removeValue(keyPath: AnyKeyPath & Sendable) -> Element? {
         ensureIndexes()
         guard let index = self.cache.keyPathToIndex[keyPath] else { return nil }
         return remove(at: index)

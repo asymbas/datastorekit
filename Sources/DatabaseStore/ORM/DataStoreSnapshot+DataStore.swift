@@ -279,6 +279,7 @@ extension DatabaseSnapshot {
             #endif
         }
         logger.trace("Created snapshot for \(entityName): \(primaryKey) (\(contentDescriptions))")
+        self.flags.insert(.isOriginal)
     }
     
     nonisolated package init(
@@ -319,6 +320,7 @@ extension DatabaseSnapshot {
                 continue
             }
         }
+        self.flags.insert(.isOriginal)
     }
     
     nonisolated public func overwrite(
