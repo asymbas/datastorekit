@@ -86,19 +86,11 @@ public final class DatabaseStore: DataStore, Sendable {
                         let toSchema = Schema(versionedSchema: toVersion)
                         logger.notice(
                             "Performing custom migration #\(index): \(fromVersion)",
-                            metadata: [
-                                "from_names": "\(fromSchema.entities.map(\.name))",
-                                "from_hash_values": "\(fromSchema.hashValue)",
-                                "schema_hash_values": "\(schema.hashValue)"
-                            ]
+                            metadata: ["from_names": "\(fromSchema.entities.map(\.name))"]
                         )
                         logger.notice(
                             "Performing custom migration #\(index): \(toVersion)",
-                            metadata: [
-                                "to_names": "\(toSchema.entities.map(\.name))",
-                                "to_hash_values": "\(toSchema.hashValue)",
-                                "schema_hash_values": "\(schema.hashValue)"
-                            ]
+                            metadata: ["to_names": "\(toSchema.entities.map(\.name))"]
                         )
                         if let willMigrate {
                             let fromModelContainer = try ModelContainer(
@@ -627,8 +619,6 @@ public final class DatabaseStore: DataStore, Sendable {
         }
         return await registry.preload(result, for: request)
     }
-    
-    // TODO: Inheritance has not been applied to update and delete operations.
     
     /// Inherited from `DataStore.save(_:)`.
     ///

@@ -25,8 +25,13 @@ public struct SQLPredicateResult: Sendable {
         properties: [PropertyMetadata],
         requestedIdentifiers:  Set<PersistentIdentifier>?
     ) {
-        self.key = requestedIdentifiers != nil
-        ? requestedIdentifiers?.hashValue : hash
+        if let requestedIdentifiers {
+            var hasher = Hasher()
+            hasher.combine(requestedIdentifiers)
+            self.key = hasher.finalize()
+        } else {
+            self.key = hash
+        }
         self.statement = statement
         self.properties = properties
         self.shouldCache = hash != nil

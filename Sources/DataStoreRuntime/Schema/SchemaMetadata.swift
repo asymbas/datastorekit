@@ -371,7 +371,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
         sendable(cast: Root.predicateCodableKeyPaths[property.name] as? PartialKeyPath<Model> as Any)
     }
     func insertSQLQueryPassthrough<Root>(for type: Root.Type)
-    -> PropertyMetadata where Root: SQLQueryPassthrough {
+    -> PropertyMetadata where Root: SQLPassthrough {
         PropertyMetadata(
             index: result.count,
             keyPath: \Root.sql,

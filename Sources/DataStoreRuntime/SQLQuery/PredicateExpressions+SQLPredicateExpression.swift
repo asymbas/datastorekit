@@ -32,8 +32,8 @@ private typealias ForEach = SQLForEach
 extension PredicateExpressions.Value: SQLPredicateExpression {
     func evaluate<T>(_ context: inout Context<T>) -> Fragment {
         context.log(.trace, "Received bindable value: \(value) as \(Output.self).self")
-        if let hashValue = self.value as? (any Hashable) {
-            context.hasher.combine(hashValue)
+        if let value = self.value as? (any Hashable) {
+            context.hasher.combine(value)
         }
         let clause: String
         let bindings: [Any]
@@ -50,9 +50,6 @@ extension PredicateExpressions.Value: SQLPredicateExpression {
             let primaryKey = persistentIdentifier.primaryKey(as: String.self)
             clause = "?"
             bindings = [SQLValue.text(primaryKey)]
-        case let model as any PersistentModel:
-            clause = "?"
-            bindings = [model]
         case let sqlPassthrough as SQL:
             context.sqlPassthrough = sqlPassthrough
             return .invalid
@@ -68,6 +65,10 @@ extension PredicateExpressions.Value: SQLPredicateExpression {
             let placeholders = Array(repeating: "?", count: values.count).joined(separator: ", ")
             clause = "(\(placeholders))"
             bindings = values.map(SQLValue.text)
+        case let model as any PersistentModel:
+            // Receives a model to use with a key path or other expression.
+            clause = "?"
+            bindings = [model]
         case _ where SQLType(equivalentRawValueType: type(of: value)) == nil:
             // This path is followed by the key path expression to extract its bindable value.
             context.log(.debug, "Binding as Any: \(type(of: value)) == \(Output.self)")
@@ -125,9 +126,10 @@ where Root: SQLPredicateExpression {
         guard kind == nil else { return resolveComputedProperty(&context, root) }
         switch root.kind {
         case .scope:
+            // Applies the key path on the closure parameter.
             guard let type = Root.Output.self as? any PersistentModel.Type else {
                 context.log(.notice, "Root.Output.self is not a PersistentModel.Type: \(description)")
-                // Path where value the key path is applied to `SequenceContainsWhere`.
+                // Fragment is an element value in `SequenceContainsWhere`.
                 return root
             }
             context.loadSchemaMetadata(for: type)

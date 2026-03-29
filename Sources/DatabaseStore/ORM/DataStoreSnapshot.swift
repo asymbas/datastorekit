@@ -2097,21 +2097,14 @@ extension DatabaseSnapshot {
         default: identifiers = []
         }
         for identifier in identifiers {
-            try assertRowExists(
-                for: identifier.primaryKey(),
-                table: relationship.destination,
-                connection: connection
-            )
+            try assertRowExists(for: identifier.primaryKey(), table: relationship.destination, connection: connection)
             logger.notice("Pass: \(relationship.destination).\(pk) = \(identifier.primaryKey())")
         }
         if identifiers.isEmpty {
             logger.warning("No identifiers to validate: \(description)")
         }
         if relationship.isToOneRelationship {
-            assert(
-                reference.count == 1,
-                "To-one must have exactly one reference: \(description)"
-            )
+            assert(reference.count == 1, "To-one must have exactly one reference: \(description)")
         } else {
             assert(
                 reference.count == 1 || reference.count == 2,
@@ -2131,23 +2124,18 @@ extension DatabaseSnapshot {
 }
 
 extension DatabaseSnapshot {
-    nonisolated public func contentDescriptions(
-        including includedPropertyNames: [String]
-    ) -> [String: String] {
+    nonisolated public func contentDescriptions(including includedPropertyNames: [String]) -> [String: String] {
         let included = Set(includedPropertyNames)
         return contentDescriptions { included.contains($0.name) }
     }
     
-    nonisolated public func contentDescriptions(
-        excluding excludedPropertyNames: [String]
-    ) -> [String: String] {
+    nonisolated public func contentDescriptions(excluding excludedPropertyNames: [String]) -> [String: String] {
         let excluded = Set(excludedPropertyNames)
         return contentDescriptions { !excluded.contains($0.name) }
     }
     
-    nonisolated public func contentDescriptions(
-        where shouldInclude: (PropertyMetadata) -> Bool = { _ in true }
-    ) -> [String: String] {
+    nonisolated public func contentDescriptions(where shouldInclude: (PropertyMetadata) -> Bool = { _ in true })
+    -> [String: String] {
         var result = [String: String]()
         result.reserveCapacity(properties.count)
         for (property, value) in zip(properties, values) {

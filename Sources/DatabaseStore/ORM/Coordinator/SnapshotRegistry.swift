@@ -508,7 +508,7 @@ extension SnapshotRegistry {
     }
     
     nonisolated package func scheduleCacheFetchResult(
-        forKey hashValue: Int,
+        forKey key: Int,
         fetchedSnapshots: [Snapshot],
         relatedSnapshots: [PersistentIdentifier: Snapshot]
     ) {
@@ -516,24 +516,24 @@ extension SnapshotRegistry {
         if fetchedSnapshots.isEmpty { return }
         Task(priority: .utility) { @DatabaseActor [weak self] in
             guard let self else { return }
-            if self.cachedFetchResultMapping.withLock({ $0[hashValue] != nil }) {
-                self.touchFetchResultKey(hashValue)
+            if self.cachedFetchResultMapping.withLock({ $0[key] != nil }) {
+                self.touchFetchResultKey(key)
                 self.scheduleEvictionIfNeeded()
                 return
             }
-            if self.cacheTasksByKey[hashValue] != nil {
+            if self.cacheTasksByKey[key] != nil {
                 return
             }
             let task = Task { @DatabaseActor [weak self] in
-                defer { self?.cacheTasksByKey[hashValue] = nil }
+                defer { self?.cacheTasksByKey[key] = nil }
                 try Task.checkCancellation()
                 try await self?.cacheFetchResult(
-                    forKey: hashValue,
+                    forKey: key,
                     fetchedSnapshots: fetchedSnapshots,
                     relatedSnapshots: relatedSnapshots
                 )
             }
-            self.cacheTasksByKey[hashValue] = task
+            self.cacheTasksByKey[key] = task
         }
     }
     

@@ -271,7 +271,11 @@ where T: PersistentModel & SendableMetatype {
             let placeholdersCount = statement.sql.filter { $0 == "?" }.count
             Task { @DatabaseActor in
                 let predicateString = descriptor.predicate.map { String(describing: $0) }
-                let predicateHash = predicateString?.hashValue
+                let predicateHash = predicateString.map {
+                    var hasher = Hasher()
+                    hasher.combine($0)
+                    return hasher.finalize()
+                }
                 let translation = SQLPredicateTranslation(
                     id: id,
                     predicateDescription: predicateString,
