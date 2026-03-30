@@ -62,7 +62,7 @@ extension ModelContext {
             modifier: modifier,
             descriptor: descriptor,
             editingState: .init(id: editingState.id, author: editingState.author)
-        )).modifier
+        ))?.modifier
     }
     
     public func preloadedFetch<T>(

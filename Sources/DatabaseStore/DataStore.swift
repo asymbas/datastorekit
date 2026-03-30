@@ -611,13 +611,10 @@ public final class DatabaseStore: DataStore, Sendable {
     /// Fetches the backing data asynchronously as a preload warm-up for the `EditingState` expected to request for it.
     /// - Parameter request: A specific preloading fetch request.
     @concurrent @discardableResult package final func preload<Model>(_ request: PreloadFetchRequest<Model>)
-    async throws -> PreloadFetchKey {
+    async throws -> PreloadFetchKey? {
         let result: PreloadFetchResult = try fetch(request)
         try Task.checkCancellation()
-        guard let registry = self.manager.registry(for: request.editingState) else {
-            preconditionFailure("No registry to store preloaded fetch result.")
-        }
-        return await registry.preload(result, for: request)
+        return await manager.registry(for: request.editingState)?.preload(result, for: request)
     }
     
     /// Inherited from `DataStore.save(_:)`.
