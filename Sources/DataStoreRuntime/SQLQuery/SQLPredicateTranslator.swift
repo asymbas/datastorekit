@@ -236,7 +236,7 @@ where T: PersistentModel & SendableMetatype {
         }
         #endif
         if !self.references.isEmpty {
-            print("References not fully consumed: \(references) \(self.references)")
+            logger.notice("References not fully consumed: \(references) \(self.references)")
         }
         if let predicate = descriptor.predicate { hasher.combine(predicate.description) }
         hasher.combine(baseEntity.name)
@@ -294,6 +294,20 @@ where T: PersistentModel & SendableMetatype {
             properties: selectedProperties,
             requestedIdentifiers: requestedIdentifiers
         )
+    }
+    
+    nonisolated public mutating func sql(
+        _ descriptor: FetchDescriptor<T>,
+        select: String? = nil
+    ) throws -> String {
+        let result = try translate(descriptor, select: select)
+        var sql = result.statement.sql
+        for binding in result.statement.bindings.reversed() {
+            guard let range = sql.range(of: "?", options: .backwards) else { break }
+            let literal = (binding as? SQLValue)?.sql ?? "'\(binding)'"
+            sql.replaceSubrange(range, with: literal)
+        }
+        return sql
     }
 }
 

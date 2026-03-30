@@ -25,7 +25,7 @@ extension DatabaseConfiguration {
         nonisolated internal let databaseScope: CKDatabase.Scope
         nonisolated internal let delegate: any CloudKitDatabase.Replicator.Delegate
         
-        nonisolated public init(
+        nonisolated internal init(
             containerIdentifier: String?,
             remoteAuthor: String = "CloudKit",
             zoneName: String? = nil,

@@ -727,7 +727,7 @@ where LHS: SQLPredicateExpression,
             if let type = LHS.Output.Element.self as? any Hashable.Type, hashable(cast: type) {
                 break
             } else {
-                fatalError("Unable to translate predicate into an SQL query.")
+                preconditionFailure("Unable to translate predicate into an SQL query.")
             }
         }
         return sequence.copy(

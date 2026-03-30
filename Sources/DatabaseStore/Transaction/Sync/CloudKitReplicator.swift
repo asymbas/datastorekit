@@ -142,7 +142,6 @@ extension DatabaseConfiguration.CloudKitDatabase {
             nonisolated internal let destinationFieldName: String
         }
         
-        
         internal enum ProjectedRecordOwnership {
             case root(entityName: String, primaryKey: String)
             case reference(

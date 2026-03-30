@@ -54,22 +54,14 @@ public final class DatabaseStore: DataStore, Sendable {
     /// Manages and caches snapshots belonging to each `ModelContext`.
     nonisolated public final let manager: ModelManager
     
+    @DatabaseActor internal final var history: HistoryState?
+    
     /// The attachment assigned when this object was created.
     nonisolated package final var attachment: (any DataStoreDelegate)? {
         configuration.attachment
     }
     
-    @DatabaseActor internal final var history: HistoryState?
-    
     /// Inherited from `DataStore.init(_:migrationPlan:)`.
-    ///
-    /// Initialized for `ModelContainer` when used with the associated `DatabaseConfiguration` type.
-    ///
-    /// - Creating a `Schema` instance from the versions given by the stage will provide both old and new entities.
-    ///
-    /// - Note:
-    ///   The `ModelContainer` only has an initializer for `ModelConfiguration` and `SchemaMigrationPlan`.
-    ///   SwiftData does not receive a migration plan elsewhere.
     nonisolated public init(
         _ configuration: Configuration,
         migrationPlan: (any SchemaMigrationPlan.Type)?
@@ -191,20 +183,15 @@ public final class DatabaseStore: DataStore, Sendable {
     
     /// Inherited from `DataStore.fetch(_:)`.
     ///
-    /// Fetches the backing data of requested models from the data store or in-memory cache.
+    /// Fetches the snapshots that match the criteria of the specified fetch descriptor.
     ///
     /// - Parameter request:
-    ///   The fetch request containing what models to query for and the editing state.
+    ///   The fetch request containing the fetch descriptor and editing state.
     /// - Returns:
-    ///   The fetch result primarily containing the typed `Model` snapshots.
-    ///   Related snapshots include relationships that were included with each result set.
+    ///   The fetch result containing the typed `Model` snapshots and related snapshots.
     nonisolated public final func fetch<Model, Request, Result>(_ request: Request) throws -> Result
     where Request: FetchRequest<Model>, Result: FetchResult<Model, Snapshot> {
-        logger.trace(.init(stringLiteral: threadDescription))
-        let shouldCheckCancellation = {
-            // Always allow faulting.
-            Request.self is DataStoreFetchRequest<Model>.Type == false
-        }()
+        let shouldCheckCancellation = { Request.self is DataStoreFetchRequest<Model>.Type == false }()
         let entityName = Schema.entityName(for: Model.self)
         var translator = SQLPredicateTranslator<Model>(configuration: configuration)
         do {
@@ -220,13 +207,14 @@ public final class DatabaseStore: DataStore, Sendable {
             if shouldCheckCancellation { try Task.checkCancellation() }
             request: if let result = preloadedResult.take() {
                 guard result.key == translation.key else {
+                    logger.debug("Result key mismatch for preloaded result: \(result)")
                     break request
                 }
                 return finalize(type: "preloaded", result: result.convert(into: Result.self))
             }
             request: if !configuration.options.contains(.disablePredicateCaching),
-                      let hash = translation.key,
-                      let result = try? registry?.cachedFetchResult(forKey: hash, on: entityName) {
+                      let key = translation.key,
+                      let result = try? registry?.cachedFetchResult(forKey: key, on: entityName) {
                 guard !result.fetchedSnapshots.isEmpty else {
                     break request
                 }
@@ -272,9 +260,7 @@ public final class DatabaseStore: DataStore, Sendable {
                         lastErrorMutex.withLock{ $0 = error }
                     }
                 }
-                if let lastError = lastErrorMutex.withLock(\.self) {
-                    throw lastError
-                }
+                if let lastError = lastErrorMutex.withLock(\.self) { throw lastError }
                 fetchedSnapshots = fetchedSnapshotsMutex.withLock { $0.compactMap(\.self) }
                 relatedSnapshots = relatedSnapshotsMutex.withLock { $0 }
             case false:
@@ -329,11 +315,7 @@ public final class DatabaseStore: DataStore, Sendable {
         } catch {
             logger.error("Failed to fetch snapshots: \(error)")
             if let attachment = self.attachment as? DataStoreObservable {
-                attachment.insertPredicateTreeNode(
-                    translator.id,
-                    title: "Error",
-                    content: "\(error)"
-                )
+                attachment.insertPredicateTreeNode(translator.id, title: "Error", content: "\(error)")
             }
             throw error
         }
@@ -346,11 +328,7 @@ public final class DatabaseStore: DataStore, Sendable {
                     metadata: ["fetched_snapshots": "\(count.0)", "related_snapshots": "\(count.1)"]
                 )
                 if let attachment = self.attachment as? DataStoreObservable {
-                    attachment.insertPredicateTreeNode(
-                        translator.id,
-                        title: "Success",
-                        content: "\(count)"
-                    )
+                    attachment.insertPredicateTreeNode(translator.id, title: "Success", content: "\(count)")
                 }
             }
             return result
@@ -391,8 +369,6 @@ public final class DatabaseStore: DataStore, Sendable {
     
     /// Inherited from `DataStore.fetchCount(_:)`.
     ///
-    /// - SwiftData may call `fetchIdentifiers(_:)` instead when the `ModelContext` has a save pending.
-    ///
     /// - Parameter request: The fetch request.
     nonisolated public final func fetchCount<T>(_ request: DataStoreFetchRequest<T>)
     throws -> Int where T: PersistentModel & SendableMetatype {
@@ -403,15 +379,12 @@ public final class DatabaseStore: DataStore, Sendable {
         return count
     }
     
-    /// Fetches model snapshots based on the provided descriptor.
+    /// Fetches the snapshots that match the criteria of the specified fetch descriptor.
     ///
-    /// - Parameter descriptor: A fetch descriptor that provides the configuration for the fetch.
+    /// - Parameter descriptor: The fetch request containing the fetch descriptor and editing state.
     nonisolated public final func fetch<T>(_ descriptor: FetchDescriptor<T>)
     throws -> DatabaseFetchResult<T, Snapshot> where T: PersistentModel & SendableMetatype {
-        try self.fetch(DatabaseFetchRequest(
-            descriptor: descriptor,
-            editingState: .init(id: .init(), author: nil)
-        ))
+        try self.fetch(DatabaseFetchRequest(descriptor: descriptor, editingState: .init(id: .init())))
     }
     
     nonisolated public final func fetch<T>(
@@ -802,10 +775,9 @@ public final class DatabaseStore: DataStore, Sendable {
                         throw Self.Error.exceededMaximumInsertAttempts
                     }
                 } catch {
-                    logger.debug(
-                        "An insert error occurred: \(error)",
-                        metadata: ["snapshot": "\(snapshot.debugDescription)"]
-                    )
+                    logger.debug("An insert error occurred: \(error)", metadata: [
+                        "snapshot": "\(snapshot.debugDescription)"
+                    ])
                     throw error
                 }
             }
@@ -818,7 +790,7 @@ public final class DatabaseStore: DataStore, Sendable {
             for (persistentIdentifier, indices) in dependencies {
                 try connection.checkCancellation()
                 guard var snapshot = snapshots[persistentIdentifier] else {
-                    fatalError("Inserted snapshot not found: \(persistentIdentifier)")
+                    preconditionFailure("Inserted snapshot not found: \(persistentIdentifier)")
                 }
                 defer { snapshots[persistentIdentifier] = snapshot }
                 logger.debug("Inserted dependencies: \(snapshot) - \(indices)")
@@ -835,17 +807,14 @@ public final class DatabaseStore: DataStore, Sendable {
                     connection: connection
                 )
                 invalidatedIdentifiers.formUnion(results.unlinked)
-                logger.debug(
-                    "The backing datas referencing this snapshot has been updated.",
-                    metadata: [
-                        "event": "insert",
-                        "entity": "\(persistentIdentifier.entityName)",
-                        "primary_key": "\(snapshot.primaryKey)",
-                        "snapshot": "\(snapshot.contentDescriptions(where: { $0.isRelationship }))",
-                        "linked": "\(results.linked)",
-                        "unlinked": "\(results.unlinked)"
-                    ]
-                )
+                logger.debug("The backing datas referencing this snapshot has been updated.", metadata: [
+                    "event": "insert",
+                    "entity": "\(persistentIdentifier.entityName)",
+                    "primary_key": "\(snapshot.primaryKey)",
+                    "snapshot": "\(snapshot.contentDescriptions(where: { $0.isRelationship }))",
+                    "linked": "\(results.linked)",
+                    "unlinked": "\(results.unlinked)"
+                ])
             }
             dependencies.removeAll(keepingCapacity: true)
             var updated = Deque(request.updated.map { Payload(snapshot: $0) })
@@ -877,7 +846,7 @@ public final class DatabaseStore: DataStore, Sendable {
             for (persistentIdentifier, indices) in dependencies {
                 try connection.checkCancellation()
                 guard var snapshot = snapshots[persistentIdentifier] else {
-                    fatalError("Updated snapshot not found: \(persistentIdentifier)")
+                    preconditionFailure("Updated snapshot not found: \(persistentIdentifier)")
                 }
                 defer { snapshots[persistentIdentifier] = snapshot }
                 snapshot = snapshot.copy(
@@ -896,17 +865,14 @@ public final class DatabaseStore: DataStore, Sendable {
                     connection: connection
                 )
                 invalidatedIdentifiers.formUnion(results.unlinked)
-                logger.debug(
-                    "The backing datas referencing this snapshot has been updated.",
-                    metadata: [
-                        "event": "update",
-                        "entity": "\(persistentIdentifier.entityName)",
-                        "primary_key": "\(snapshot.primaryKey)",
-                        "snapshot": "\(snapshot.contentDescriptions(where: { $0.isRelationship }))",
-                        "linked": "\(results.linked)",
-                        "unlinked": "\(results.unlinked)"
-                    ]
-                )
+                logger.debug("The backing datas referencing this snapshot has been updated.", metadata: [
+                    "event": "update",
+                    "entity": "\(persistentIdentifier.entityName)",
+                    "primary_key": "\(snapshot.primaryKey)",
+                    "snapshot": "\(snapshot.contentDescriptions(where: { $0.isRelationship }))",
+                    "linked": "\(results.linked)",
+                    "unlinked": "\(results.unlinked)"
+                ])
             }
             dependencies.removeAll(keepingCapacity: true)
             var queuedDeletedIdentifiers = Set(request.deleted.map(\.persistentIdentifier))
@@ -936,17 +902,14 @@ public final class DatabaseStore: DataStore, Sendable {
                             deleted.append(Payload(snapshot: cascadedSnapshot))
                         }
                     }
-                    logger.debug(
-                        "The backing datas referencing this snapshot has been updated.",
-                        metadata: [
-                            "event": "delete",
-                            "entity": "\(snapshot.entityName)",
-                            "primary_key": "\(snapshot.primaryKey)",
-                            "snapshot": "\(snapshot.contentDescriptions(where: { $0.isRelationship }))",
-                            "unlinked": "\(results.unlinked)",
-                            "cascaded": "\(results.cascaded)"
-                        ]
-                    )
+                    logger.debug("The backing datas referencing this snapshot has been updated.", metadata: [
+                        "event": "delete",
+                        "entity": "\(snapshot.entityName)",
+                        "primary_key": "\(snapshot.primaryKey)",
+                        "snapshot": "\(snapshot.contentDescriptions(where: { $0.isRelationship }))",
+                        "unlinked": "\(results.unlinked)",
+                        "cascaded": "\(results.cascaded)"
+                    ])
                     let inheritedSnapshots = try connection.inheritedSnapshots(for: snapshot)
                     try connection.delete(snapshot)
                     operation[.delete, default: []].append(snapshot.persistentIdentifier)
@@ -959,10 +922,9 @@ public final class DatabaseStore: DataStore, Sendable {
                         snapshots[inheritedSnapshot.persistentIdentifier] = nil
                         snapshotsToReregister[inheritedSnapshot.persistentIdentifier] = inheritedSnapshot
                     }
-                    logger.notice(
-                        "Deleted snapshot: \(snapshot.persistentIdentifier)",
-                        metadata: ["preserved_values": "\(export.values)"]
-                    )
+                    logger.notice("Deleted snapshot: \(snapshot.persistentIdentifier)", metadata: [
+                        "preserved_values": "\(export.values)"
+                    ])
                 } catch {
                     if invalidatedIdentifiers.insert(snapshot.persistentIdentifier).inserted {
                         deleted.append(delete)
@@ -996,23 +958,17 @@ public final class DatabaseStore: DataStore, Sendable {
             }
             #endif
         }
-        connection.context?.synchronize(
-            snapshots: snapshots,
-            invalidateIdentifiers: invalidatedIdentifiers
-        )
+        connection.context?.synchronize(snapshots: snapshots, invalidateIdentifiers: invalidatedIdentifiers)
         if request.editingState.author != "CloudKit",
            !remappedIdentifiers.isEmpty || !snapshotsToReregister.isEmpty || !snapshots.isEmpty {
             Task { @DatabaseActor in self.history?.scheduleSynchronizationIfNeeded() }
         }
-        logger.info(
-            "Saved \(remappedIdentifiers.count) new snapshots.",
-            metadata: [
-                "editing_state": "\(request.editingState.id)",
-                "author": "\(request.editingState.author ?? "nil")",
-                "remapped_identifiers": "\(remappedIdentifiers.count)",
-                "snapshots_to_reregister": "\(snapshotsToReregister.count)"
-            ]
-        )
+        logger.info("Saved \(remappedIdentifiers.count) new snapshots.", metadata: [
+            "editing_state": "\(request.editingState.id)",
+            "author": "\(request.editingState.author ?? "nil")",
+            "remapped_identifiers": "\(remappedIdentifiers.count)",
+            "snapshots_to_reregister": "\(snapshotsToReregister.count)"
+        ])
         let operationCopy = operation
         DispatchQueue.main.async {
             NotificationCenter.default.post(
@@ -1028,9 +984,31 @@ public final class DatabaseStore: DataStore, Sendable {
         )
     }
     
-    nonisolated public func synchronizationStatus(
-        for id: String
-    ) async -> SynchronizationStatus? {
+    /// Inherited from `DataStore.erase()`.
+    nonisolated public final func erase() throws {
+        try self.queue.close()
+        let externalStorageURL = self.configuration.externalStorageURL
+        if FileManager.default.fileExists(atPath: externalStorageURL.path) {
+            try FileManager.default.removeItem(at: externalStorageURL)
+            logger.info("The external storage directory has been deleted: \(externalStorageURL.path)")
+        } else {
+            logger.warning("The external storage directory cannot be found: \(externalStorageURL.path)")
+        }
+        guard let storeURL = self.configuration.url else {
+            return
+        }
+        try Handle.remove(storeURL: storeURL)
+    }
+    
+    private struct Payload {
+        nonisolated internal var id: UUID = .init()
+        nonisolated internal var attempts: Int = 0
+        nonisolated internal var snapshot: Snapshot
+    }
+}
+
+extension DatabaseStore {
+    nonisolated public func synchronizationStatus(for id: String) async -> SynchronizationStatus? {
         await DatabaseActor.run { self.history?.synchronizationStatus(for: id) }
     }
 
@@ -1094,34 +1072,12 @@ public final class DatabaseStore: DataStore, Sendable {
     }
     
     #endif
-    
-    /// Inherited from `DataStore.erase()`.
-    nonisolated public final func erase() throws {
-        try self.queue.close()
-        let externalStorageURL = self.configuration.externalStorageURL
-        if FileManager.default.fileExists(atPath: externalStorageURL.path) {
-            try FileManager.default.removeItem(at: externalStorageURL)
-            logger.info("The external storage directory has been deleted: \(externalStorageURL.path)")
-        } else {
-            logger.warning("The external storage directory cannot be found: \(externalStorageURL.path)")
-        }
-        guard let storeURL = self.configuration.url else {
-            return
-        }
-        try Handle.remove(storeURL: storeURL)
-    }
-    
-    private struct Payload {
-        nonisolated internal var id: UUID = .init()
-        nonisolated internal var attempts: Int = 0
-        nonisolated internal var snapshot: Snapshot
-    }
 }
 
 extension DatabaseStore {
     /// Inherited from `DataStore.initializeState(for:)`.
     ///
-    /// Executes when a `ModelContext` is initialized or before a model was reregistered.
+    /// Executes when a `ModelContext` is initialized.
     /// - Parameter editingState: A type belonging to a `ModelContext` that reveals an identifier and author.
     nonisolated public final func initializeState(for editingState: EditingState) {
         logger.debug(
@@ -1134,7 +1090,7 @@ extension DatabaseStore {
     
     /// Inherited from `DataStore.invalidateState(for:)`.
     ///
-    /// Executes when a `ModelContext` is deinitialized or after a model was reregistered.
+    /// Executes when a `ModelContext` is deinitialized.
     /// - Parameter editingState: A type belonging to a `ModelContext` that reveals an identifier and author.
     nonisolated public final func invalidateState(for editingState: EditingState) {
         logger.debug(
@@ -1244,7 +1200,7 @@ extension DatabaseStore {
     
     /// Removes the value for the specified key from the data store's internal table.
     ///
-    /// - Parameter key: The key with the value to remove.
+    /// - Parameter key: The key for the value to remove.
     nonisolated public final func removeValue(forKey key: String) throws {
         let connection = try self.queue.connection(.writer)
         try removeValue(forKey: key, connection: connection)
@@ -1253,7 +1209,7 @@ extension DatabaseStore {
     /// Removes the value for the specified key from the data store's internal table.
     ///
     /// - Parameters:
-    ///   - key: The key with the value to remove.
+    ///   - key: The key for the value to remove.
     ///   - connection: A writer database connection.
     nonisolated public final func removeValue(
         forKey key: String,

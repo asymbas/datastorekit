@@ -44,15 +44,12 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                     logger.trace("Skipped CloudKit account change handling because another change is already being processed.")
                     return
                 }
-                isHandlingAccountChange = true
-                defer { isHandlingAccountChange = false }
+                self.isHandlingAccountChange = true
+                defer { self.isHandlingAccountChange = false }
                 switch event.changeType {
-                case .signIn:
-                    try scheduleInitialUploadIfNeeded()
-                case .switchAccounts, .signOut:
-                    try resetForAccountChange()
-                @unknown default:
-                    logger.trace("Encountered unknown CloudKit account change type.")
+                case .signIn: try scheduleInitialUploadIfNeeded()
+                case .switchAccounts, .signOut: try resetForAccountChange()
+                @unknown default: logger.trace("Encountered unknown CloudKit account change type.")
                 }
             case .willFetchChanges:
                 break

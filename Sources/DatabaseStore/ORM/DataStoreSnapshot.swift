@@ -82,6 +82,29 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
         nonisolated static let isOriginal: Self = .init(rawValue: 1 << 0)
     }
     
+    nonisolated private init<PrimaryKey: LosslessStringConvertible>(
+        persistentIdentifier: PersistentIdentifier,
+        primaryKey: PrimaryKey,
+        type: (any (PersistentModel & SendableMetatype).Type)?,
+        properties: ContiguousArray<PropertyMetadata>,
+        values: ContiguousArray<any DataStoreSnapshotValue>
+    ) {
+        let entityName = persistentIdentifier.entityName
+        guard let type = type ?? Schema.type(for: entityName) else {
+            preconditionFailure("A type was not provided for the entity named \(entityName).")
+        }
+        self.type = type
+        self.persistentIdentifier = persistentIdentifier
+        self.primaryKey = primaryKey.description
+        self.properties = !properties.isEmpty ? properties : .init(type.databaseSchemaMetadata)
+        self.values = !values.isEmpty ? values : .init(repeating: SQLNull(), count: self.properties.count)
+        assert(
+            self.properties.count == self.values.count,
+            "Property and value counts do not match: \(self.properties.count) != \(self.values.count)"
+        )
+        ensureIndexes()
+    }
+    
     /// Creates an empty snapshot instance from the data store side.
     nonisolated package init<PrimaryKey: LosslessStringConvertible>(
         primaryKey: PrimaryKey,
@@ -120,29 +143,6 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
             properties: properties,
             values: values
         )
-    }
-    
-    nonisolated private init<PrimaryKey: LosslessStringConvertible>(
-        persistentIdentifier: PersistentIdentifier,
-        primaryKey: PrimaryKey,
-        type: (any (PersistentModel & SendableMetatype).Type)?,
-        properties: ContiguousArray<PropertyMetadata>,
-        values: ContiguousArray<any DataStoreSnapshotValue>
-    ) {
-        let entityName = persistentIdentifier.entityName
-        guard let type = type ?? Schema.type(for: entityName) else {
-            preconditionFailure("A type was not provided for the entity named \(entityName).")
-        }
-        self.type = type
-        self.persistentIdentifier = persistentIdentifier
-        self.primaryKey = primaryKey.description
-        self.properties = !properties.isEmpty ? properties : .init(type.databaseSchemaMetadata)
-        self.values = !values.isEmpty ? values : .init(repeating: SQLNull(), count: self.properties.count)
-        assert(
-            self.properties.count == self.values.count,
-            "Property and value counts do not match: \(self.properties.count) != \(self.values.count)"
-        )
-        ensureIndexes()
     }
     
     nonisolated package init(backingData: DatabaseBackingData) throws {
@@ -202,7 +202,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
                     switch value {
                     case let value where attribute.options.contains(.ephemeral):
                         if let valueType = attribute.valueType as? any DataStoreSnapshotValue.Type,
-                           let value = getValue(attribute.defaultValue, as: valueType) {
+                           let value = decodable(cast: attribute.defaultValue, as: valueType) {
                             self.values[property.index] = value
                             (baseAddress + offset).initialize(to: value)
                             logger.trace("Exporting ephemeral attribute: \(description) = \(value)")
@@ -276,7 +276,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
                     toManyDependencies.append(property.index)
                     logger.trace("To-many relationship will be deferred: \(description)")
                 default:
-                    preconditionFailure()
+                    preconditionFailure("Unhandled property for exported value is not allowed: \(description)")
                 }
             }
         }
@@ -349,37 +349,56 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
 }
 
 extension DatabaseSnapshot {
+    /// Creates a snapshot from the model's backing data.
+    ///
+    /// - Parameter model: The model to create a snapshot of.
     nonisolated public init<T: PersistentModel>(_ model: T) {
         self.init(persistentIdentifier: model.persistentModelID, type: T.self)
         extractBackingData(model.persistentBackingData, from: self.properties)
     }
     
+    /// Creates a snapshot from the model's backing data.
+    ///
+    /// - Parameters:
+    ///   - model: The model to create a snapshot of.
+    ///   - keyPaths: Specifying key paths will exclude those properties and values from being extracted.
     nonisolated public init<T: PersistentModel>(_ model: T, excluding keyPaths: [PartialKeyPath<T>]) {
         self.init(persistentIdentifier: model.persistentModelID, type: T.self)
         let excluded = Set(keyPaths.map { $0 as AnyKeyPath })
         extractBackingData(
             model.persistentBackingData,
-            from: ContiguousArray(T.databaseSchemaMetadata.filter { property in
-                !excluded.contains(property.keyPath)
-            })
+            from: .init(T.databaseSchemaMetadata.filter { !excluded.contains($0.keyPath) })
         )
     }
     
+    /// Creates a snapshot from the model's backing data.
+    ///
+    /// - Parameters:
+    ///   - model: The model to create a snapshot of.
+    ///   - keyPaths: Specifying key paths will exclude those properties and values from being extracted.
     nonisolated public init<T: PersistentModel>(_ model: T, excluding keyPaths: PartialKeyPath<T>...) {
         self.init(model, excluding: keyPaths)
     }
     
+    /// Creates a snapshot from the model's backing data.
+    ///
+    /// - Parameters:
+    ///   - model: The model to create a snapshot of.
+    ///   - keyPaths: Specifying key paths will only include these properties and values in the snapshot.
     nonisolated public init<T: PersistentModel>(_ model: T, only keyPaths: [PartialKeyPath<T>]) {
         self.init(persistentIdentifier: model.persistentModelID, type: T.self)
         let included = Set(keyPaths.map { $0 as AnyKeyPath })
         extractBackingData(
             model.persistentBackingData,
-            from: ContiguousArray(T.databaseSchemaMetadata.filter { property in
-                included.contains(property.keyPath)
-            })
+            from: .init(T.databaseSchemaMetadata.filter { included.contains($0.keyPath) })
         )
     }
     
+    /// Creates a snapshot from the model's backing data.
+    ///
+    /// - Parameters:
+    ///   - model: The model to create a snapshot of.
+    ///   - keyPaths: Specifying key paths will only include these properties and values in the snapshot.
     nonisolated public init<T: PersistentModel>(_ model: T, only keyPaths: PartialKeyPath<T>...) {
         self.init(model, only: keyPaths)
     }
@@ -395,17 +414,6 @@ extension DatabaseSnapshot {
     ///   - New model instances are not associated with a `Schema`, `DataStore`, and `ModelContext`.
     ///   - `FetchDescriptor.includePendingChanges` set to `false` affects persistence/saves.
     ///     - This results in `BackingData` providing stale snapshots on models associated to this `ModelContext`.
-    ///   - Variations of `BackingData`:
-    ///     - `SwiftData._KKMDBackingData<Model>`:
-    ///       - The most common backing data and is used in `PersistentModel.createBackingData()`.
-    ///     - `SwiftData._StitchedBackingData<Model>`:
-    ///       - Provided when creating snapshots from inherited models.
-    ///       - Unable to cast the key path or backing data to extract values from it.
-    ///     - `SwiftData._FullFutureBackingData<Model>`:
-    ///       - Provided when creating snapshots manually and its relationship was accessed before it was fetched.
-    ///       - Causes a crash accessing values from the backing data.
-    ///     - `SwiftData._InvalidFutureBackingData<Model>`:
-    ///       - Causes a crash mentioning "unexpected backingdata type for inverse maintenance".
     /// - Important:
     ///   - Unwrap the metatype before getting the value, otherwise some optional values may fail to cast.
     /// - Parameters:
@@ -491,7 +499,7 @@ extension DatabaseSnapshot {
                     if let value {
                         self.values[property.index] = value
                         logger.trace("Received BackingData ephemeral attribute: \(description) = \(value)")
-                    } else if let value = getValue(attribute.defaultValue, as: valueType) {
+                    } else if let value = decodable(cast: attribute.defaultValue, as: valueType) {
                         self.values[property.index] = value
                         logger.trace("Received BackingData ephemeral attribute: \(description) = \(value)")
                     } else if attribute.isOptional {
@@ -554,41 +562,23 @@ extension DatabaseSnapshot {
         B.Model.self
     }
     
-    nonisolated private func getValue<V>(_ defaultValue: Any?, as valueType: V.Type) -> V?
+    nonisolated private func decodable<V>(cast value: Any?, as valueType: V.Type) -> V?
     where V: Decodable {
-        switch defaultValue {
+        switch value {
         case let value? as V?: value
         default: nil
         }
     }
     
     /// Extracts the required or optional attribute value from the backing data.
-    ///
-    /// - Note:
-    ///   - SwiftData does not provide a key path in `Schema.Attribute` as it does with `Schema.Relationship`.
-    ///   - Use `CodingKeys` and `PredicateCodableKeyPathProviding` to get values.
-    @available(*, deprecated, message: "Use Mirror to retrieve the key path.")
-    nonisolated private func getValue<B, M, R, V>(
-        _ propertyName: String,
-        from backingData: B,
-        of rootType: R.Type,
-        as valueType: V.Type
-    ) -> V? where B: BackingData, B.Model == M, R: PredicateCodableKeyPathProviding, V: Decodable {
-        switch R.predicateCodableKeyPaths[propertyName] as? KeyPath<B.Model, V> {
-        case let keyPath?: backingData.getValue(forKey: keyPath)
-        case nil: nil
-        }
-    }
-    
-    /// Extracts the required or optional attribute value from the backing data.
     nonisolated private func getValue<B, M, V>(_ backingData: B, as valueType: V.Type, keyPath: AnyKeyPath) -> V?
     where B: BackingData, B.Model == M, V: Decodable {
-        #if swift(>=6.2)
+#if swift(>=6.2)
         if #available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *),
            (B.Model.Root.self is B.Model.Type) == false {
             return getInheritedValue(backingData, as: valueType, keyPath: keyPath)
         }
-        #endif
+#endif
         switch keyPath {
         case let keyPath as KeyPath<B.Model, V>: return backingData.getValue(forKey: keyPath)
         case let keyPath as KeyPath<B.Model, V?>: return backingData.getValue(forKey: keyPath)
@@ -596,7 +586,7 @@ extension DatabaseSnapshot {
         }
     }
     
-    #if swift(>=6.2)
+#if swift(>=6.2)
     
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
     nonisolated private func getInheritedValue<B, V>(
@@ -639,7 +629,7 @@ extension DatabaseSnapshot {
         return resolveInheritedValue(backingData, from: superclass, as: valueType, keyPath: keyPath)
     }
     
-    #endif
+#endif
     
     /// Extracts the required or optional to-one relationship value from the backing data.
     nonisolated private func getValue<B, M, R>(_ backingData: B, as type: R.Type, keyPath: AnyKeyPath) -> R?
@@ -658,6 +648,26 @@ extension DatabaseSnapshot {
         case let keyPath as KeyPath<B.Model, [R.PersistentElement]>: backingData.getValue(forKey: keyPath)
         case let keyPath as KeyPath<B.Model, [R.PersistentElement]?>: backingData.getValue(forKey: keyPath)
         default: nil
+        }
+    }
+}
+
+extension DatabaseSnapshot {
+    /// Extracts the required or optional attribute value from the backing data.
+    ///
+    /// - Note:
+    ///   - SwiftData does not provide a key path in `Schema.Attribute` as it does with `Schema.Relationship`.
+    ///   - Use `CodingKeys` and `PredicateCodableKeyPathProviding` to get values.
+    @available(*, deprecated, message: "Use Mirror to retrieve the key path.")
+    nonisolated private func getValue<B, M, R, V>(
+        _ propertyName: String,
+        from backingData: B,
+        of rootType: R.Type,
+        as valueType: V.Type
+    ) -> V? where B: BackingData, B.Model == M, R: PredicateCodableKeyPathProviding, V: Decodable {
+        switch R.predicateCodableKeyPaths[propertyName] as? KeyPath<B.Model, V> {
+        case let keyPath?: backingData.getValue(forKey: keyPath)
+        case nil: nil
         }
     }
     
@@ -702,8 +712,8 @@ extension DatabaseSnapshot {
             logger.debug("Snapshot remapped: \(self.persistentIdentifier) -> \(persistentIdentifier)")
         }
         #endif
-        let values = ContiguousArray(zip(properties, values).map { key, value in
-            guard key.metadata is Schema.Relationship else { return value }
+        let values = ContiguousArray(zip(properties, values).map { property, value in
+            guard property.metadata is Schema.Relationship else { return value }
             switch value {
             case let oldIdentifiers as [PersistentIdentifier]: return oldIdentifiers.map(append(_:))
             case let oldIdentifier as PersistentIdentifier: return append(oldIdentifier)
@@ -715,7 +725,7 @@ extension DatabaseSnapshot {
                     count += 1
                     if useDetailedLogging {
                         mappings.append(.init(
-                            propertyName: key.name,
+                            propertyName: property.name,
                             oldIdentifier: oldIdentifier,
                             newIdentifier: newIdentifier
                         ))
@@ -2041,7 +2051,7 @@ extension DatabaseSnapshot {
                     self.values[property.index] = value
                     logger.trace("Set ephemeral attribute: \(description) = \(value)")
                 } else if let valueType = attribute.valueType as? any DataStoreSnapshotValue.Type,
-                          let value = getValue(attribute.defaultValue, as: valueType) {
+                          let value = decodable(cast: attribute.defaultValue, as: valueType) {
                     self.values[property.index] = value
                     logger.trace("Set ephemeral attribute default: \(description) = \(value)")
                 } else if attribute.isOptional {

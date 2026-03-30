@@ -25,7 +25,7 @@ extension DatabaseConnection where Store == DatabaseStore {
         properties keyPaths: [PartialKeyPath<Result> & Sendable] = [],
         sql: String...,
         bindings: [any Sendable] = []
-    ) throws -> [DatabaseSnapshot] where Result: PersistentModel {
+    ) throws -> [Store.Snapshot] where Result: PersistentModel {
         guard let storeIdentifier = self.attachment?.store?.identifier else {
             preconditionFailure("\(Store.Attachment.self) must have a store identifier.")
         }
