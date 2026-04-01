@@ -25,9 +25,6 @@ extension SQLPredicateTranslator {
         if !configuration.options.contains(.disableKeyPathVariants) {
             options.insert(.allowKeyPathVariantsForPropertyLookup)
         }
-        if configuration.options.contains(.useVerboseLogging) {
-            options.insert(.useVerboseLogging)
-        }
         let translator = SQLPredicateTranslator(
             schema: configuration.schema.unsafelyUnwrapped,
             attachment: configuration.attachment as? DataStoreObservable,
