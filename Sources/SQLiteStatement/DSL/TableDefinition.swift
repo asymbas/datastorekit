@@ -12,7 +12,7 @@ import DataStoreSQL
 import DataStoreSupport
 import SQLSupport
 
-public protocol TableDefinition: SQLFragment {
+package protocol TableDefinition: SQLFragment {
     nonisolated var schema: String? { get }
     nonisolated var name: String { get }
     nonisolated var columns: [any ColumnDefinition] { get }
@@ -21,15 +21,15 @@ public protocol TableDefinition: SQLFragment {
 
 extension TableDefinition {
     /// The table name as a delimited identifier.
-    nonisolated public var identifier: String {
+    nonisolated package var identifier: String {
         quote(name)
     }
     
-    nonisolated public var qualifiedName: String {
+    nonisolated package var qualifiedName: String {
         schema == nil ? identifier : "\(quote(schema!)).\(identifier)"
     }
     
-    nonisolated public var sql: String {
+    nonisolated package var sql: String {
         switch !constraints.isEmpty {
         case true:
             let constraints = OrderedSet(constraints)
@@ -51,13 +51,13 @@ extension TableDefinition {
     }
 }
 
-public final class SQLTable: TableDefinition, @unchecked Sendable {
-    nonisolated public final let schema: String?
-    nonisolated public final let name: String
-    nonisolated public final let columns: [any ColumnDefinition]
-    nonisolated public final let constraints: [TableConstraint]
+package final class SQLTable: TableDefinition, @unchecked Sendable {
+    nonisolated package final let schema: String?
+    nonisolated package final let name: String
+    nonisolated package final let columns: [any ColumnDefinition]
+    nonisolated package final let constraints: [TableConstraint]
     
-    nonisolated public init(
+    nonisolated package init(
         schema: String? = nil,
         name: String,
         constraints: [TableConstraint],
@@ -69,7 +69,7 @@ public final class SQLTable: TableDefinition, @unchecked Sendable {
         self.constraints = constraints
     }
     
-    nonisolated public convenience init(
+    nonisolated package convenience init(
         schema: String? = nil,
         name: String,
         constraints: [TableConstraint?],

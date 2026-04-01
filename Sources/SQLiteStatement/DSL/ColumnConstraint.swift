@@ -11,22 +11,22 @@ import DataStoreSupport
 import Foundation
 import SQLSupport
 
-public struct ColumnConstraint: SQLFragment {
+package struct ColumnConstraint: SQLFragment {
     nonisolated internal var order: Int
-    nonisolated public var sql: String
+    nonisolated package var sql: String
     
     nonisolated private init(order: Int, @SQLBuilder fragments: () -> [any SQLFragment]) {
         self.order = order
         self.sql = fragments().map(\.sql).joined(separator: " ")
     }
     
-    nonisolated public static var primaryKey: Self {
+    nonisolated package static var primaryKey: Self {
         .init(order: 0) {
             "PRIMARY KEY"
         }
     }
     
-    nonisolated public static func primaryKey(
+    nonisolated package static func primaryKey(
         order: SortOrder? = nil,
         onConflict: OnConflict? = nil,
         autoIncrement: Bool? = nil
@@ -39,33 +39,33 @@ public struct ColumnConstraint: SQLFragment {
         }
     }
     
-    nonisolated public static var notNull: Self {
+    nonisolated package static var notNull: Self {
         .init(order: 1) {
             "NOT NULL"
         }
     }
     
-    nonisolated public static func notNull(_ onConflict: OnConflict? = nil) -> Self {
+    nonisolated package static func notNull(_ onConflict: OnConflict? = nil) -> Self {
         .init(order: 1) {
             "NOT NULL"
             if let onConflict { onConflict.sql }
         }
     }
     
-    nonisolated public static var unique: Self {
+    nonisolated package static var unique: Self {
         .init(order: 2) {
             "UNIQUE"
         }
     }
     
-    nonisolated public static func unique(_ onConflict: OnConflict? = nil) -> Self {
+    nonisolated package static func unique(_ onConflict: OnConflict? = nil) -> Self {
         .init(order: 2) {
             "UNIQUE"
             if let onConflict { onConflict.sql }
         }
     }
     
-    nonisolated public static func check(_ expression: [SQLExpression]) -> Self {
+    nonisolated package static func check(_ expression: [SQLExpression]) -> Self {
         guard !expression.isEmpty else {
             fatalError("CHECK column constraint must provide at least one expression.")
         }
@@ -74,23 +74,23 @@ public struct ColumnConstraint: SQLFragment {
         }
     }
     
-    nonisolated public static func check(_ expression: SQLExpression...) -> Self {
+    nonisolated package static func check(_ expression: SQLExpression...) -> Self {
         Self.check(expression)
     }
     
-    nonisolated public static func defaultValue(_ value: Any) -> Self {
+    nonisolated package static func defaultValue(_ value: Any) -> Self {
         .init(order: 4) {
             "DEFAULT \(SQLValue(any: value))"
         }
     }
     
-    nonisolated public static func collate(_ collationName: String) -> Self {
+    nonisolated package static func collate(_ collationName: String) -> Self {
         .init(order: 5) {
             "COLLATE \(collationName)"
         }
     }
     
-    nonisolated public static func references(
+    nonisolated package static func references(
         _ referencedTable: String,
         _ referencedColumn: String,
         onDelete: ReferentialAction? = nil,
@@ -107,13 +107,13 @@ public struct ColumnConstraint: SQLFragment {
         }
     }
     
-    nonisolated public static func foreignKey(_ foreignKey: ForeignKey) -> Self {
+    nonisolated package static func foreignKey(_ foreignKey: ForeignKey) -> Self {
         .init(order: 6) {
             foreignKey.sql
         }
     }
     
-    nonisolated public static func constraint(
+    nonisolated package static func constraint(
         generatedAlways: Bool = true,
         as expression: [SQLExpression],
         isStored: Bool?,
@@ -129,7 +129,7 @@ public struct ColumnConstraint: SQLFragment {
         }
     }
     
-    nonisolated public static func constraint(
+    nonisolated package static func constraint(
         generatedAlways: Bool = true,
         as expression: SQLExpression...,
         isStored: Bool?,

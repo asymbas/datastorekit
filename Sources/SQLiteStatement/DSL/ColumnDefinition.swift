@@ -12,7 +12,7 @@ import DataStoreSQL
 import DataStoreSupport
 import SQLSupport
 
-public protocol ColumnDefinition: SQLFragment {
+package protocol ColumnDefinition: SQLFragment {
     nonisolated var name: String { get }
     nonisolated var type: SQLType { get }
     nonisolated var constraints: [ColumnConstraint] { get }
@@ -20,19 +20,19 @@ public protocol ColumnDefinition: SQLFragment {
 
 extension ColumnDefinition {
     /// The column name as a delimited identifier.
-    nonisolated public var identifier: String {
+    nonisolated package var identifier: String {
         quote(name)
     }
     
-    nonisolated public var isOptional: Bool {
+    nonisolated package var isOptional: Bool {
         constraints.contains(.notNull) == false
     }
     
-    nonisolated public var isUnique: Bool {
+    nonisolated package var isUnique: Bool {
         constraints.contains(.unique)
     }
     
-    nonisolated public var sql: String {
+    nonisolated package var sql: String {
         if !constraints.isEmpty {
             let constraints = OrderedSet(constraints).sorted(by: { $0.order < $1.order }).sql
             return "\(identifier) \(type) \(constraints)"
@@ -42,24 +42,24 @@ extension ColumnDefinition {
     }
 }
 
-public struct SQLEmptyColumn: ColumnDefinition {
-    nonisolated public let name: String
-    nonisolated public let type: SQLType
-    nonisolated public let constraints: [ColumnConstraint]
+package struct SQLEmptyColumn: ColumnDefinition {
+    nonisolated package let name: String
+    nonisolated package let type: SQLType
+    nonisolated package let constraints: [ColumnConstraint]
     
-    nonisolated public init() {
+    nonisolated package init() {
         self.name = ""
         self.type = .null
         self.constraints = []
     }
 }
 
-public class SQLAttributeColumn: ColumnDefinition, @unchecked Sendable {
-    nonisolated public let name: String
-    nonisolated public let type: SQLType
-    nonisolated public let constraints: [ColumnConstraint]
+package class SQLAttributeColumn: ColumnDefinition, @unchecked Sendable {
+    nonisolated package let name: String
+    nonisolated package let type: SQLType
+    nonisolated package let constraints: [ColumnConstraint]
     
-    nonisolated public init(
+    nonisolated package init(
         name: String,
         valueType: Any.Type,
         constraints: [ColumnConstraint] = [],
@@ -76,7 +76,7 @@ public class SQLAttributeColumn: ColumnDefinition, @unchecked Sendable {
         validate?(.success(self))
     }
     
-    nonisolated public convenience init(
+    nonisolated package convenience init(
         name: String,
         valueType: Any.Type,
         constraints: ColumnConstraint?...,
@@ -90,7 +90,7 @@ public class SQLAttributeColumn: ColumnDefinition, @unchecked Sendable {
         )
     }
     
-    nonisolated public convenience init(
+    nonisolated package convenience init(
         name: String,
         valueType: Any.Type,
         constraints: [ColumnConstraint?],
@@ -105,10 +105,10 @@ public class SQLAttributeColumn: ColumnDefinition, @unchecked Sendable {
     }
 }
 
-public final class SQLCompositeAttributeColumn: SQLAttributeColumn, @unchecked Sendable {
-    nonisolated public let properties: [SQLAttributeColumn]
+package final class SQLCompositeAttributeColumn: SQLAttributeColumn, @unchecked Sendable {
+    nonisolated package let properties: [SQLAttributeColumn]
     
-    nonisolated public init(
+    nonisolated package init(
         name: String,
         valueType: Any.Type,
         constraints: [ColumnConstraint] = [],
@@ -124,7 +124,7 @@ public final class SQLCompositeAttributeColumn: SQLAttributeColumn, @unchecked S
         )
     }
     
-    nonisolated public convenience init(
+    nonisolated package convenience init(
         name: String,
         valueType: Any.Type,
         constraints: ColumnConstraint?...,
@@ -140,7 +140,7 @@ public final class SQLCompositeAttributeColumn: SQLAttributeColumn, @unchecked S
         )
     }
     
-    nonisolated public convenience init(
+    nonisolated package convenience init(
         name: String,
         valueType: Any.Type,
         constraints: ColumnConstraint?...,
@@ -156,7 +156,7 @@ public final class SQLCompositeAttributeColumn: SQLAttributeColumn, @unchecked S
         )
     }
     
-    nonisolated public convenience init(
+    nonisolated package convenience init(
         name: String,
         valueType: Any.Type,
         constraints: [ColumnConstraint?] = [],
@@ -173,12 +173,12 @@ public final class SQLCompositeAttributeColumn: SQLAttributeColumn, @unchecked S
     }
 }
 
-public final class SQLRelationshipColumn: ColumnDefinition, @unchecked Sendable {
-    nonisolated public let name: String
-    nonisolated public let type: SQLType
-    nonisolated public let constraints: [ColumnConstraint]
+package final class SQLRelationshipColumn: ColumnDefinition, @unchecked Sendable {
+    nonisolated package let name: String
+    nonisolated package let type: SQLType
+    nonisolated package let constraints: [ColumnConstraint]
     
-    nonisolated public init(
+    nonisolated package init(
         name: String,
         valueType: Any.Type,
         constraints: [ColumnConstraint] = [],
@@ -195,7 +195,7 @@ public final class SQLRelationshipColumn: ColumnDefinition, @unchecked Sendable 
         validate?(.success(self))
     }
     
-    nonisolated public convenience init(
+    nonisolated package convenience init(
         name: String,
         valueType: Any.Type,
         constraints: ColumnConstraint?...,
@@ -209,7 +209,7 @@ public final class SQLRelationshipColumn: ColumnDefinition, @unchecked Sendable 
         )
     }
     
-    nonisolated public convenience init(
+    nonisolated package convenience init(
         name: String,
         valueType: Any.Type,
         constraints: [ColumnConstraint?],
@@ -224,13 +224,13 @@ public final class SQLRelationshipColumn: ColumnDefinition, @unchecked Sendable 
     }
 }
 
-public final class SQLColumn: ColumnDefinition, @unchecked Sendable {
-    nonisolated public let name: String
-    nonisolated public let type: SQLType
-    nonisolated public let constraints: [ColumnConstraint]
-    nonisolated public let references: [TableReference]
+package final class SQLColumn: ColumnDefinition, @unchecked Sendable {
+    nonisolated package let name: String
+    nonisolated package let type: SQLType
+    nonisolated package let constraints: [ColumnConstraint]
+    nonisolated package let references: [TableReference]
     
-    nonisolated public init(
+    nonisolated package init(
         name: String,
         valueType: Any.Type,
         constraints: [ColumnConstraint] = [],
@@ -249,7 +249,7 @@ public final class SQLColumn: ColumnDefinition, @unchecked Sendable {
         validate?(.success(self))
     }
     
-    nonisolated public convenience init(
+    nonisolated package convenience init(
         name: String,
         valueType: Any.Type,
         constraints: ColumnConstraint?...,

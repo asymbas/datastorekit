@@ -98,22 +98,22 @@ extension DatabaseConnection where Store.Handle == SQLite {
 }
 
 extension DatabaseConnection where Store.Handle == SQLite {
-    nonisolated public func fetch(_ statement: SQL)
+    nonisolated package func fetch(_ statement: SQL)
     throws -> [[any Sendable]] {
         try handle.fetch(statement.sql, bindings: statement.bindings)
     }
     
-    nonisolated public func fetch(@SQLBuilder _ statement: () throws -> [any SQLFragment])
+    nonisolated package func fetch(@SQLBuilder _ statement: () throws -> [any SQLFragment])
     throws -> [[any Sendable]] {
         try fetch(SQL(statement()))
     }
     
-    nonisolated public func query(_ statement: SQL)
+    nonisolated package func query(_ statement: SQL)
     throws -> [[String: any Sendable]] {
         try handle.query(statement.sql, bindings: statement.bindings)
     }
     
-    nonisolated public func query(@SQLBuilder _ statement: () throws -> [any SQLFragment])
+    nonisolated package func query(@SQLBuilder _ statement: () throws -> [any SQLFragment])
     throws -> [[String: any Sendable]] {
         try query(SQL(statement()))
     }

@@ -294,11 +294,11 @@ extension SQLStatementShortcut where Handle == SQLite {
         )
     }
     
-    nonisolated public func count(@SQLBuilder statement: () -> [any SQLFragment]) throws -> Int {
+    nonisolated package func count(@SQLBuilder statement: () -> [any SQLFragment]) throws -> Int {
         try count(SQL(statement()))
     }
     
-    nonisolated public func count(_ statement: SQL) throws -> Int {
+    nonisolated package func count(_ statement: SQL) throws -> Int {
         try count(statement.sql, bindings: statement.bindings)
     }
     
@@ -694,7 +694,7 @@ extension SQLStatementShortcut where Handle == SQLite {
         return handle.rowChanges
     }
     
-    nonisolated public consuming func create(
+    nonisolated package consuming func create(
         index: some IndexDefinition,
         ifNotExists: Bool = true,
         isUnique: Bool = false
@@ -709,7 +709,7 @@ extension SQLStatementShortcut where Handle == SQLite {
         try handle.execute(statement.description)
     }
     
-    nonisolated public consuming func create(
+    nonisolated package consuming func create(
         table: some TableDefinition,
         ifNotExists: Bool = true,
         isTemporary: Bool = false
@@ -744,7 +744,7 @@ extension SQLStatementShortcut where Handle == SQLite {
         ).run()
     }
     
-    nonisolated public consuming func validateForeignKeyConstraints(
+    nonisolated package consuming func validateForeignKeyConstraints(
         for tables: [any TableDefinition],
         foreignKeyHandler: (any TableDefinition, [[String: any Sendable]]) throws -> Void
     ) throws {

@@ -11,22 +11,22 @@ import DataStoreSQL
 import DataStoreSupport
 import SQLSupport
 
-public struct TableConstraint: SQLFragment {
+package struct TableConstraint: SQLFragment {
     nonisolated internal var order: Int
-    nonisolated public var sql: String
+    nonisolated package var sql: String
     
     nonisolated private init(order: Int, @SQLBuilder fragments: () -> [any SQLFragment]) {
         self.order = order
         self.sql = fragments().map(\.sql).joined(separator: " ")
     }
     
-    nonisolated public static func constraint(name: String, using constraint: Self) -> Self {
+    nonisolated package static func constraint(name: String, using constraint: Self) -> Self {
         .init(order: constraint.order) {
             "CONSTRAINT \(quote(name)) \(constraint.sql)"
         }
     }
     
-    nonisolated public static func primaryKey(
+    nonisolated package static func primaryKey(
         _ indexedColumns: [String],
         onConflict: OnConflict? = nil
     ) -> Self {
@@ -39,21 +39,21 @@ public struct TableConstraint: SQLFragment {
         }
     }
     
-    nonisolated public static func unique(
+    nonisolated package static func unique(
         _ indexedColumns: String...,
         onConflict: OnConflict? = nil
     ) -> Self {
         Self.unique(indexedColumns, onConflict: onConflict)
     }
     
-    nonisolated public static func primaryKey(
+    nonisolated package static func primaryKey(
         _ indexedColumns: String...,
         onConflict: OnConflict? = nil
     ) -> Self {
         self.primaryKey(indexedColumns, onConflict: onConflict)
     }
     
-    nonisolated public static func unique(
+    nonisolated package static func unique(
         _ indexedColumns: [String],
         onConflict: OnConflict? = nil
     ) -> Self {
@@ -66,7 +66,7 @@ public struct TableConstraint: SQLFragment {
         }
     }
     
-    nonisolated public static func check(_ expression: [SQLExpression]) -> Self {
+    nonisolated package static func check(_ expression: [SQLExpression]) -> Self {
         guard !expression.isEmpty else {
             fatalError("CHECK table constraint must provide at least one expression.")
         }
@@ -75,11 +75,11 @@ public struct TableConstraint: SQLFragment {
         }
     }
     
-    nonisolated public static func check(_ expression: SQLExpression...) -> Self {
+    nonisolated package static func check(_ expression: SQLExpression...) -> Self {
         Self.check(expression)
     }
     
-    nonisolated public static func foreignKey(
+    nonisolated package static func foreignKey(
         _ columns: [String],
         references referencedTable: String,
         at referencedColumns: [String],
@@ -107,7 +107,7 @@ public struct TableConstraint: SQLFragment {
         }
     }
     
-    nonisolated public static func foreignKey(
+    nonisolated package static func foreignKey(
         _ columns: String...,
         references referencedTable: String,
         at referencedColumns: String...,
@@ -127,7 +127,7 @@ public struct TableConstraint: SQLFragment {
         )
     }
     
-    nonisolated public static func foreignKey(
+    nonisolated package static func foreignKey(
         _ columns: [String],
         clause foreignKey: ForeignKey
     ) -> Self {
@@ -140,7 +140,7 @@ public struct TableConstraint: SQLFragment {
         }
     }
     
-    nonisolated public static func foreignKey(
+    nonisolated package static func foreignKey(
         _ columns: String...,
         clause foreignKey: ForeignKey
     ) -> Self {
