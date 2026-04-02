@@ -203,11 +203,9 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
                     case let value where attribute.options.contains(.ephemeral):
                         if let valueType = attribute.valueType as? any DataStoreSnapshotValue.Type,
                            let value = decodable(cast: attribute.defaultValue, as: valueType) {
-                            self.values[property.index] = value
                             (baseAddress + offset).initialize(to: value)
                             logger.trace("Exporting ephemeral attribute: \(description) = \(value)")
                         } else if attribute.isOptional {
-                            self.values[property.index] = SQLNull()
                             (baseAddress + offset).initialize(to: NSNull() as any Sendable)
                             logger.trace("Exporting ephemeral attribute: \(description) = NULL")
                         } else {
