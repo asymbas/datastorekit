@@ -28,22 +28,6 @@ private typealias ForEach = SQLForEach
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.query")
 
-extension SQLPredicateTranslator {
-    nonisolated internal var isCachingPredicates: Bool {
-        options.contains(.isCachingPredicates)
-    }
-    nonisolated internal var allowKeyPathVariantsForPropertyLookup: Bool {
-        options.contains(.allowKeyPathVariantsForPropertyLookup)
-    }
-    
-
-
-    
-    nonisolated internal var shouldLogInformation: Bool {
-        options.contains(.useVerboseLogging)
-    }
-}
-
 // FIXME: Unable to match to key paths due to generic and protocol constraints.
 // FIXME: Unable to match to key paths related to inheritance.
 // FIXME: Unable to access a relationship's attribute to sort without a predicate.
@@ -254,7 +238,7 @@ where T: PersistentModel & SendableMetatype {
             fflush(stdout)
         }
         #endif
-        if (shouldLogInformation || attachment != nil), let view = self.attachment {
+        if (options.contains(.useVerboseLogging) || attachment != nil), let view = self.attachment {
             let statementArray = [statement.sql, "Bindings: \(statement.bindings)"]
             let joins = self.references.sorted { "\($0.key)" < "\($1.key)" }.map { "\($0.key): \($0.value)" }
             nodes.append(.init(
@@ -744,7 +728,7 @@ extension SQLPredicateTranslator {
             log(.warning, "No metadata found for RHS relationship: \(description)")
             return nil
         }
-        if allowKeyPathVariantsForPropertyLookup == true {
+        if options.contains(.allowKeyPathVariantsForPropertyLookup) {
             rhsType.addKeyPathVariantToPropertyMetadata(fullKeyPath, for: rhsProperty)
         }
         if types[Schema.entityName(for: rhsType)] == nil {
@@ -992,7 +976,7 @@ extension SQLPredicateTranslator {
         var superclass: (any PersistentModel.Type)? = superclass
         while let currentSuperclass = superclass {
             if let property = currentSuperclass.databaseSchemaMetadata.first(where: { $0.name == propertyName }) {
-                if allowKeyPathVariantsForPropertyLookup {
+                if options.contains(.allowKeyPathVariantsForPropertyLookup) {
                     subclass.addKeyPathVariantToPropertyMetadata(keyPath, for: property)
                 }
                 let property = property.copy(keyPath: keyPath)
@@ -1077,7 +1061,7 @@ extension SQLPredicateTranslator {
             return
         }
         // Skip if no log level is specified and is below the minimum.
-        guard let logLevel, shouldLogInformation || logLevel >= minimumLogLevel else {
+        guard let logLevel, options.contains(.useVerboseLogging) || logLevel >= minimumLogLevel else {
             return
         }
         // Skip if a tag filter exists and the current tag is not in the allowed set.
@@ -1085,19 +1069,17 @@ extension SQLPredicateTranslator {
             return
         }
         let output = messages.map(String.init(describing:)).joined(separator: " ")
-        if shouldLogInformation || logLevel >= minimumLogLevel {
-            let tag = self.tag ?? "<nil>"
-            if options.contains(.preferStandardOutput) {
-                let position = "[Predicate #\(counter) @ lvl-\(level)]"
-                let context = "\(tag).\(function)"
-                print("\(logLevel) \(position) \(context) \(output)", "metadata: \(String(describing: metadata))")
-            } else {
-                var metadata = metadata ?? .init()
-                metadata["position"] = "predicate #\(counter) (level \(level))"
-                metadata["context"] = "\(tag).\(function)"
-                if !path.isEmpty { metadata["path"] = .array(path.map { "\($0)" }) }
-                logger.log(level: logLevel, "\(output)", metadata: metadata)
-            }
+        let tag = self.tag ?? "<nil>"
+        if options.contains(.preferStandardOutput) {
+            let position = "[Predicate #\(counter) @ lvl-\(level)]"
+            let context = "\(tag).\(function)"
+            print("\(logLevel) \(position) \(context) \(output)", "metadata: \(String(describing: metadata))")
+        } else {
+            var metadata = metadata ?? .init()
+            metadata["position"] = "predicate #\(counter) (level \(level))"
+            metadata["context"] = "\(tag).\(function)"
+            if !path.isEmpty { metadata["path"] = .array(path.map { "\($0)" }) }
+            logger.log(level: logLevel, "\(output)", metadata: metadata)
         }
     }
 }

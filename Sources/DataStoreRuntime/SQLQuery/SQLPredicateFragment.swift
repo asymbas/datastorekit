@@ -322,7 +322,7 @@ extension SQLPredicateFragment {
             \n
             \(headerLine)
             \(lines.joined(separator: "\n"))
-                [SQL CLAUSE] Bindings: \(bindings.map { "\($0)" }.joined(separator: ", "))
+                [SQL CLAUSE] Bindings: \(bindings.isEmpty ? "<empty>" : bindings.map { "\($0)" }.joined(separator: ", "))
                 \(clause)
             \(bottomLine)
             """

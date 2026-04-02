@@ -41,25 +41,15 @@ public struct PropertyMetadata: Equatable, Hashable, Sendable {
     
     package struct Flags: OptionSet {
         /// A flag to include this property's mapped column as part of the SQL's `SELECT` and result columns.
-        nonisolated package static var isSelected: Self {
-            .init(rawValue: 1 << 0)
-        }
+        nonisolated package static let isSelected: Self = .init(rawValue: 1 << 0)
         /// A flag to include this property's referencing table as part of SQL's `SELECT` and result columns.
-        nonisolated package static var prefetch: Self {
-            .init(rawValue: 1 << 1)
-        }
+        nonisolated package static let prefetch: Self = .init(rawValue: 1 << 1)
         
-        nonisolated package static var isExternal: Self {
-            .init(rawValue: 1 << 2)
-        }
+        nonisolated package static let isExternal: Self = .init(rawValue: 1 << 2)
         
-        nonisolated package static var isUnique: Self {
-            .init(rawValue: 1 << 3)
-        }
+        nonisolated package static let isUnique: Self = .init(rawValue: 1 << 3)
         
-        nonisolated package static var isOptional: Self {
-            .init(rawValue: 1 << 4)
-        }
+        nonisolated package static let isOptional: Self = .init(rawValue: 1 << 4)
         
         nonisolated package let rawValue: UInt8
         

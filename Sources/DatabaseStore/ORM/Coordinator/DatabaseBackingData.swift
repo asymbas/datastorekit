@@ -94,11 +94,7 @@ package final class DatabaseBackingData: Sendable {
         values: ContiguousArray<any DataStoreSnapshotValue>
     ) {
         self.registry = registry
-        self.recordIdentifier = .init(
-            for: storeIdentifier,
-            tableName: tableName, 
-            primaryKey: primaryKey
-        )
+        self.recordIdentifier = .init(for: storeIdentifier, tableName: tableName, primaryKey: primaryKey)
         self.values = .init(values)
         self.subscription = .init(nil)
     }

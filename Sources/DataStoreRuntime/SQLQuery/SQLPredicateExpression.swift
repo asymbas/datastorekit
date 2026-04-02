@@ -96,7 +96,7 @@ extension SQLPredicateExpression {
         #if DEBUG
         let pathStart = context.path.isEmpty ? "" : " (Path: \(debugVariableIDs(context.path.map { ("", $0) })))"
         context.log(.debug, "ENTERING as \(T.self).self...\(pathStart)")
-        if context.shouldLogInformation {
+        if context.options.contains(.useVerboseLogging) {
             context.node(atTerminal: false, in: type, title: label, content: [Self.fullTypeLabel])
         }
         context.counter += 1
@@ -118,7 +118,7 @@ extension SQLPredicateExpression {
         let pathEnd = context.path.isEmpty ?
         "" : " (Path: \(debugVariableIDs(context.path.map { ("", $0) })))"
         context.log(.debug, "EXITING as \(T.self).self...\(pathEnd) -> \(fragment.description)")
-        if context.shouldLogInformation {
+        if context.options.contains(.useVerboseLogging) {
             var outputTrace = [
                 fragment.clause,
                 {
