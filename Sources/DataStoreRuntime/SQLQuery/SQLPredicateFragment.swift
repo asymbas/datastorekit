@@ -337,7 +337,7 @@ extension SQLPredicateFragment {
     nonisolated internal static func invalid(_ messages: Any...) -> SQLPredicateFragment {
         let combined = messages.map(String.init(describing:)).joined(separator: ", ")
         logger.error("Fragment: \(combined)")
-        return .init(clause: "[" + String(describing: messages[0]) + "]", bindings: [])
+        return .init(clause: "[" + String(describing: messages[0]) + "]", bindings: [], id: "invalid")
     }
     
     nonisolated internal func invalid(_ messages: Any...) -> SQLPredicateFragment {

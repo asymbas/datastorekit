@@ -44,6 +44,8 @@ where T: PersistentModel & SendableMetatype {
     nonisolated internal var tags: Set<String>?
     /// A debug tag for the current PredicateExressions nested type.
     nonisolated internal var tag: String?
+    /// The last error set to this instance that may have occurred while translating.
+    nonisolated internal var error: Self.Error?
     /// Accumulated logs for each access of `PredicateExpressions` nested types.
     nonisolated internal var nodes: [PredicateTree.Node] = []
     /// Cached `KeyPath` instances for loaded variables.
@@ -272,6 +274,9 @@ where T: PersistentModel & SendableMetatype {
                 await MainActor.run { view.resolveTranslation(translation) }
             }
         }
+        if let error = self.error {
+            throw error
+        }
         return .init(
             hash: combinedHash,
             statement: statement,
@@ -292,6 +297,10 @@ where T: PersistentModel & SendableMetatype {
             sql.replaceSubrange(range, with: literal)
         }
         return sql
+    }
+    
+    nonisolated enum Error: Swift.Error {
+        case invalidTranslation(String)
     }
 }
 
@@ -694,6 +703,9 @@ extension SQLPredicateTranslator {
             return property
         }
         log(.warning, "Traversed entire path but found no terminal value: \(keyPath)")
+        if options.contains(.failOnInvalidTranslations) {
+            throw Self.Error.invalidTranslation("\(keyPath)")
+        }
         return nil
     }
     

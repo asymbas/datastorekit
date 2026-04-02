@@ -139,6 +139,9 @@ extension SQLPredicateExpression {
             }
             context.node(atTerminal: true, in: type, title: label, content: outputTrace)
         }
+        if context.options.contains(.failOnInvalidTranslations), fragment.id == "invalid" {
+            context.error = .invalidTranslation(label)
+        }
         #endif
         return fragment
     }
