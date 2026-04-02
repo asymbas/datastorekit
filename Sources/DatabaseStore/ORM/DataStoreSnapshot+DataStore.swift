@@ -96,11 +96,7 @@ extension DatabaseSnapshot {
         let resolvedEntity: Schema.Entity
         let inheritedValues: [String: any DataStoreSnapshotValue]
         do {
-            resolvedEntity = try Self.fetchInheritanceEntity(
-                for: persistentIdentifier,
-                on: entity,
-                connection: connection
-            )
+            resolvedEntity = try Self.fetchInheritanceEntity(for: persistentIdentifier, on: entity, connection: connection)
             if entity.superentity != nil || !entity.subentities.isEmpty {
                 inheritedValues = try Self.fetchInheritanceDependencies(
                     for: persistentIdentifier,
@@ -121,6 +117,31 @@ extension DatabaseSnapshot {
         if let relatedSnapshot = relatedSnapshots[persistentIdentifier] {
             logger.trace("\(resolvedEntity.name) snapshot found in related snapshots: \(primaryKey)")
             self = consume relatedSnapshot
+            let columnsToSkip = self.properties.count
+            let nextEntityOffset = values.startIndex + 1 + columnsToSkip
+            let propertiesOffset = properties.startIndex + 1 + columnsToSkip
+            logger.trace("Jumping \(columnsToSkip) columns to next discriminator offset \(nextEntityOffset)")
+            if nextEntityOffset < values.endIndex,
+               propertiesOffset < properties.endIndex,
+               values[nextEntityOffset] is SQLNull == false,
+               values[nextEntityOffset] as? String != nil {
+                do {
+                    let relatedSnapshot = try Self(
+                        storeIdentifier: storeIdentifier,
+                        configuration: configuration,
+                        queue: queue,
+                        registry: registry,
+                        properties: properties[propertiesOffset...],
+                        values: values[nextEntityOffset...],
+                        relatedSnapshots: &relatedSnapshots
+                    )
+                    logger.debug("Created a related snapshot for \(resolvedEntity.name): \(primaryKey) (jump)")
+                    relatedSnapshots[relatedSnapshot.persistentIdentifier] = consume relatedSnapshot
+                } catch ModelMappingError.discriminatorKeyNotFound {
+                } catch {
+                    throw error
+                }
+            }
             return
         }
         try self.init(
