@@ -122,6 +122,34 @@ package final class DatabaseBackingData: Sendable {
         logger.debug("DatabaseBackingData deinit: \(recordIdentifier)")
     }
     
+    package func compareField(_ rhs: any Sendable, at index: Int) -> Bool {
+        let lhs = self.values.withLock { values in
+            values[index]
+        }
+        guard let lhs = lhs as? any Equatable else {
+            logger.error("LHS value at index \(index) is not Equatable.", metadata: [
+                "lhs": "\(lhs)",
+                "lhs type": "\(type(of: lhs))",
+                "rhs": "\(rhs)",
+                "rhs type": "\(type(of: rhs))"
+            ])
+            return false
+        }
+        func open<T: Equatable>(_ lhs: T) -> Bool {
+            guard let rhs = rhs as? T else {
+                logger.error("RHS value at index \(index) is not Equatable.", metadata: [
+                    "lhs": "\(lhs)",
+                    "lhs type": "\(type(of: lhs))",
+                    "rhs": "\(rhs)",
+                    "rhs type": "\(type(of: rhs))"
+                ])
+                return false
+            }
+            return lhs == rhs
+        }
+        return open(lhs)
+    }
+    
     package final class Export: Sendable {
         nonisolated package let columns: [String]
         nonisolated package let values: [any Sendable]

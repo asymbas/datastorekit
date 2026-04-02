@@ -38,6 +38,7 @@ public final class SnapshotRegistry: ObjectContextProtocol {
     nonisolated public let id: EditingState.ID
     nonisolated private let key: Int
     nonisolated private let storage: Mutex<[PersistentIdentifier: DatabaseBackingData]> = .init([:])
+    nonisolated private let entityIndex: Mutex<[String: Set<PersistentIdentifier>]> = .init([:])
     nonisolated private let trackedIdentifiers: Mutex<Set<PersistentIdentifier>> = .init([])
     nonisolated private let pendingIdentifiers: Mutex<Set<PersistentIdentifier>> = .init([])
     nonisolated private let invalidatingIdentifiers: Mutex<Set<PersistentIdentifier>> = .init([])
@@ -89,8 +90,7 @@ public final class SnapshotRegistry: ObjectContextProtocol {
 }
 
 extension SnapshotRegistry {
-    nonisolated private func backingData(for persistentIdentifier: PersistentIdentifier)
-    -> DatabaseBackingData? {
+    nonisolated private func backingData(for persistentIdentifier: PersistentIdentifier) -> DatabaseBackingData? {
         if independentlyManaged {
             storage.withLock { $0[persistentIdentifier] }
         } else {
@@ -134,6 +134,35 @@ extension SnapshotRegistry {
         as type: PrimaryKey.Type = String.self
     ) -> PrimaryKey {
         manager.primaryKey(for: persistentIdentifier, as: type)
+    }
+}
+
+extension SnapshotRegistry {
+    package func step(from entityName: String, predicate: @escaping (DatabaseBackingData) -> Bool) -> [Snapshot] {
+        let candidates: [(PersistentIdentifier, DatabaseBackingData)]
+        if independentlyManaged {
+            let identifiers = entityIndex.withLock { $0[entityName] ?? [] }
+            candidates = storage.withLock { storage in
+                var result = [(PersistentIdentifier, DatabaseBackingData)]()
+                result.reserveCapacity(identifiers.count)
+                for identifier in identifiers {
+                    if let backingData = storage[identifier] {
+                        result.append((identifier, backingData))
+                    }
+                }
+                return result
+            }
+        } else {
+            candidates = self.manager.backingData(from: entityName)
+        }
+        var result = [Snapshot]()
+        result.reserveCapacity(candidates.count)
+        for (_, backingData) in candidates where predicate(backingData) {
+            if let snapshot = try? Snapshot(backingData: backingData) {
+                result.append(snapshot)
+            }
+        }
+        return result
     }
 }
 
@@ -218,6 +247,7 @@ extension SnapshotRegistry {
             let count = trackedIdentifiers.count
             check: if independentlyManaged {
                 let removedBacking = self.storage.withLock { $0.removeValue(forKey: persistentIdentifier) }
+                _ = entityIndex.withLock { $0[persistentIdentifier.entityName]?.remove(persistentIdentifier) }
                 if removedIdentifier != nil && removedBacking == nil {
                     logger.error("Tracked removal without backing data: \(id) \(persistentIdentifier)")
                 }
@@ -280,6 +310,7 @@ extension SnapshotRegistry {
         try manager.initialize(for: persistentIdentifier, from: self.id)
         if independentlyManaged, let backingData {
             storage.withLock { $0[snapshot.persistentIdentifier] = backingData }
+            _ = entityIndex.withLock { $0[snapshot.entityName, default: []].insert(snapshot.persistentIdentifier) }
         }
         return backingData
     }

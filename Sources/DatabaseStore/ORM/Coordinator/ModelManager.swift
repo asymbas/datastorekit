@@ -60,6 +60,16 @@ public final class ModelManager: Sendable {
 }
 
 extension ModelManager {
+    nonisolated internal func backingData(from entityName: String) -> [(PersistentIdentifier, DatabaseBackingData)] {
+        storage.withLock { storage in
+            var result = [(PersistentIdentifier, DatabaseBackingData)]()
+            for (identifier, backingData) in storage where identifier.entityName == entityName {
+                result.append((identifier, backingData))
+            }
+            return result
+        }
+    }
+    
     nonisolated internal func registry<T>(for editingState: T, isTransaction: Bool) -> SnapshotRegistry?
     where T: EditingStateProviding {
         guard isCachingSnapshots else {
@@ -201,10 +211,7 @@ extension ModelManager {
         return snapshots
     }
     
-    nonisolated internal func upsert(
-        snapshot: Snapshot,
-        from registry: SnapshotRegistry
-    ) throws -> DatabaseBackingData? {
+    nonisolated internal func upsert(snapshot: Snapshot, from registry: SnapshotRegistry) throws -> DatabaseBackingData? {
         let persistentIdentifier = snapshot.persistentIdentifier
         let backingData: DatabaseBackingData
         switch storage.withLock({ $0 [persistentIdentifier] }) {
@@ -218,11 +225,7 @@ extension ModelManager {
             logger.debug("Updated existing cached snapshot: \(persistentIdentifier)")
             backingData = existingSnapshot
         default:
-            backingData = .init(
-                registry: registry,
-                persistentIdentifier: persistentIdentifier,
-                values: snapshot.values
-            )
+            backingData = .init(registry: registry, persistentIdentifier: persistentIdentifier, values: snapshot.values)
             storage.withLock { storage in
                 storage[persistentIdentifier] = backingData
                 logger.debug("Cached new snapshot: \(persistentIdentifier)")
