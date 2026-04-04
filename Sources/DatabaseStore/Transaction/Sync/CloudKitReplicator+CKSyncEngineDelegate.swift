@@ -303,7 +303,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
     async -> CKSyncEngine.RecordZoneChangeBatch? {
         let scope = context.options.scope
         let changes = syncEngine.state.pendingRecordZoneChanges.filter { scope.contains($0) }
-        logger.trace("Creating record zone change batch.", metadata: [
+        logger.debug("Creating record zone change batch.", metadata: [
             "pending_total": "\(syncEngine.state.pendingRecordZoneChanges.count)",
             "filtered_count": "\(changes.count)",
             "scope": "\(scope)"
