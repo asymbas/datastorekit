@@ -28,6 +28,7 @@ public final class ModelManager: Sendable {
     nonisolated internal let registries: Mutex<[EditingState.ID: SnapshotRegistry]> = .init([:])
     nonisolated internal let configuration: DatabaseConfiguration
     nonisolated internal let broadcaster: EventBroadcaster = .init()
+    nonisolated package let inheritance: InheritanceResolver = .init()
     nonisolated public let graph: ReferenceGraph = .init()
     
     nonisolated internal var store: DatabaseStore? {
@@ -213,6 +214,10 @@ extension ModelManager {
     
     nonisolated internal func upsert(snapshot: Snapshot, from registry: SnapshotRegistry) throws -> DatabaseBackingData? {
         let persistentIdentifier = snapshot.persistentIdentifier
+        guard !snapshot.isPartial else {
+            logger.debug("Skipping cache for partial snapshot: \(persistentIdentifier)")
+            return nil
+        }
         let backingData: DatabaseBackingData
         switch storage.withLock({ $0 [persistentIdentifier] }) {
         case let existingSnapshot? where existingSnapshot.createdTimestamp < snapshot.timestamp:
@@ -293,6 +298,7 @@ extension ModelManager {
     nonisolated private func cleanup(persistentIdentifier: PersistentIdentifier) {
         graph.removeAll(for: persistentIdentifier)
         graph.removeIncomingEdges(to: persistentIdentifier)
+        inheritance.remove(primaryKey: primaryKey(for: persistentIdentifier))
         storage.withLock { storage in
             if let backingData = storage.removeValue(forKey: persistentIdentifier) {
                 backingData.stopListening()
@@ -309,6 +315,18 @@ extension ModelManager {
 }
 
 extension ModelManager {
+    nonisolated internal func entityName(for primaryKey: String) -> String? {
+        inheritance.entityName(for: primaryKey)
+    }
+    
+    nonisolated internal func entityName(for persistentIdentifier: PersistentIdentifier) -> String? {
+        inheritance.entityName(for: primaryKey(for: persistentIdentifier))
+    }
+    
+    nonisolated internal func setEntityName(_ resolvedEntityName: String, for primaryKey: String) {
+        inheritance.set(resolvedEntityName: resolvedEntityName, primaryKey: primaryKey)
+    }
+    
     /// Returns the primary key from the model's backing data.
     ///
     /// - Parameter persistentIdentifier: The identifier assigned to the model's backing data.

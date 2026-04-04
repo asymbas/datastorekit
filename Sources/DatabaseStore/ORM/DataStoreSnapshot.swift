@@ -73,6 +73,10 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
         !flags.contains(.isOriginal)
     }
     
+    nonisolated public var isPartial: Bool {
+        flags.contains(.isPartial)
+    }
+    
     /// The `PersistentModel` type associated to this entity.
     nonisolated public var type: any (PersistentModel & SendableMetatype).Type
     
@@ -80,6 +84,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
         typealias RawValue = UInt16
         nonisolated internal let rawValue: RawValue
         nonisolated static let isOriginal: Self = .init(rawValue: 1 << 0)
+        nonisolated static let isPartial: Self = .init(rawValue: 1 << 1)
     }
     
     nonisolated private init<PrimaryKey: LosslessStringConvertible>(
@@ -87,7 +92,8 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
         primaryKey: PrimaryKey,
         type: (any (PersistentModel & SendableMetatype).Type)?,
         properties: ContiguousArray<PropertyMetadata>,
-        values: ContiguousArray<any DataStoreSnapshotValue>
+        values: ContiguousArray<any DataStoreSnapshotValue>,
+        flags: Flags = []
     ) {
         let entityName = persistentIdentifier.entityName
         guard let type = type ?? Schema.type(for: entityName) else {
@@ -98,6 +104,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
         self.primaryKey = primaryKey.description
         self.properties = !properties.isEmpty ? properties : .init(type.databaseSchemaMetadata)
         self.values = !values.isEmpty ? values : .init(repeating: SQLNull(), count: self.properties.count)
+        self.flags = flags
 //        assert(
 //            self.properties.count == self.values.count,
 //            "Property and value counts do not match: \(self.properties.count) != \(self.values.count)"
@@ -862,9 +869,11 @@ extension DatabaseSnapshot {
         #endif
         return .init(
             persistentIdentifier: persistentIdentifier,
+            primaryKey: primaryKey,
             type: type,
             properties: properties,
-            values: values
+            values: values,
+            flags: flags
         )
     }
     
@@ -930,7 +939,7 @@ extension DatabaseSnapshot {
             }
         }
         if !superProperties.isEmpty {
-            let newSnapshot = Self(
+            var newSnapshot = Self(
                 persistentIdentifier: try PersistentIdentifier.identifier(
                     for: persistentIdentifier.storeIdentifier.unsafelyUnwrapped,
                     entityName: entity.name,
@@ -939,6 +948,7 @@ extension DatabaseSnapshot {
                 type: superType,
                 values: superValues
             )
+            newSnapshot.flags.insert(.isPartial)
             inheritedTraversalSnapshots.append(newSnapshot)
             logger.debug(
                 """
@@ -949,7 +959,11 @@ extension DatabaseSnapshot {
             )
         }
         if let superentity = entity.superentity {
-            try recursiveExportChain(on: superentity, indices: indices, inheritedTraversalSnapshots: &inheritedTraversalSnapshots)
+            try recursiveExportChain(
+                on: superentity,
+                indices: indices,
+                inheritedTraversalSnapshots: &inheritedTraversalSnapshots
+            )
         }
     }
     

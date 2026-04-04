@@ -183,7 +183,7 @@ extension DatabaseQueue {
             }
         }
         logger.trace("DatabaseConnection acquired: \(handle.id)")
-        return .init(for: editingState, queue: self, handle: handle, context: context)
+        return .init(for: editingState, storeIdentifier: attachment!.storeIdentifier, queue: self, handle: handle, context: context)
     }
     
     /// Requests a connection for a specific data store role.

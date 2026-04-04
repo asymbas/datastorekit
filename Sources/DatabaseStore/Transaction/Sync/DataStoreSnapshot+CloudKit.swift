@@ -84,7 +84,7 @@ extension DatabaseSnapshot {
                     logger.warning("Unresolved to-one relationship dependency: \(property) = \(recordName)")
                     continue
                 }
-                try setValue(relationship, resolvedPrimaryKey, at: property.index, storeIdentifier: storeIdentifier)
+                try setValue(relationship, resolvedPrimaryKey, at: property.index)
             case let relationship as Schema.Relationship:
                 if let existingSnapshot {
                     self.values[property.index] = existingSnapshot.values[property.index]

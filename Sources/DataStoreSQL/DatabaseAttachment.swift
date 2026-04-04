@@ -13,6 +13,7 @@ import SwiftData
 
 public protocol DatabaseAttachment: AnyObject & Sendable {
     associatedtype ObjectContext: ObjectContextProtocol
+    nonisolated var storeIdentifier: String { get }
     nonisolated func makeObjectContext(editingState: some EditingStateProviding) -> ObjectContext?
 }
 

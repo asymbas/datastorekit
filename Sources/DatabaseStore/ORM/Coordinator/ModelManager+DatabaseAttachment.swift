@@ -16,6 +16,10 @@ import SwiftData
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.transaction")
 
 extension ModelManager: DatabaseAttachment {
+    public var storeIdentifier: String {
+        configuration.store!.identifier
+    }
+    
     public typealias ObjectContext = SnapshotRegistry
     
     nonisolated public func makeObjectContext(editingState: some EditingStateProviding) -> ObjectContext? {

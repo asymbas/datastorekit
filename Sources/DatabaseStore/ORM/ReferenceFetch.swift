@@ -456,6 +456,45 @@ nonisolated package func fetchExternalReferenceKeysBatched(
 nonisolated package func resolveConcreteEntityName(
     for primaryKey: String,
     destination: String,
+    manager: ModelManager? = nil
+) -> String {
+    manager?.entityName(for: primaryKey) ?? destination
+}
+
+nonisolated package func resolveConcreteEntityName(
+    for primaryKey: String,
+    destination: String,
+    storeIdentifier: String,
+    schema: Schema,
+    connection: borrowing DatabaseConnection<DatabaseStore>,
+    manager: ModelManager? = nil
+) throws -> String {
+    if let resolved = manager?.entityName(for: primaryKey) {
+        return resolved
+    }
+    guard let destinationEntity = schema.entitiesByName[destination] else {
+        throw SchemaError.relationshipTargetEntityNotRegistered
+    }
+    guard !destinationEntity.subentities.isEmpty else {
+        return destination
+    }
+    let temporaryIdentifier = try PersistentIdentifier.identifier(
+        for: storeIdentifier,
+        entityName: destination,
+        primaryKey: primaryKey
+    )
+    let resolved = try fetchInheritanceEntity(
+        for: temporaryIdentifier,
+        on: destinationEntity,
+        connection: connection
+    ).name
+    manager?.setEntityName(resolved, for: primaryKey)
+    return resolved
+}
+
+nonisolated package func resolveConcreteEntityName(
+    for primaryKey: String,
+    destination: String,
     storeIdentifier: String,
     schema: Schema,
     connection: borrowing DatabaseConnection<DatabaseStore>

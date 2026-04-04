@@ -42,18 +42,23 @@ extension DatabaseConnection where Store == DatabaseStore {
         var properties = [PropertyMetadata.discriminator(for: Result.self)]
         + (propertiesCollected.isEmpty ? Result.databaseSchemaMetadata : propertiesCollected)
         for index in properties.indices {
-            properties[index].isSelected = (properties[index].column != nil)
+            let property = properties[index]
+            let hasColumn = property.column != nil
+            let isInheritedColumn = hasColumn && property.reference != nil && property.flags.contains(.isInherited)
+            properties[index].isSelected = hasColumn && !isInheritedColumn
         }
         let columns = properties
-            .compactMap { $0.column == nil ? nil : quote($0.column!) }
+            .filter(\.isSelected)
+            .compactMap(\.column)
+            .map { quote($0) }
             .joined(separator: ", ")
         let result = try fetch(
-            """
-            SELECT \(columns) 
-            FROM "\(entityName)"
-            \(sql.joined(separator: "\n"))
-            """,
-            bindings: bindings
+              """
+              SELECT \(columns) 
+              FROM "\(entityName)"
+              \(sql.joined(separator: "\n"))
+              """,
+              bindings: bindings
         )
         var relatedSnapshots = [PersistentIdentifier: DatabaseSnapshot]()
         return try result.map { row in

@@ -505,9 +505,7 @@ public final class DatabaseStore: DataStore, Sendable {
             }
             let shouldIncludeCachedRelatedSnapshots =
             property.flags.contains(.prefetch) || allowImplicitCachedRelatedSnapshots
-            if shouldIncludeCachedRelatedSnapshots,
-               let registry,
-               !targetsByOwner.isEmpty {
+            if shouldIncludeCachedRelatedSnapshots, let registry, !targetsByOwner.isEmpty {
                 var referencedIdentifiers = Set<PersistentIdentifier>()
                 referencedIdentifiers.reserveCapacity(targetsByOwner.count)
                 for (_, relatedIdentifiers) in targetsByOwner {
@@ -516,10 +514,7 @@ public final class DatabaseStore: DataStore, Sendable {
                 if !referencedIdentifiers.isEmpty {
                     let cached = registry.snapshots(for: Array(referencedIdentifiers))
                     if !cached.isEmpty {
-                        prefetchedRelatedSnapshots.merge(
-                            cached,
-                            uniquingKeysWith: { existing, _ in existing }
-                        )
+                        prefetchedRelatedSnapshots.merge(cached, uniquingKeysWith: { existing, _ in existing })
                     }
                 }
             }
@@ -559,7 +554,32 @@ public final class DatabaseStore: DataStore, Sendable {
                     guard ownerIndexByPrimaryKey[ownerPrimaryKey] != nil else {
                         continue
                     }
-                    for row in destinationRows {
+//                    for row in destinationRows {
+//                        var sink = [PersistentIdentifier: Snapshot]()
+//                        let snapshot = try Snapshot(
+//                            store: self,
+//                            registry: registry,
+//                            properties: destinationProperties[...],
+//                            values: row[...],
+//                            relatedSnapshots: &sink
+//                        )
+//                        prefetchedRelatedSnapshots[snapshot.persistentIdentifier] = snapshot
+//                        prefetchedRelatedSnapshots.merge(sink, uniquingKeysWith: { $1 })
+//                    }
+                    let relatedIdentifiers = try destinationRows.compactMap { row in
+                        try (row.first as? String).flatMap { destinationPrimaryKey in
+                            try PersistentIdentifier.identifier(
+                                for: self.identifier,
+                                entityName: relationship.destination,
+                                primaryKey: destinationPrimaryKey
+                            )
+                        }
+                    }
+                    for (index, row) in destinationRows.enumerated() {
+                        let relatedIdentifier = relatedIdentifiers[index]
+                        if prefetchedRelatedSnapshots[relatedIdentifier] != nil {
+                            continue
+                        }
                         var sink = [PersistentIdentifier: Snapshot]()
                         let snapshot = try Snapshot(
                             store: self,
@@ -568,10 +588,7 @@ public final class DatabaseStore: DataStore, Sendable {
                             values: row[...],
                             relatedSnapshots: &sink
                         )
-                        if prefetchedRelatedSnapshots[snapshot.persistentIdentifier] != nil {
-                            continue
-                        }
-                        prefetchedRelatedSnapshots[snapshot.persistentIdentifier] = snapshot
+                        prefetchedRelatedSnapshots[relatedIdentifier] = snapshot
                         prefetchedRelatedSnapshots.merge(sink, uniquingKeysWith: { $1 })
                     }
                 }
@@ -681,15 +698,12 @@ public final class DatabaseStore: DataStore, Sendable {
                                         remappedIdentifiers: remappedIdentifiers
                                     )
                                     export = snapshot.export
-                                    logger.debug(
-                                        "Breaking dependency cycle for to-one relationship.",
-                                        metadata: [
-                                            "destination_entity": "\(destination.name)",
-                                            "inverse_relationship": "\(inverseRelationship.name)",
-                                            "old_identifier": "\(relatedIdentifier)",
-                                            "new_identifier": "\(resolvedRelatedIdentifier)"
-                                        ]
-                                    )
+                                    logger.debug("Breaking dependency cycle for to-one relationship.", metadata: [
+                                        "destination_entity": "\(destination.name)",
+                                        "inverse_relationship": "\(inverseRelationship.name)",
+                                        "old_identifier": "\(relatedIdentifier)",
+                                        "new_identifier": "\(resolvedRelatedIdentifier)"
+                                    ])
                                     if snapshots[resolvedRelatedIdentifier] == nil {
                                         throw Snapshot.Error.referencesInvalidPersistentIdentifier
                                     }

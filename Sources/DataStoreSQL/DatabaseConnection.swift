@@ -22,6 +22,7 @@ public struct DatabaseConnection<Store>: ~Copyable, Sendable where Store: Databa
     nonisolated package weak var queue: DatabaseQueue<Store>?
     nonisolated package let handle: Store.Handle
     nonisolated package let context: Store.Context?
+    nonisolated package let storeIdentifier: String
     nonisolated package var externalDependencies: [PersistentIdentifier: [Int]] = [:]
     nonisolated package var snapshots: [PersistentIdentifier: Store.Snapshot] = [:]
     nonisolated package var remappedIdentifiers: [PersistentIdentifier: PersistentIdentifier] = [:]
@@ -46,12 +47,14 @@ public struct DatabaseConnection<Store>: ~Copyable, Sendable where Store: Databa
     
     nonisolated package init(
         for editingState: (any EditingStateProviding)? = nil,
+        storeIdentifier: String,
         queue: DatabaseQueue<Store>? = nil,
         handle: Store.Handle,
         context: Store.Context? = nil,
         transaction: Store.Transaction? = nil
     ) {
         self.editingState = editingState
+        self.storeIdentifier = storeIdentifier
         self.queue = queue
         self.handle = handle
         self.context = context
@@ -61,6 +64,7 @@ public struct DatabaseConnection<Store>: ~Copyable, Sendable where Store: Databa
     
     nonisolated internal init(connection: consuming Self) {
         self.editingState = connection.editingState
+        self.storeIdentifier = connection.storeIdentifier
         self.queue = connection.queue
         self.handle = connection.handle
         self.context = connection.context

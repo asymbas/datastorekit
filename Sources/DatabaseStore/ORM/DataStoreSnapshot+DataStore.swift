@@ -58,6 +58,7 @@ extension DatabaseSnapshot {
             configuration: store.configuration,
             queue: store.queue,
             registry: registry,
+            schema: store.schema,
             properties: properties,
             values: values,
             relatedSnapshots: &relatedSnapshots
@@ -69,10 +70,14 @@ extension DatabaseSnapshot {
         configuration: DatabaseConfiguration,
         queue: DatabaseQueue<Store>,
         registry: SnapshotRegistry? = nil,
+        schema: Schema? = nil,
         properties: consuming ArraySlice<PropertyMetadata>,
         values: consuming ArraySlice<any Sendable>,
         relatedSnapshots: inout [PersistentIdentifier: Self]
     ) throws {
+        guard let schema = schema ?? configuration.schema else {
+            preconditionFailure()
+        }
         guard let discriminator = properties.first else {
             throw Self.Error.insufficientProperties
         }
@@ -82,7 +87,7 @@ extension DatabaseSnapshot {
         guard let type = discriminator.valueType as? any PersistentModel.Type else {
             throw ModelMappingError.discriminatorKeyNotFound
         }
-        guard let value = discriminator.defaultValue ?? configuration.schema?.entity(for: type),
+        guard let value = discriminator.defaultValue ?? schema.entity(for: type),
               let entity = value as? Schema.Entity else {
             throw SchemaError.entityNotRegistered
         }
@@ -96,7 +101,11 @@ extension DatabaseSnapshot {
         let resolvedEntity: Schema.Entity
         let inheritedValues: [String: any DataStoreSnapshotValue]
         do {
-            resolvedEntity = try fetchInheritanceEntity(for: persistentIdentifier, on: entity, connection: connection)
+            resolvedEntity = try fetchInheritanceEntity(
+                for: persistentIdentifier,
+                on: entity,
+                connection: connection
+            )
             if entity.superentity != nil || !entity.subentities.isEmpty {
                 inheritedValues = try Self.fetchInheritanceDependencies(
                     for: persistentIdentifier,
@@ -127,7 +136,6 @@ extension DatabaseSnapshot {
                     relatedSnapshots: &relatedSnapshots
                 )
             } catch {
-                queue.release(consume connection)
                 throw error
             }
         }
@@ -243,43 +251,24 @@ extension DatabaseSnapshot {
                     throw error
                 }
             }
-//            try setValue(
-//                values[offset],
-//                at: property,
-//                storeIdentifier: storeIdentifier,
-//                externalStorageURL: configuration.externalStorageURL
-//            )
-//            values.formIndex(after: &cursor)
             if let relationship = property.metadata as? Schema.Relationship,
                relationship.isToOneRelationship,
                let foreignKey = values[offset] as? String,
-               let schema = configuration.schema,
                let destinationEntity = schema.entitiesByName[relationship.destination],
                !destinationEntity.subentities.isEmpty {
-                let resolveConnection = try queue.request(.reader)
-                let concreteEntityName = try resolveConcreteEntityName(
-                    for: foreignKey,
-                    destination: relationship.destination,
-                    storeIdentifier: storeIdentifier,
-                    schema: schema,
-                    connection: resolveConnection
-                )
-                queue.release(consume resolveConnection)
                 try setValue(
                     try PersistentIdentifier.identifier(
                         for: storeIdentifier,
-                        entityName: concreteEntityName,
+                        entityName: registry?.entityName(for: foreignKey) ?? relationship.destination,
                         primaryKey: foreignKey
                     ),
                     at: property,
-                    storeIdentifier: storeIdentifier,
                     externalStorageURL: configuration.externalStorageURL
                 )
             } else {
                 try setValue(
                     values[offset],
                     at: property,
-                    storeIdentifier: storeIdentifier,
                     externalStorageURL: configuration.externalStorageURL
                 )
             }
@@ -410,7 +399,7 @@ extension DatabaseSnapshot {
             case let attribute as Schema.Attribute:
                 try copy.setValue(attribute, row[index], at: index, externalStorageURL: externalStorageURL)
             case let relationship as Schema.Relationship where relationship.isToOneRelationship:
-                try copy.setValue(relationship, row[index], at: index, storeIdentifier: storeIdentifier.unsafelyUnwrapped)
+                try copy.setValue(relationship, row[index], at: index)
             default:
                 continue
             }
@@ -429,7 +418,7 @@ extension DatabaseSnapshot {
             try setValue(attribute, value, at: property.index, externalStorageURL: externalStorageURL)
         case let relationship as Schema.Relationship:
             let storeIdentifier = store.identifier
-            try setValue(relationship, value, at: property.index, storeIdentifier: storeIdentifier)
+            try setValue(relationship, value, at: property.index)
         default:
             preconditionFailure("Property is not an attribute or a relationship: \(Swift.type(of: property.metadata))")
         }
@@ -438,14 +427,13 @@ extension DatabaseSnapshot {
     nonisolated private mutating func setValue(
         _ value: any Sendable,
         at property: PropertyMetadata,
-        storeIdentifier: String,
         externalStorageURL: URL
     ) throws {
         switch property.metadata {
         case let attribute as Schema.Attribute:
             try setValue(attribute, value, at: property.index, externalStorageURL: externalStorageURL)
         case let relationship as Schema.Relationship:
-            try setValue(relationship, value, at: property.index, storeIdentifier: storeIdentifier)
+            try setValue(relationship, value, at: property.index)
         default:
             preconditionFailure("Property is not an attribute or a relationship: \(Swift.type(of: property.metadata))")
         }
@@ -506,10 +494,16 @@ extension DatabaseSnapshot {
     nonisolated internal mutating func setValue(
         _ relationship: Schema.Relationship,
         _ value: any Sendable,
-        at index: Int,
-        storeIdentifier: String
+        at index: Int
     ) throws {
         let description = "\(entityName).\(relationship.name) as \(relationship.valueType).self"
+        #if DEBUG
+        guard let storeIdentifier = self.storeIdentifier else {
+            preconditionFailure()
+        }
+        #else
+        let storeIdentifier = self.storeIdentifier.unsafelyUnwrapped
+        #endif
         if relationship.isToOneRelationship {
             switch value {
             case let relatedPersistentIdentifier as PersistentIdentifier:

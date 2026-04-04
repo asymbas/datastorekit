@@ -139,6 +139,18 @@ extension SnapshotRegistry {
     ) -> PrimaryKey {
         manager.primaryKey(for: persistentIdentifier, as: type)
     }
+    
+    nonisolated package func entityName(for persistentIdentifier: PersistentIdentifier) -> String? {
+        manager.entityName(for: persistentIdentifier)
+    }
+    
+    nonisolated internal func entityName(for primaryKey: String) -> String? {
+        manager.entityName(for: primaryKey)
+    }
+    
+    nonisolated internal func setEntityName(_ resolvedEntityName: String, for primaryKey: String) {
+        manager.setEntityName(resolvedEntityName, for: primaryKey)
+    }
 }
 
 extension SnapshotRegistry {
@@ -368,7 +380,7 @@ extension SnapshotRegistry {
                             defer { request.subtract(1, ordering: .sequentiallyConsistent) }
                             _ = group.addTaskUnlessCancelled { [weak self] in
                                 guard let self else { return }
-                                for (_, snapshot) in snapshots where !snapshot.isTemporary {
+                                for (_, snapshot) in snapshots where !snapshot.isTemporary && !snapshot.isPartial {
                                     _ = try register(snapshot: snapshot)
                                 }
                             }
