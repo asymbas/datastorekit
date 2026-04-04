@@ -148,7 +148,7 @@ extension DatabaseSnapshot {
             primaryKey: primaryKey,
             storeIdentifier: storeIdentifier,
             type: resolvedType,
-            entityName: resolvedEntity.name,
+            entityName: entity.name,
             properties: .init(resolvedType.databaseSchemaMetadata)
         )
         if !inheritedValues.isEmpty {
