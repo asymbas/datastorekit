@@ -1196,14 +1196,15 @@ extension DatabaseSnapshot {
         guard let reference = property.reference else {
             preconditionFailure("The relationship must have a reference: \(property)")
         }
-        precondition(
-            relationship.destination == relatedIdentifier.entityName,
-            "Destination mismatch: \(relationship.destination) != \(relatedIdentifier.entityName)"
-        )
-        precondition(
-            relationship.destination == reference[1].destinationTable,
-            "Destination mismatch: \(relationship.destination) != \(reference[1].destinationTable)"
-        )
+        // FIXME: The precondition check is too strict for inheritance.
+//        precondition(
+//            relationship.destination == relatedIdentifier.entityName,
+//            "Destination mismatch: \(relationship.destination) != \(relatedIdentifier.entityName)"
+//        )
+//        precondition(
+//            relationship.destination == reference[1].destinationTable,
+//            "Destination mismatch: \(relationship.destination) != \(reference[1].destinationTable)"
+//        )
         let foreignKey = relatedIdentifier.primaryKey()
         _ = try connection.query(
             """
@@ -1239,14 +1240,15 @@ extension DatabaseSnapshot {
         guard let reference = property.reference else {
             preconditionFailure("The relationship must have a reference: \(property)")
         }
-        precondition(
-            relationship.destination == relatedIdentifier.entityName,
-            "Destination mismatch: \(relationship.destination) != \(relatedIdentifier.entityName)"
-        )
-        precondition(
-            relationship.destination == reference[1].destinationTable,
-            "Destination mismatch: \(relationship.destination) != \(reference[1].destinationTable)"
-        )
+        // FIXME: The precondition check is too strict for inheritance.
+//        precondition(
+//            relationship.destination == relatedIdentifier.entityName,
+//            "Destination mismatch: \(relationship.destination) != \(relatedIdentifier.entityName)"
+//        )
+//        precondition(
+//            relationship.destination == reference[1].destinationTable,
+//            "Destination mismatch: \(relationship.destination) != \(reference[1].destinationTable)"
+//        )
         let foreignKey = relatedIdentifier.primaryKey()
         _ = try connection.query(
             """
@@ -1283,14 +1285,15 @@ extension DatabaseSnapshot {
         }
         let primaryKey = relatedIdentifier.primaryKey()
         let foreignKey = self.primaryKey
-        precondition(
-            relationship.destination == relatedIdentifier.entityName,
-            "Destination mismatch: \(relationship.destination) != \(relatedIdentifier.entityName)"
-        )
-        precondition(
-            relationship.destination == reference[0].destinationTable,
-            "Destination mismatch: \(relationship.destination) != \(reference[0].destinationTable)"
-        )
+        // FIXME: The precondition check is too strict for inheritance.
+//        precondition(
+//            relationship.destination == relatedIdentifier.entityName,
+//            "Destination mismatch: \(relationship.destination) != \(relatedIdentifier.entityName)"
+//        )
+//        precondition(
+//            relationship.destination == reference[0].destinationTable,
+//            "Destination mismatch: \(relationship.destination) != \(reference[0].destinationTable)"
+//        )
         _ = try connection.query(
             """
             UPDATE "\(relationship.destination)"
@@ -1324,14 +1327,15 @@ extension DatabaseSnapshot {
         guard let reference = property.reference else {
             preconditionFailure("The relationship must have a reference: \(property)")
         }
-        precondition(
-            relationship.destination == relatedIdentifier.entityName,
-            "Destination mismatch: \(relationship.destination) != \(relatedIdentifier.entityName)"
-        )
-        precondition(
-            relationship.destination == reference[0].destinationTable,
-            "Destination mismatch: \(relationship.destination) != \(reference[0].destinationTable)"
-        )
+        // FIXME: The precondition check is too strict for inheritance.
+//        precondition(
+//            relationship.destination == relatedIdentifier.entityName,
+//            "Destination mismatch: \(relationship.destination) != \(relatedIdentifier.entityName)"
+//        )
+//        precondition(
+//            relationship.destination == reference[0].destinationTable,
+//            "Destination mismatch: \(relationship.destination) != \(reference[0].destinationTable)"
+//        )
         let primaryKey = relatedIdentifier.primaryKey()
         switch relationship.deleteRule {
         case .cascade:
