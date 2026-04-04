@@ -422,13 +422,20 @@ extension SQLPredicateTranslator {
                 } else {
                     columns.append(clause(columnAlias, property.name))
                 }
-                continue
             case let relationship as Schema.Relationship:
                 if relationshipKeyPathsForPrefetching.contains(property.keyPath) {
                     property.flags.insert(.prefetch)
                 }
                 if relationship.isToOneRelationship {
-                    columns.append(clause(entityAlias, relationship.name + "_pk"))
+                    let columnAlias: String
+                    if property.flags.contains(.isInherited),
+                       let ownerEntity = entityOwningProperty(named: property.name, startingAt: entity),
+                       let inheritedAlias = createInheritedAlias(key, from: entity, as: entityAlias, to: ownerEntity) {
+                        columnAlias = inheritedAlias
+                    } else {
+                        columnAlias = entityAlias
+                    }
+                    columns.append(clause(columnAlias, relationship.name + "_pk"))
                     foreignKeyColumns.append(property)
                 }
             default:
