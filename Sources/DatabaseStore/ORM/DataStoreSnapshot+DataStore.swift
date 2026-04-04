@@ -243,12 +243,46 @@ extension DatabaseSnapshot {
                     throw error
                 }
             }
-            try setValue(
-                values[offset],
-                at: property,
-                storeIdentifier: storeIdentifier,
-                externalStorageURL: configuration.externalStorageURL
-            )
+//            try setValue(
+//                values[offset],
+//                at: property,
+//                storeIdentifier: storeIdentifier,
+//                externalStorageURL: configuration.externalStorageURL
+//            )
+//            values.formIndex(after: &cursor)
+            if let relationship = property.metadata as? Schema.Relationship,
+               relationship.isToOneRelationship,
+               let foreignKey = values[offset] as? String,
+               let schema = configuration.schema,
+               let destinationEntity = schema.entitiesByName[relationship.destination],
+               !destinationEntity.subentities.isEmpty {
+                let resolveConnection = try queue.request(.reader)
+                let concreteEntityName = try resolveConcreteEntityName(
+                    for: foreignKey,
+                    destination: relationship.destination,
+                    storeIdentifier: storeIdentifier,
+                    schema: schema,
+                    connection: resolveConnection
+                )
+                queue.release(consume resolveConnection)
+                try setValue(
+                    try PersistentIdentifier.identifier(
+                        for: storeIdentifier,
+                        entityName: concreteEntityName,
+                        primaryKey: foreignKey
+                    ),
+                    at: property,
+                    storeIdentifier: storeIdentifier,
+                    externalStorageURL: configuration.externalStorageURL
+                )
+            } else {
+                try setValue(
+                    values[offset],
+                    at: property,
+                    storeIdentifier: storeIdentifier,
+                    externalStorageURL: configuration.externalStorageURL
+                )
+            }
             values.formIndex(after: &cursor)
         }
         if !excludedProperties.isEmpty {
