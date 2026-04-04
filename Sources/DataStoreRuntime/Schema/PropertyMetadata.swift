@@ -47,9 +47,11 @@ public struct PropertyMetadata: Equatable, Hashable, Sendable {
         
         nonisolated package static let isExternal: Self = .init(rawValue: 1 << 2)
         
-        nonisolated package static let isUnique: Self = .init(rawValue: 1 << 3)
+        nonisolated package static let isInherited: Self = .init(rawValue: 1 << 3)
         
-        nonisolated package static let isOptional: Self = .init(rawValue: 1 << 4)
+        nonisolated package static let isUnique: Self = .init(rawValue: 1 << 4)
+        
+        nonisolated package static let isOptional: Self = .init(rawValue: 1 << 5)
         
         nonisolated package let rawValue: UInt8
         
@@ -130,6 +132,8 @@ public struct PropertyMetadata: Equatable, Hashable, Sendable {
     nonisolated public var isRawRepresentable: Bool {
         valueType is any RawRepresentable.Type
     }
+    
+    // TODO: Use the flag instead.
     
     /// Determines whether the entity's property is inherited from a superentity.
     nonisolated public var isInherited: Bool {

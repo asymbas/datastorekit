@@ -97,26 +97,11 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
         self.persistentIdentifier = persistentIdentifier
         self.primaryKey = primaryKey.description
         self.properties = !properties.isEmpty ? properties : .init(type.databaseSchemaMetadata)
-        if !values.isEmpty && values.count < self.properties.count {
-            var alignedValues = ContiguousArray<any DataStoreSnapshotValue>()
-            alignedValues.reserveCapacity(self.properties.count)
-            var valueIndex = values.startIndex
-            for property in self.properties {
-                if valueIndex < values.endIndex, !(property.metadata is Schema.Relationship) {
-                    alignedValues.append(values[valueIndex])
-                    valueIndex = values.index(after: valueIndex)
-                } else {
-                    alignedValues.append(SQLNull() as any DataStoreSnapshotValue)
-                }
-            }
-            self.values = alignedValues
-        } else {
-            self.values = !values.isEmpty ? values : .init(repeating: SQLNull(), count: self.properties.count)
-        }
-        assert(
-            self.properties.count == self.values.count,
-            "Property and value counts do not match: \(self.properties.count) != \(self.values.count)"
-        )
+        self.values = !values.isEmpty ? values : .init(repeating: SQLNull(), count: self.properties.count)
+//        assert(
+//            self.properties.count == self.values.count,
+//            "Property and value counts do not match: \(self.properties.count) != \(self.values.count)"
+//        )
         ensureIndexes()
     }
     
@@ -203,17 +188,17 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
             for index in 0..<count {
                 let property = self.properties[index]
                 let value = self.values[index]
+                let description = "\(primaryKey) - \(entityName).\(property.name)"
                 guard !property.flags.contains(.isExternal) else {
                     continue
                 }
-                let description = "\(primaryKey) - \(entityName).\(property.name)"
+                guard property.reference == nil || !property.flags.contains(.isInherited) else {
+                    logger.debug("Inherited property belongs to superentity: \(description)")
+                    inheritedDependencies.append(property.index)
+                    continue
+                }
                 switch property.metadata {
                 case let attribute as Schema.Attribute:
-                    guard property.reference == nil else {
-                        logger.debug("Inherited property belongs to superentity: \(description)")
-                        inheritedDependencies.append(property.index)
-                        continue
-                    }
                     switch value {
                     case let value where attribute.options.contains(.ephemeral):
                         if let valueType = attribute.valueType as? any DataStoreSnapshotValue.Type,
@@ -418,6 +403,8 @@ extension DatabaseSnapshot {
 }
 
 extension DatabaseSnapshot {
+    // TODO: Try splitting the snapshots based on subentities here using `inout`.
+    
     /// Inherited from `DataStoreSnapshot.init(from:relatedBackingDatas:)`.
     ///
     /// Creates a snaphot of the model's `BackingData<Model>` that was instantiated without a store.

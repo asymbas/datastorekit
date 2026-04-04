@@ -140,6 +140,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
             property.name != "\(property.name)_pk" || property.name != "0_pk" || property.name != "1_pk",
             "The property name cannot be used. It is reserved for the foreign key: \(description)"
         )
+        var isInherited = false
         var resolvedKeyPath: (AnyKeyPath & Sendable)?
         if let type = type as? any PredicateCodableKeyPathProviding.Type,
            let keyPath = getPredicateCodableKeyPath(for: type, property: property), registerKeyPath(keyPath) {
@@ -161,6 +162,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
             ) else {
                 fatalError("Unable to find inherited property metadata: \(description)")
             }
+            isInherited = true
             _ = registerKeyPath(property.keyPath)
         case false:
             logger.trace("Property is not inherited: \(description)")
@@ -205,6 +207,9 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
         }
         var canonicalProperty = PropertyMetadata(index: index, keyPath: keyPath, metadata: property)
         try makeTableReferences(&canonicalProperty)
+        if isInherited {
+            canonicalProperty.flags.insert(.isInherited)
+        }
         try accumulate(&result, canonicalProperty)
         if let type = Model.self as? any SQLPassthrough.Type {
             var property = insertSQLQueryPassthrough(for: type)
