@@ -109,6 +109,7 @@ nonisolated package func fetchToOneReference<Result>(
 nonisolated package func fetchExternalReferences(
     for persistentIdentifier: PersistentIdentifier,
     in property: PropertyMetadata,
+    schema: Schema? = nil,
     connection: borrowing DatabaseConnection<DatabaseStore>
 ) throws -> any DataStoreSnapshotValue {
     guard let relationship = property.metadata as? Schema.Relationship else {
@@ -152,12 +153,16 @@ nonisolated package func fetchExternalReferences(
     default:
         preconditionFailure("Invalid table reference and relationship combination.")
     }
+    guard let schema = schema ?? connection.context?.schema else {
+        preconditionFailure("No schema was provided.")
+    }
     let relatedIdentifiers = try results.compactMap { result -> PersistentIdentifier? in
         try (result[relationshipAlias] as? String).flatMap { foreignKey -> PersistentIdentifier? in
             let concreteEntityName = try resolveConcreteEntityName(
                 for: foreignKey,
                 destination: relationship.destination,
                 storeIdentifier: storeIdentifier,
+                schema: schema,
                 connection: connection
             )
             return try PersistentIdentifier.identifier(
@@ -323,6 +328,7 @@ nonisolated package func fetchExternalReferenceKeysBatched(
     ownerPersistentIdentifiers: [PersistentIdentifier],
     ownerIndexByPrimaryKey: [String: Int],
     in property: PropertyMetadata,
+    schema: Schema? = nil,
     graph: ReferenceGraph? = nil,
     connection: borrowing DatabaseConnection<DatabaseStore>,
     chunkSize: Int = 400
@@ -342,10 +348,7 @@ nonisolated package func fetchExternalReferenceKeysBatched(
     if let graph {
         for (index, ownerIdentifier) in ownerPersistentIdentifiers.enumerated() {
             let primaryKey = ownerPrimaryKeys[index]
-            if let cachedIdentifiers = graph.cachedReferencesIfPresent(
-                for: ownerIdentifier,
-                at: property.name
-            ) {
+            if let cachedIdentifiers = graph.cachedReferencesIfPresent(for: ownerIdentifier, at: property.name) {
                 result[ownerIdentifier] = cachedIdentifiers
             } else {
                 missingOwnerPrimaryKeys.append(primaryKey)
@@ -407,6 +410,9 @@ nonisolated package func fetchExternalReferenceKeysBatched(
         default:
             preconditionFailure("The relationship must have a reference: \(property)")
         }
+        guard let schema = schema ?? connection.context?.schema else {
+            preconditionFailure("No schema was provided.")
+        }
         for row in try connection.fetch(sql, bindings: bindings) {
             guard let ownerPrimaryKey = row[0] as? String else {
                 continue
@@ -423,6 +429,7 @@ nonisolated package func fetchExternalReferenceKeysBatched(
                 for: relatedPrimaryKey,
                 destination: relationship.destination,
                 storeIdentifier: storeIdentifier,
+                schema: schema,
                 connection: connection
             )
             let relatedIdentifier = try PersistentIdentifier.identifier(
@@ -450,11 +457,20 @@ nonisolated package func resolveConcreteEntityName(
     for primaryKey: String,
     destination: String,
     storeIdentifier: String,
+    schema: Schema,
     connection: borrowing DatabaseConnection<DatabaseStore>
 ) throws -> String {
-    guard let schema = connection.context?.schema,
-          let destinationEntity = schema.entitiesByName[destination],
-          !destinationEntity.subentities.isEmpty else {
+    guard let destinationEntity = schema.entitiesByName[destination] else {
+        throw SchemaError.relationshipTargetEntityNotRegistered
+    }
+    guard !destinationEntity.subentities.isEmpty else {
+        logger.trace(
+            "Destination entity has no subentities: \(destination)",
+            metadata: [
+                "destination": "\(destination)",
+                "destination_entity": "\(destinationEntity)"
+            ]
+        )
         return destination
     }
     let temporaryIdentifier = try PersistentIdentifier.identifier(

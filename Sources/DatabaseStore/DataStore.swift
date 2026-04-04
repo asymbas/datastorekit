@@ -497,6 +497,7 @@ public final class DatabaseStore: DataStore, Sendable {
                     ownerPersistentIdentifiers: ownerPersistentIdentifiers,
                     ownerIndexByPrimaryKey: ownerIndexByPrimaryKey,
                     in: property,
+                    schema: schema,
                     graph: references,
                     connection: connection,
                     chunkSize: 400
