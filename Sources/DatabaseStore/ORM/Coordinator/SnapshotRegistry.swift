@@ -54,6 +54,10 @@ public final class SnapshotRegistry: ObjectContextProtocol {
     nonisolated internal let state: Atomic<State> = .init(.idle)
     nonisolated private let request: Atomic<Int> = .init(0)
     
+    nonisolated internal var schema: Schema {
+        manager.store?.schema ?? .init()
+    }
+    
     /// All `PersistentIdentifier` bound to this registry.
     nonisolated internal var persistentIdentifiers: [PersistentIdentifier] {
         .init(trackedIdentifiers.withLock(\.self))

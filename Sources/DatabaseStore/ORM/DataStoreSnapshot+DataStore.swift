@@ -96,7 +96,7 @@ extension DatabaseSnapshot {
         let resolvedEntity: Schema.Entity
         let inheritedValues: [String: any DataStoreSnapshotValue]
         do {
-            resolvedEntity = try Self.fetchInheritanceEntity(for: persistentIdentifier, on: entity, connection: connection)
+            resolvedEntity = try fetchInheritanceEntity(for: persistentIdentifier, on: entity, connection: connection)
             if entity.superentity != nil || !entity.subentities.isEmpty {
                 inheritedValues = try Self.fetchInheritanceDependencies(
                     for: persistentIdentifier,
@@ -148,7 +148,7 @@ extension DatabaseSnapshot {
             primaryKey: primaryKey,
             storeIdentifier: storeIdentifier,
             type: resolvedType,
-            entityName: entity.name,
+            entityName: resolvedEntity.name,
             properties: .init(resolvedType.databaseSchemaMetadata)
         )
         if !inheritedValues.isEmpty {

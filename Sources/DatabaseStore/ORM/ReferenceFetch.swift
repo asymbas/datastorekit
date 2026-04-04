@@ -413,9 +413,15 @@ nonisolated package func fetchExternalReferenceKeysBatched(
             guard let relatedPrimaryKey = row[1] as? String else {
                 continue
             }
+            let concreteEntityName = try resolveConcreteEntityName(
+                for: relatedPrimaryKey,
+                destination: relationship.destination,
+                storeIdentifier: storeIdentifier,
+                connection: connection
+            )
             let relatedIdentifier = try PersistentIdentifier.identifier(
                 for: storeIdentifier,
-                entityName: relationship.destination,
+                entityName: concreteEntityName /*relationship.destination*/,
                 primaryKey: relatedPrimaryKey
             )
             result[ownerIdentifier, default: []].append(relatedIdentifier)
@@ -432,6 +438,49 @@ nonisolated package func fetchExternalReferenceKeysBatched(
         }
     }
     return result
+}
+
+nonisolated package func resolveConcreteEntityName(
+    for primaryKey: String,
+    destination: String,
+    storeIdentifier: String,
+    connection: borrowing DatabaseConnection<DatabaseStore>
+) throws -> String {
+    guard let schema = connection.context?.schema,
+          let destinationEntity = schema.entitiesByName[destination],
+          !destinationEntity.subentities.isEmpty else {
+        return destination
+    }
+    let temporaryIdentifier = try PersistentIdentifier.identifier(
+        for: storeIdentifier,
+        entityName: destination,
+        primaryKey: primaryKey
+    )
+    return try fetchInheritanceEntity(
+        for: temporaryIdentifier,
+        on: destinationEntity,
+        connection: connection
+    ).name
+}
+
+nonisolated package func fetchInheritanceEntity(
+    for persistentIdentifier: PersistentIdentifier,
+    on entity: Schema.Entity,
+    connection: borrowing DatabaseConnection<DatabaseStore>
+) throws -> Schema.Entity {
+    for subentity in entity.subentities {
+        let rows = try connection.query(
+            """
+            SELECT 1 FROM "\(subentity.name)"
+            WHERE "\(pk)" = ?
+            LIMIT 1
+            """,
+            bindings: [persistentIdentifier.primaryKey()]
+        )
+        guard !rows.isEmpty else { continue }
+        return try fetchInheritanceEntity(for: persistentIdentifier, on: subentity, connection: connection)
+    }
+    return entity
 }
 
 nonisolated package func fetchRowsByPrimaryKeys(
