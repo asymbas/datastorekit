@@ -217,6 +217,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
             try accumulate(&result, property)
         }
         func makeTableReferences(_ property: inout PropertyMetadata) throws {
+            let owningEntityName = isInherited ? (entity.superentity?.name ?? entityName) : entityName
             switch property.metadata {
             case let relationship as Schema.Relationship where relationship.inverseName != nil:
                 // Bidirectional relationship.
@@ -267,7 +268,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                     case relationship.isToOneRelationship:
                         // Set one-to-one or many-to-one relationships where `self` holds the foreign key.
                         let reference = TableReference(
-                            sourceTable: entityName,
+                            sourceTable: owningEntityName,
                             sourceColumn: relationship.name + "_pk",
                             destinationTable: destinationEntity.name,
                             destinationColumn: pk
@@ -315,7 +316,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
             case let relationship as Schema.Relationship:
                 // Unidirectional relationship.
                 let reference = TableReference(
-                    sourceTable: entityName,
+                    sourceTable: owningEntityName,
                     sourceColumn: relationship.name + "_pk",
                     destinationTable: relationship.destination,
                     destinationColumn: pk
