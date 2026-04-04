@@ -570,31 +570,15 @@ extension DatabaseSnapshot {
         }
     }
     
-    /// Extracts the required or optional attribute value from the backing data.
-    nonisolated private func getValue<B, M, V>(_ backingData: B, as valueType: V.Type, keyPath: AnyKeyPath) -> V?
-    where B: BackingData, B.Model == M, V: Decodable {
-#if swift(>=6.2)
-        if #available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *),
-           (B.Model.Root.self is B.Model.Type) == false {
-            return getInheritedValue(backingData, as: valueType, keyPath: keyPath)
-        }
-#endif
-        switch keyPath {
-        case let keyPath as KeyPath<B.Model, V>: return backingData.getValue(forKey: keyPath)
-        case let keyPath as KeyPath<B.Model, V?>: return backingData.getValue(forKey: keyPath)
-        default: return nil
-        }
-    }
-    
-#if swift(>=6.2)
+    #if swift(>=6.2)
     
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
-    nonisolated private func getInheritedValue<B, V>(
+    nonisolated private func getInheritedAttribute<B, V>(
         _ backingData: B,
         as valueType: V.Type,
         keyPath: AnyKeyPath
     ) -> V? where B: BackingData, V: Decodable {
-        resolveInheritedValue(backingData, from: B.Model.self, as: valueType, keyPath: keyPath)
+        resolveInheritedAttribute(backingData, from: B.Model.self, as: valueType, keyPath: keyPath)
     }
     
     /// Recursively ascends the inheritance hierarchy until reaching root.
@@ -602,7 +586,7 @@ extension DatabaseSnapshot {
     /// - Note:
     ///   - `PersistentModel.Root` is the top-level superclass type, use `class_getSuperclass(_:)` instead.
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
-    nonisolated private func resolveInheritedValue<B, M, V>(
+    nonisolated private func resolveInheritedAttribute<B, M, V>(
         _ backingData: B,
         from modelType: M.Type,
         as valueType: V.Type,
@@ -626,13 +610,139 @@ extension DatabaseSnapshot {
             logger.debug("Reached top of inheritance chain: \(modelType).self -> \(keyPath)")
             return nil
         }
-        return resolveInheritedValue(backingData, from: superclass, as: valueType, keyPath: keyPath)
+        return resolveInheritedAttribute(backingData, from: superclass, as: valueType, keyPath: keyPath)
     }
     
-#endif
+    @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
+    nonisolated private func getInheritedRelationship<B, R>(
+        _ backingData: B,
+        as type: R.Type,
+        keyPath: AnyKeyPath
+    ) -> R? where B: BackingData, R: PersistentModel {
+        resolveInheritedRelationship(backingData, from: B.Model.self, as: type, keyPath: keyPath)
+    }
+    
+    @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
+    nonisolated private func resolveInheritedRelationship<B, M, R>(
+        _ backingData: B,
+        from modelType: M.Type,
+        as type: R.Type,
+        keyPath: AnyKeyPath
+    ) -> R? where B: BackingData, M: PersistentModel, R: PersistentModel {
+        if let keyPath = keyPath as? KeyPath<B.Model, R> {
+            return backingData.getValue(forKey: keyPath)
+        }
+        if let keyPath = keyPath as? KeyPath<B.Model, R?> {
+            return backingData.getValue(forKey: keyPath)
+        }
+        if let inheritedKeyPath = keyPath as? KeyPath<M, R>,
+           let lifted: KeyPath<B.Model, R> = liftKeyPath(inheritedKeyPath, to: B.Model.self) {
+            return backingData.getValue(forKey: lifted)
+        }
+        if let inheritedKeyPath = keyPath as? KeyPath<M, R?>,
+           let lifted: KeyPath<B.Model, R?> = liftKeyPath(inheritedKeyPath, to: B.Model.self) {
+            return backingData.getValue(forKey: lifted)
+        }
+        guard let superclass = class_getSuperclass(modelType) as? any PersistentModel.Type else {
+            logger.debug("Reached top of inheritance chain for relationship: \(modelType).self -> \(keyPath)")
+            return nil
+        }
+        return resolveInheritedRelationship(backingData, from: superclass, as: type, keyPath: keyPath)
+    }
+    
+    @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
+    nonisolated private func getInheritedRelationshipCollection<B, R>(
+        _ backingData: B,
+        as type: R.Type,
+        keyPath: AnyKeyPath
+    ) -> [R.PersistentElement]? where B: BackingData, R: RelationshipCollection, R.PersistentElement: PersistentModel {
+        resolveInheritedRelationshipCollection(backingData, from: B.Model.self, as: type, keyPath: keyPath)
+    }
+    
+    @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
+    nonisolated private func resolveInheritedRelationshipCollection<B, M, R>(
+        _ backingData: B,
+        from modelType: M.Type,
+        as type: R.Type,
+        keyPath: AnyKeyPath
+    ) -> [R.PersistentElement]? where B: BackingData, M: PersistentModel, R: RelationshipCollection, R.PersistentElement: PersistentModel {
+        if let keyPath = keyPath as? KeyPath<B.Model, [R.PersistentElement]> {
+            return backingData.getValue(forKey: keyPath)
+        }
+        if let keyPath = keyPath as? KeyPath<B.Model, [R.PersistentElement]?> {
+            return backingData.getValue(forKey: keyPath)
+        }
+        if let inheritedKeyPath = keyPath as? KeyPath<M, [R.PersistentElement]>,
+           let lifted: KeyPath<B.Model, [R.PersistentElement]> = liftKeyPath(inheritedKeyPath, to: B.Model.self) {
+            return backingData.getValue(forKey: lifted)
+        }
+        if let inheritedKeyPath = keyPath as? KeyPath<M, [R.PersistentElement]?>,
+           let lifted: KeyPath<B.Model, [R.PersistentElement]?> = liftKeyPath(inheritedKeyPath, to: B.Model.self) {
+            return backingData.getValue(forKey: lifted)
+        }
+        guard let superclass = class_getSuperclass(modelType) as? any PersistentModel.Type else {
+            logger.debug("Reached top of inheritance chain for relationship collection: \(modelType).self -> \(keyPath)")
+            return nil
+        }
+        return resolveInheritedRelationshipCollection(backingData, from: superclass, as: type, keyPath: keyPath)
+    }
+    
+    #endif
+    
+    /// Extracts the required or optional attribute value from the backing data.
+    nonisolated private func getValue<B, M, V>(_ backingData: B, as valueType: V.Type, keyPath: AnyKeyPath) -> V?
+    where B: BackingData, B.Model == M, V: Decodable {
+        #if swift(>=6.2)
+        if #available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *),
+           (B.Model.Root.self is B.Model.Type) == false {
+            return getInheritedAttribute(backingData, as: valueType, keyPath: keyPath)
+        }
+        #endif
+        switch keyPath {
+        case let keyPath as KeyPath<B.Model, V>: return backingData.getValue(forKey: keyPath)
+        case let keyPath as KeyPath<B.Model, V?>: return backingData.getValue(forKey: keyPath)
+        default: return nil
+        }
+    }
     
     /// Extracts the required or optional to-one relationship value from the backing data.
     nonisolated private func getValue<B, M, R>(_ backingData: B, as type: R.Type, keyPath: AnyKeyPath) -> R?
+    where B: BackingData, B.Model == M, R: PersistentModel {
+        #if swift(>=6.2)
+        if #available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *),
+           (B.Model.Root.self is B.Model.Type) == false {
+            return getInheritedRelationship(backingData, as: type, keyPath: keyPath)
+        }
+        #endif
+        switch keyPath {
+        case let keyPath as KeyPath<B.Model, R>:
+            return backingData.getValue(forKey: keyPath)
+        case let keyPath as KeyPath<B.Model, R?>:
+            return backingData.getValue(forKey: keyPath)
+        default: return nil
+        }
+    }
+    
+    /// Extracts the required or optional to-many relationship value from the backing data.
+    nonisolated private func getValue<B, M, R>(_ backingData: B, as type: R.Type, keyPath: AnyKeyPath) -> [R.PersistentElement]?
+    where B: BackingData, B.Model == M, R: RelationshipCollection, R.PersistentElement: PersistentModel {
+        #if swift(>=6.2)
+        if #available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *),
+           (B.Model.Root.self is B.Model.Type) == false {
+            return getInheritedRelationshipCollection(backingData, as: type, keyPath: keyPath)
+        }
+        #endif
+        switch keyPath {
+        case let keyPath as KeyPath<B.Model, [R.PersistentElement]>:
+            return backingData.getValue(forKey: keyPath)
+        case let keyPath as KeyPath<B.Model, [R.PersistentElement]?>:
+            return backingData.getValue(forKey: keyPath)
+        default: return nil
+        }
+    }
+    
+    /// Extracts the required or optional to-one relationship value from the backing data.
+    nonisolated private func _getValue<B, M, R>(_ backingData: B, as type: R.Type, keyPath: AnyKeyPath) -> R?
     where B: BackingData, B.Model == M, R: PersistentModel {
         switch keyPath {
         case let keyPath as KeyPath<B.Model, R>: backingData.getValue(forKey: keyPath)
@@ -642,7 +752,7 @@ extension DatabaseSnapshot {
     }
     
     /// Extracts the required or optional to-many relationship value from the backing data.
-    nonisolated private func getValue<B, M, R>(_ backingData: B, as type: R.Type, keyPath: AnyKeyPath) -> [R.PersistentElement]?
+    nonisolated private func _getValue<B, M, R>(_ backingData: B, as type: R.Type, keyPath: AnyKeyPath) -> [R.PersistentElement]?
     where B: BackingData, B.Model == M, R: RelationshipCollection, R.PersistentElement: PersistentModel {
         switch keyPath {
         case let keyPath as KeyPath<B.Model, [R.PersistentElement]>: backingData.getValue(forKey: keyPath)
