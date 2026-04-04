@@ -97,7 +97,22 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
         self.persistentIdentifier = persistentIdentifier
         self.primaryKey = primaryKey.description
         self.properties = !properties.isEmpty ? properties : .init(type.databaseSchemaMetadata)
-        self.values = !values.isEmpty ? values : .init(repeating: SQLNull(), count: self.properties.count)
+        if !values.isEmpty && values.count < self.properties.count {
+            var alignedValues = ContiguousArray<any DataStoreSnapshotValue>()
+            alignedValues.reserveCapacity(self.properties.count)
+            var valueIndex = values.startIndex
+            for property in self.properties {
+                if valueIndex < values.endIndex, !(property.metadata is Schema.Relationship) {
+                    alignedValues.append(values[valueIndex])
+                    valueIndex = values.index(after: valueIndex)
+                } else {
+                    alignedValues.append(SQLNull() as any DataStoreSnapshotValue)
+                }
+            }
+            self.values = alignedValues
+        } else {
+            self.values = !values.isEmpty ? values : .init(repeating: SQLNull(), count: self.properties.count)
+        }
         assert(
             self.properties.count == self.values.count,
             "Property and value counts do not match: \(self.properties.count) != \(self.values.count)"
