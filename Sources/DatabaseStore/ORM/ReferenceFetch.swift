@@ -154,9 +154,15 @@ nonisolated package func fetchExternalReferences(
     }
     let relatedIdentifiers = try results.compactMap { result -> PersistentIdentifier? in
         try (result[relationshipAlias] as? String).flatMap { foreignKey -> PersistentIdentifier? in
-            try PersistentIdentifier.identifier(
+            let concreteEntityName = try resolveConcreteEntityName(
+                for: foreignKey,
+                destination: relationship.destination,
+                storeIdentifier: storeIdentifier,
+                connection: connection
+            )
+            return try PersistentIdentifier.identifier(
                 for: storeIdentifier,
-                entityName: relationship.destination,
+                entityName: concreteEntityName /*relationship.destination*/,
                 primaryKey: foreignKey
             )
         }
