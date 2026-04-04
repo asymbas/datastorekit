@@ -26,12 +26,21 @@ extension SQLPredicateTranslator {
             options.insert(.allowKeyPathVariantsForPropertyLookup)
         }
         let translator = SQLPredicateTranslator(
-            schema: configuration.schema.unsafelyUnwrapped,
+            schema: configuration.schema ?? .init(),
             attachment: configuration.attachment as? DataStoreObservable,
             options: options,
             minimumLogLevel: DataStoreDebugging.mode == .trace ? .trace : .notice,
             tags: nil
         )
         self = translator
+        self.evaluateEphemeralProperty = { evaluate in
+            guard let registry = configuration.store?.manager.registry(for: evaluate.editingState) else {
+                throw Self.Error.cannotEvaluateEphemeralProperties
+            }
+            let snapshots = registry.step(from: evaluate.entityName) { backingData in
+                backingData.compareField(evaluate.value, at: evaluate.propertyIndex)
+            }
+            return .init(uniqueKeysWithValues: snapshots.map { ($0.persistentIdentifier, $0) })
+        }
     }
 }

@@ -15,7 +15,6 @@ import Foundation
 import Logging
 import SQLiteHandle
 import SQLiteStatement
-import SwiftUI
 import Synchronization
 
 #if swift(>=6.2)
@@ -102,8 +101,16 @@ where T: PersistentModel & SendableMetatype {
         requestedIdentifiers?.count
     }()
     
+    package var evaluatedSnapshots: [PersistentIdentifier: any DataStoreSnapshot]?
+    
+    package var evaluateEphemeralProperty:
+    @Sendable (EphemeralPropertyEvaluate) throws -> [PersistentIdentifier: any DataStoreSnapshot]? = { _ in nil }
+    
+    package var editingState: (any EditingStateProviding)?
+    
     nonisolated public init(
         schema: Schema,
+        editingState: (any EditingStateProviding)? = nil,
         attachment: (any DataStoreObservable)? = nil,
         options: consuming SQLPredicateTranslatorOptions = [],
         minimumLogLevel: consuming Logger.Level = .notice,
@@ -125,6 +132,7 @@ where T: PersistentModel & SendableMetatype {
         }
         #endif
         self.schema = schema
+        self.editingState = editingState
         self.attachment = attachment
         self.options = options
         self.minimumLogLevel = minimumLogLevel
@@ -285,6 +293,14 @@ where T: PersistentModel & SendableMetatype {
         )
     }
     
+    nonisolated public mutating func translate(
+        _ request: some FetchRequest<T>,
+        select: String? = nil
+    ) throws -> SQLPredicateResult {
+        self.editingState = request.editingState
+        return try translate(request.descriptor, select: select)
+    }
+    
     nonisolated public mutating func sql(
         _ descriptor: FetchDescriptor<T>,
         select: String? = nil
@@ -299,8 +315,67 @@ where T: PersistentModel & SendableMetatype {
         return sql
     }
     
-    nonisolated enum Error: Swift.Error {
+    nonisolated public struct EphemeralPropertyEvaluate: Sendable {
+        nonisolated public let editingState: any EditingStateProviding
+        nonisolated public let entityName: String
+        nonisolated public let propertyIndex: Int
+        nonisolated public let value: any Sendable
+    }
+    
+    nonisolated public enum Error: Swift.Error {
+        /// Missing in-memory models for ephemeral property evaluations.
+        case cannotEvaluateEphemeralProperties
         case invalidTranslation(String)
+    }
+}
+
+extension SQLPredicateTranslator {
+    internal mutating func translateEphemeralEquality(
+        lhs: consuming SQLPredicateFragment,
+        rhsValue: any Sendable
+    ) throws -> SQLPredicateFragment? {
+        guard let editingState = self.editingState,
+              let entity = lhs.entity,
+              let alias = lhs.alias,
+              let property = lhs.property,
+              let attribute = property.metadata as? Schema.Attribute,
+              attribute.options.contains(.ephemeral) else {
+            return nil
+        }
+        let comparisonValue: any Sendable = (rhsValue as? SQLValue)?.base ?? rhsValue
+        assert(comparisonValue is SQLValue == false, "Ephemeral equality should not compare to SQLValue")
+        guard let matchingSnapshots = try evaluateEphemeralProperty(.init(
+            editingState: editingState,
+            entityName: entity.name,
+            propertyIndex: property.index,
+            value: comparisonValue
+        )) else {
+            return nil
+        }
+        if matchingSnapshots.isEmpty {
+            return lhs.copy(
+                clause: "FALSE",
+                bindings: [],
+                kind: .setMembership
+            )
+        }
+        let primaryKeys = matchingSnapshots.map { matchingSnapshot in
+            SQLValue.text(matchingSnapshot.key.primaryKey(as: String.self))
+        }
+        let placeholders = Array(repeating: "?", count: primaryKeys.count).joined(separator: ", ")
+        hasher.combine(entity.name)
+        hasher.combine(property.index)
+        hasher.combine(primaryKeys.count)
+        if evaluatedSnapshots == nil {
+            evaluatedSnapshots = matchingSnapshots
+        } else {
+            evaluatedSnapshots?.merge(matchingSnapshots) { _, new in new }
+        }
+        return lhs.copy(
+            clause: "(\(quote(alias)).\(quote(pk)) IN (\(placeholders)))",
+            bindings: primaryKeys,
+            kind: .setMembership
+        )
     }
 }
 

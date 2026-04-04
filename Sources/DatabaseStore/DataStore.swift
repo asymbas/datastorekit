@@ -203,7 +203,7 @@ public final class DatabaseStore: DataStore, Sendable {
                 }
                 preloadedResult = consume result
             }
-            let translation = try translator.translate(request.descriptor)
+            let translation = try translator.translate(request)
             if shouldCheckCancellation { try Task.checkCancellation() }
             request: if let result = preloadedResult.take() {
                 guard result.key == translation.key else {
@@ -227,13 +227,21 @@ public final class DatabaseStore: DataStore, Sendable {
             let rows = try queue.reader { try $0.fetch(translation.statement) }
             if shouldCheckCancellation { try Task.checkCancellation() }
             let total = rows.count
-            let fetchedSnapshots: [Snapshot]
+            var fetchedSnapshots: [Snapshot]
             var relatedSnapshots: [PersistentIdentifier: Snapshot] = try prefetch(
                 entityName: entityName,
                 properties: translation.properties,
                 values: rows,
                 registry: registry
             )
+            if let evaluatedSnapshots = translator.evaluatedSnapshots {
+                for (identifier, snapshot) in evaluatedSnapshots {
+                    if let snapshot = snapshot as? Snapshot {
+                        relatedSnapshots[identifier] = snapshot
+                        logger.debug("Found evaluated snapshot for \(identifier)")
+                    }
+                }
+            }
             switch !configuration.options.contains(.synchronouslyCreateSnapshots) {
             case true:
                 let fetchedSnapshotsMutex = Mutex<[Snapshot?]>(.init(repeating: nil, count: total))
