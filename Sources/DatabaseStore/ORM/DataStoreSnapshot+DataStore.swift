@@ -112,9 +112,27 @@ extension DatabaseSnapshot {
             queue.release(consume connection)
             throw error
         }
-        queue.release(consume connection)
         let resolvedType = (Schema.type(for: resolvedEntity.name)) ?? type
-        if let relatedSnapshot = relatedSnapshots[persistentIdentifier] {
+        let resolvedPersistentIdentifier = try PersistentIdentifier.identifier(
+            for: storeIdentifier,
+            entityName: resolvedEntity.name,
+            primaryKey: primaryKey
+        )
+        if resolvedEntity.superentity != nil {
+            do {
+                _ = try Self.fetchSuperentitySnapshots(
+                    for: resolvedPersistentIdentifier,
+                    on: resolvedEntity,
+                    connection: connection,
+                    relatedSnapshots: &relatedSnapshots
+                )
+            } catch {
+                queue.release(consume connection)
+                throw error
+            }
+        }
+        queue.release(consume connection)
+        if let relatedSnapshot = relatedSnapshots[resolvedPersistentIdentifier] {
             logger.trace("\(resolvedEntity.name) snapshot found in related snapshots: \(primaryKey)")
             self = consume relatedSnapshot
             let columnsToSkip = self.properties.count
@@ -248,14 +266,14 @@ extension DatabaseSnapshot {
                     let value: any DataStoreSnapshotValue
                     if let graph = registry?.graph,
                        let cachedTargets = graph.cachedReferencesIfPresent(
-                        for: persistentIdentifier,
+                        for: resolvedPersistentIdentifier,
                         at: property.name
                        ) {
                         value = try ensureRelationshipValue(cachedTargets, in: relationship)
                         logger.trace("Resolved excluded properties using graph: \(property) = \(cachedTargets)")
                     } else {
                         value = try fetchExternalReferences(
-                            for: persistentIdentifier,
+                            for: resolvedPersistentIdentifier,
                             in: property,
                             schema: configuration.schema,
                             connection: connection
@@ -263,7 +281,7 @@ extension DatabaseSnapshot {
                         if let graph = registry?.graph,
                            let targets = ReferenceGraph.normalizeTargets(value) {
                             graph.setReferences(
-                                for: persistentIdentifier,
+                                for: resolvedPersistentIdentifier,
                                 at: property.name,
                                 to: targets
                             )
@@ -290,7 +308,7 @@ extension DatabaseSnapshot {
                 do {
                     let connection = try queue.request(.reader)
                     self.values[property.index] = try fetchExternalReferences(
-                        for: persistentIdentifier,
+                        for: resolvedPersistentIdentifier,
                         in: property,
                         schema: configuration.schema,
                         connection: connection

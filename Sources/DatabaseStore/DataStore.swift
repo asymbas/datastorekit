@@ -559,20 +559,7 @@ public final class DatabaseStore: DataStore, Sendable {
                     guard ownerIndexByPrimaryKey[ownerPrimaryKey] != nil else {
                         continue
                     }
-                    let relatedIdentifiers = try destinationRows.compactMap { row in
-                        try (row.first as? String).flatMap { destinationPrimaryKey in
-                            try PersistentIdentifier.identifier(
-                                for: self.identifier,
-                                entityName: relationship.destination,
-                                primaryKey: destinationPrimaryKey
-                            )
-                        }
-                    }
-                    for (index, row) in destinationRows.enumerated() {
-                        let relatedIdentifier = relatedIdentifiers[index]
-                        if prefetchedRelatedSnapshots[relatedIdentifier] != nil {
-                            continue
-                        }
+                    for row in destinationRows {
                         var sink = [PersistentIdentifier: Snapshot]()
                         let snapshot = try Snapshot(
                             store: self,
@@ -581,7 +568,10 @@ public final class DatabaseStore: DataStore, Sendable {
                             values: row[...],
                             relatedSnapshots: &sink
                         )
-                        prefetchedRelatedSnapshots[relatedIdentifier] = snapshot
+                        if prefetchedRelatedSnapshots[snapshot.persistentIdentifier] != nil {
+                            continue
+                        }
+                        prefetchedRelatedSnapshots[snapshot.persistentIdentifier] = snapshot
                         prefetchedRelatedSnapshots.merge(sink, uniquingKeysWith: { $1 })
                     }
                 }
