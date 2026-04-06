@@ -62,6 +62,7 @@ extension DataStoreMigration {
             if let index = schemaMetadata.lastIndex(where: { $0.name == "Schema.Unique" }) {
                 schemaUnique = schemaMetadata.remove(at: index)
             }
+            // Only register the stored properties.
             if shouldRegister {
                 // Only persist for the configuration's schema.
                 type.overwritePropertyMetadata(schemaMetadata)
@@ -111,7 +112,7 @@ extension DataStoreMigration {
 
 // elevate some inferred to lightweight
 
-internal final class DataStoreMigration: DatabaseContext {
+internal final class DataStoreMigration: StoreBound {
     internal typealias Store = DatabaseStore
     internal unowned let store: Store
     internal let analysis: Classifier

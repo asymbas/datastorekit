@@ -9,13 +9,13 @@
 
 import SwiftData
 
-public protocol DatabaseProtocol: DataStore, Sendable {
+public protocol DatabaseProtocol: DataStore, Sendable where Self.Configuration: Sendable {
     associatedtype Handle: DatabaseHandle
-    associatedtype Attachment: DatabaseAttachment where Attachment.ObjectContext == Self.Context
-    associatedtype Context: ObjectContextProtocol
+    associatedtype Attachment: DatabaseAttachment where Attachment.Context == Self.Context
+    associatedtype Context: DatabaseContext
     associatedtype Transaction: DatabaseTransaction where Transaction.Store == Self
 }
 
-public protocol DatabaseContext: Sendable {
+package protocol StoreBound: Sendable {
     associatedtype Store: DatabaseProtocol
 }

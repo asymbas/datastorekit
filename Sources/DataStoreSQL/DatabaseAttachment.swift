@@ -11,13 +11,20 @@ import DataStoreCore
 import Logging
 import SwiftData
 
-public protocol DatabaseAttachment: AnyObject & Sendable {
-    associatedtype ObjectContext: ObjectContextProtocol
-    nonisolated var storeIdentifier: String { get }
-    nonisolated func makeObjectContext(editingState: some EditingStateProviding) -> ObjectContext?
+public protocol DataStoreSnapshotProvider: AnyObject, Sendable {
+    associatedtype Snapshot: DataStoreSnapshot
+    func resolvedPersistentIdentifier(for persistentIdentifier: PersistentIdentifier) -> PersistentIdentifier?
+    func primaryKey<PrimaryKey>(for persistentIdentifier: PersistentIdentifier, as type: PrimaryKey.Type) -> PrimaryKey
+    where PrimaryKey: LosslessStringConvertible & Sendable
+    func snapshot(for persistentIdentifier: PersistentIdentifier) -> Snapshot?
 }
 
-public protocol ObjectContextProtocol: AnyObject & Identifiable & Sendable {
+public protocol DatabaseAttachment: AnyObject & Sendable, DataStoreSnapshotProvider {
+    associatedtype Context: DatabaseContext
+    nonisolated func makeObjectContext(editingState: some EditingStateProviding) -> Context?
+}
+
+public protocol DatabaseContext: AnyObject & Identifiable & Sendable, DataStoreSnapshotProvider {
     associatedtype Snapshot: DataStoreSnapshot
-    nonisolated func snapshot(for persistentIdentifier: PersistentIdentifier) throws -> Snapshot?
+    nonisolated func snapshot(for persistentIdentifier: PersistentIdentifier) -> Snapshot?
 }
