@@ -339,7 +339,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                 // Create an implicit reference between subclass and superclass tables.
                 let reference = TableReference(
                     sourceTable: entity.name,
-                    sourceColumn: "super_pk",
+                    sourceColumn: pk,
                     destinationTable: superentity.name,
                     destinationColumn: pk
                 )
