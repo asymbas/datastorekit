@@ -153,7 +153,7 @@ nonisolated package func fetchExternalReferences(
     default:
         preconditionFailure("Invalid table reference and relationship combination.")
     }
-    guard let schema = schema ?? connection.context?.schema else {
+    guard let schema = schema ?? connection.schema else {
         preconditionFailure("No schema was provided.")
     }
     let relatedIdentifiers = try results.compactMap { result -> PersistentIdentifier? in
@@ -410,7 +410,7 @@ nonisolated package func fetchExternalReferenceKeysBatched(
         default:
             preconditionFailure("The relationship must have a reference: \(property)")
         }
-        guard let schema = schema ?? connection.context?.schema else {
+        guard let schema = schema ?? connection.schema else {
             preconditionFailure("No schema was provided.")
         }
         for row in try connection.fetch(sql, bindings: bindings) {

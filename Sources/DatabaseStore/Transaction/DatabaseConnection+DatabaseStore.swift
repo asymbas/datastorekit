@@ -20,77 +20,135 @@ import Synchronization
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
 extension DatabaseConnection where Store == DatabaseStore {
-    nonisolated public func fetch<Result>(
-        _ type: Result.Type,
-        properties keyPaths: [PartialKeyPath<Result> & Sendable] = [],
-        sql: String...,
+    /// Tracks relationships between models by their `PersistentIdentifier`.
+    nonisolated internal var graph: ReferenceGraph? {
+        context?.graph ?? attachment?.graph
+    }
+    
+    nonisolated internal var schema: Schema? {
+        attachment?.schema
+    }
+    
+    nonisolated internal var storeIdentifier: String? {
+        attachment?.store?.identifier
+    }
+    
+    nonisolated package func resolveEntity(
+        _ entity: Schema.Entity? = nil,
+        for persistentIdentifier: PersistentIdentifier
+    ) throws -> Schema.Entity {
+        guard let entity = entity ?? self.schema?.entitiesByName[persistentIdentifier.entityName] else {
+            throw SchemaError.entityNotRegistered
+        }
+        assert(persistentIdentifier.entityName == entity.name)
+        let resolvedPersistentIdentifier = try resolvePersistentIdentifier(for: persistentIdentifier)
+        guard persistentIdentifier != resolvedPersistentIdentifier else {
+            logger.debug("\(entity.name) does not resolve any further: \(persistentIdentifier)")
+            return entity
+        }
+        guard let resolvedEntity = self.schema?.entitiesByName[resolvedPersistentIdentifier.entityName] else {
+            throw SchemaError.entityNotRegistered
+        }
+        logger.debug(
+            "\(persistentIdentifier.entityName) resolves to \(resolvedEntity.name): \(persistentIdentifier)",
+            metadata: ["id": "\(persistentIdentifier.id)", "id_resolved": "\(resolvedPersistentIdentifier.id)"]
+        )
+        return resolvedEntity
+    }
+    
+    /// Resolves the given persistent identifier with a variant that has a concrete entity name.
+    ///
+    /// - Parameter persistentIdentifier:
+    ///   The persistent identifier to resolve and use for lookup.
+    /// - Returns:
+    ///   The resolved persistent identifier that has a concrete entity name, which may be identical to the given one.
+    nonisolated package func resolvePersistentIdentifier(for persistentIdentifier: PersistentIdentifier)
+    throws -> PersistentIdentifier {
+        #if DEBUG
+        guard let attachment = self.attachment else {
+            preconditionFailure()
+        }
+        return try attachment.inheritance.resolvePersistentIdentifier(for: persistentIdentifier, connection: self)
+        #else
+        return try attachment!.inheritance.resolvedPersistentIdentifier(for: persistentIdentifier, connection: self)
+        #endif
+    }
+}
+
+extension DatabaseConnection where Store == DatabaseStore {
+    /// Fetches snapshots for the given model type, optionally filtered by SQL predicates.
+    ///
+    /// - Parameters:
+    ///   - type: The model type to fetch.
+    ///   - keyPaths: Properties to include. Defaults to all properties.
+    ///   - sql: SQL clauses appended after the `FROM` clause.
+    ///   - bindings: Bound parameter values for the SQL clauses.
+    /// - Returns: An array of snapshots matching the query.
+    nonisolated public func fetch<Model>(
+        _ type: Model.Type,
+        properties keyPaths: [PartialKeyPath<Model> & Sendable] = [],
+        predicate sql: String...,
         bindings: [any Sendable] = []
-    ) throws -> [Store.Snapshot] where Result: PersistentModel {
-        guard let storeIdentifier = self.attachment?.store?.identifier else {
-            preconditionFailure("\(Store.Attachment.self) must have a store identifier.")
-        }
-        guard let configuration = self.attachment?.configuration else {
-            preconditionFailure("\(Store.Attachment.self) must have a configuration.")
-        }
+    ) throws -> [Store.Snapshot] where Model: PersistentModel {
         guard let queue = self.queue else {
             preconditionFailure("The queue was unexpectedly nil.")
         }
-        let entityName = Schema.entityName(for: Result.self)
+        let entityName = Schema.entityName(for: Model.self)
         let propertiesCollected = keyPaths.reduce(into: [PropertyMetadata]()) { partialResult, keyPath in
-            partialResult.append(Result.schemaMetadata(for: keyPath).unsafelyUnwrapped)
+            partialResult.append(Model.schemaMetadata(for: keyPath).unsafelyUnwrapped)
         }
-        var properties = [PropertyMetadata.discriminator(for: Result.self)]
-        + (propertiesCollected.isEmpty ? Result.databaseSchemaMetadata : propertiesCollected)
+        var properties = [PropertyMetadata.discriminator(for: Model.self)]
+        + (propertiesCollected.isEmpty ? Model.databaseSchemaMetadata : propertiesCollected)
         for index in properties.indices {
             let property = properties[index]
             let hasColumn = property.column != nil
             let isInheritedColumn = hasColumn && property.reference != nil && property.flags.contains(.isInherited)
             properties[index].isSelected = hasColumn && !isInheritedColumn
         }
-        let columns = properties
-            .filter(\.isSelected)
-            .compactMap(\.column)
-            .map { quote($0) }
-            .joined(separator: ", ")
         let result = try fetch(
               """
-              SELECT \(columns) 
+              SELECT \(properties.filter(\.isSelected).compactMap(\.column).map(quote).joined(separator: ", ")) 
               FROM "\(entityName)"
               \(sql.joined(separator: "\n"))
               """,
               bindings: bindings
         )
-        var relatedSnapshots = [PersistentIdentifier: DatabaseSnapshot]()
-        return try result.map { row in
-            try DatabaseSnapshot(
-                storeIdentifier: storeIdentifier,
-                configuration: configuration,
-                queue: queue,
-                registry: context,
-                properties: properties[...],
-                values: row[...],
-                relatedSnapshots: &relatedSnapshots
-            )
+        var relatedSnapshots = [PersistentIdentifier: Store.Snapshot]()
+        let snapshots = try result.map { row in
+            try Store.Snapshot(queue: queue, properties: properties[...], values: row[...], relatedSnapshots: &relatedSnapshots)
         }
+        logger.debug("Fetched \(snapshots.count) \(entityName) snapshots.", metadata: [
+            "sql": "\(sql.joined(separator: "\n"))",
+            "bindings": "\(bindings)"
+        ])
+        return snapshots
     }
     
-    nonisolated public func fetch<Result>(
+    /// Fetches a single snapshot by primary key.
+    ///
+    /// - Parameters:
+    ///   - primaryKey: The primary key to look up.
+    ///   - type: The model type to fetch.
+    ///   - keyPaths: Properties to include. Defaults to all properties.
+    /// - Returns: The matching snapshot, or `nil` if not found.
+    nonisolated public func fetch<Model>(
         for primaryKey: String,
-        as type: Result.Type,
-        properties keyPaths: [PartialKeyPath<Result> & Sendable] = []
-    ) throws -> DatabaseSnapshot? where Result: PersistentModel {
-        try fetch(
-            type,
-            properties: keyPaths,
-            sql: "WHERE \(quote(pk)) = ?", "LIMIT 1",
-            bindings: [primaryKey]
-        ).first
+        as type: Model.Type,
+        properties keyPaths: [PartialKeyPath<Model> & Sendable] = []
+    ) throws -> Store.Snapshot? where Model: PersistentModel {
+        try fetch(type, properties: keyPaths, predicate: "WHERE \(quote(pk)) = ?", "LIMIT 1", bindings: [primaryKey]).first
     }
     
-    nonisolated public func fetch<Result>(
+    /// Fetches a single snapshot by primary key.
+    ///
+    /// - Parameters:
+    ///   - primaryKey: The primary key to look up.
+    ///   - type: The model type to fetch.
+    /// - Returns: The matching snapshot, or `nil` if not found.
+    nonisolated public func fetch<Model>(
         for primaryKey: String,
-        as type: Result.Type
-    ) throws -> DatabaseSnapshot? where Result: PersistentModel {
+        as type: Model.Type
+    ) throws -> Store.Snapshot? where Model: PersistentModel {
         try fetch(for: primaryKey, as: type, properties: [])
     }
 }
@@ -100,10 +158,7 @@ extension DatabaseConnection where Store == DatabaseStore {
 extension DatabaseConnection where Store == DatabaseStore {
     /// Inserts the model's backing data into the data store.
     /// - Parameter snapshot: The model snapshot.
-    nonisolated public func insert(
-        _ snapshot: consuming Store.Snapshot,
-        orReplace: Bool = false
-    ) throws {
+    nonisolated public func insert(_ snapshot: consuming Store.Snapshot, orReplace: Bool = false) throws {
         guard let transaction = self.transaction else {
             preconditionFailure("Inserting backing data is only allowed during a transaction.")
         }
@@ -134,7 +189,7 @@ extension DatabaseConnection where Store == DatabaseStore {
     ) throws {
         let entityName = newSnapshot.entityName
         let primaryKey = newSnapshot.primaryKey
-        let oldSnapshot: DatabaseSnapshot? = oldSnapshot ?? {
+        let oldSnapshot: Store.Snapshot? = oldSnapshot ?? {
             guard self.attachment != nil else {
                 return nil
             }
@@ -166,6 +221,56 @@ extension DatabaseConnection where Store == DatabaseStore {
         }
     }
     
+    nonisolated private func updateRow(
+        from oldSnapshot: consuming Store.Snapshot? = nil,
+        to newSnapshot: consuming Store.Snapshot
+    ) throws {
+        guard let transaction = self.transaction else {
+            preconditionFailure("Updating backing data is only allowed during a transaction.")
+        }
+        let entityName = newSnapshot.entityName
+        let primaryKey = newSnapshot.primaryKey
+        let export = newSnapshot.export
+        let count = newSnapshot.properties.count
+        var columnsToUpdate = [String]()
+        var valuesToUpdate = [any Sendable]()
+        var propertiesChanges = [String]()
+        propertiesChanges.reserveCapacity(count)
+        var oldValues = [any Sendable]()
+        oldValues.reserveCapacity(count)
+        var newValues = [any Sendable]()
+        newValues.reserveCapacity(count)
+        _ = oldSnapshot?.diff(from: newSnapshot) { property, lhs, rhs in
+            if let column = property.column,
+               let index = export.columns.firstIndex(of: column) {
+                columnsToUpdate.append(export.columns[index])
+                valuesToUpdate.append(export.values[index])
+            }
+            propertiesChanges.append(property.name)
+            oldValues.append(lhs)
+            newValues.append(rhs)
+        }
+        if !columnsToUpdate.isEmpty {
+            let _ = try execute.update(
+                table: newSnapshot.entityName,
+                columns: columnsToUpdate,
+                values: valuesToUpdate,
+                where: "\(pk) = ?",
+                bindings: [primaryKey]
+            )
+        }
+        try transaction.externalStorageTransaction.apply(export.externalStorageData)
+        if !propertiesChanges.isEmpty {
+            transaction.informDidUpdateRow(
+                for: primaryKey,
+                in: entityName,
+                columns: propertiesChanges,
+                oldValues: oldValues,
+                newValues: newValues
+            )
+        }
+    }
+    
     /// Deletes the model's backing data from the data store.
     /// - Parameter snapshot: The model snapshot.
     nonisolated public func delete(_ snapshot: consuming Store.Snapshot) throws {
@@ -176,86 +281,21 @@ extension DatabaseConnection where Store == DatabaseStore {
         }
     }
     
-    nonisolated public mutating func match(snapshot: consuming Store.Snapshot) throws -> Store.Snapshot? {
-        guard let storeIdentifier = self.attachment?.store?.identifier else {
-            preconditionFailure("\(Store.Attachment.self) must have a store identifier.")
+    nonisolated private func deleteRow(_ snapshot: consuming Store.Snapshot) throws {
+        guard let transaction = self.transaction else {
+            preconditionFailure("Deleting backing data is only allowed during a transaction.")
         }
-        guard let configuration = self.attachment?.configuration else {
-            preconditionFailure("\(Store.Attachment.self) must have a configuration.")
-        }
-        guard let queue = self.queue else {
-            preconditionFailure("The queue was unexpectedly nil.")
-        }
-        let persistentIdentifier = snapshot.persistentIdentifier
-        var export = snapshot.export
-        switch configuration.constraints[persistentIdentifier.entityName] {
-        case let uniquenessConstraints? where !uniquenessConstraints.isEmpty:
-            var existingRow: [any Sendable]?
-            for uniquenessConstraint in uniquenessConstraints {
-                do {
-                    guard let matchedRow = try execute.fetchByUniqueness(
-                        from: snapshot.entityName,
-                        columns: export.columns,
-                        values: export.values,
-                        onConflict: uniquenessConstraint
-                    ) else {
-                        continue
-                    }
-                    guard let primaryKey = matchedRow.first as? String else {
-                        throw SQLError(.columnNotFound(pk))
-                    }
-                    if existingRow == nil {
-                        existingRow = matchedRow
-                    } else if existingRow?.first as? String != primaryKey {
-                        throw ConstraintError(.unique)
-                    }
-                } catch let error as SQLError where {
-                    // Inherited properties will have missing columns.
-                    if case .columnNotFound? = error.code { return true }
-                    return false
-                }() {
-                    continue
-                } catch {
-                    throw error
-                }
-            }
-            if let existingPrimaryKey = existingRow?.first as? String {
-                var targetPrimaryKey = snapshot.primaryKey
-                if targetPrimaryKey != existingPrimaryKey {
-                    logger.debug("Resolving upsert conflict...", metadata: [
-                        "entity": "\(snapshot.entityName)",
-                        "diff": "\(snapshot.primaryKey) != \(existingPrimaryKey)"
-                    ])
-                    let existingIdentifier = try PersistentIdentifier.identifier(
-                        for: persistentIdentifier.storeIdentifier!,
-                        entityName: snapshot.entityName,
-                        primaryKey: existingPrimaryKey
-                    )
-                    remappedIdentifiers[persistentIdentifier] = existingIdentifier
-                    snapshot = snapshot.copy(
-                        persistentIdentifier: existingIdentifier,
-                        remappedIdentifiers: remappedIdentifiers
-                    )
-                    export = snapshot.export
-                    targetPrimaryKey = existingPrimaryKey
-                }
-                var relatedSnapshots = [PersistentIdentifier: DatabaseSnapshot]()
-                return try .init(
-                    storeIdentifier: storeIdentifier,
-                    configuration: configuration,
-                    queue: queue,
-                    registry: context,
-                    properties: [.discriminator(for: snapshot.type)] + snapshot.properties[...],
-                    values: (existingRow ?? [])[...],
-                    relatedSnapshots: &relatedSnapshots
-                )
-            } else {
-                logger.info("Inserted snapshot with no conflict: \(snapshot.persistentIdentifier)")
-                return nil
-            }
-        default:
-            return nil
-        }
+        let entityName = snapshot.entityName
+        let primaryKey = snapshot.primaryKey
+        let delete = snapshot.delete
+        let _ = try execute.delete(from: entityName, where: "\(pk) = ?", bindings: [primaryKey])
+        try transaction.externalStorageTransaction.apply(delete.externalStorageData)
+        transaction.informDidDeleteRow(
+            primaryKey,
+            in: entityName,
+            preservedColumns: delete.columns.isEmpty ? nil : delete.columns,
+            preservedValues: delete.values.isEmpty ? nil : delete.values
+        )
     }
     
     nonisolated public consuming func upsert(
@@ -267,7 +307,10 @@ extension DatabaseConnection where Store == DatabaseStore {
             try self.insert(snapshot)
             return
         }
-        let remappedIdentifiers = try fetchByUniqueness(snapshot, uniquenessConstraints: uniquenessConstraints) { snapshot in
+        let remappedIdentifiers = try fetchByUniqueness(
+            snapshot,
+            uniquenessConstraints: uniquenessConstraints
+        ) { snapshot in
             var remappedIdentifiers = self.remappedIdentifiers
             remappedIdentifiers[temporaryIdentifier] = snapshot.persistentIdentifier
             try self.insert(snapshot)
@@ -321,9 +364,6 @@ extension DatabaseConnection where Store == DatabaseStore {
         let permanentIdentifier = snapshot.persistentIdentifier
         var snapshot = snapshot
         let export = snapshot.export
-        guard let storeIdentifier = permanentIdentifier.storeIdentifier else {
-            preconditionFailure("\(Store.Attachment.self) must have a store identifier.")
-        }
         guard let configuration = self.attachment?.configuration else {
             preconditionFailure("\(Store.Attachment.self) must have a configuration.")
         }
@@ -369,12 +409,9 @@ extension DatabaseConnection where Store == DatabaseStore {
                         "diff": "\(snapshot.primaryKey) != \(existingPrimaryKey)"
                     ])
                     // Inheriting values then overwriting.
-                    var relatedSnapshots = [PersistentIdentifier: DatabaseSnapshot]()
-                    let existingSnapshot = try DatabaseSnapshot(
-                        storeIdentifier: storeIdentifier,
-                        configuration: configuration,
+                    var relatedSnapshots = [PersistentIdentifier: Store.Snapshot]()
+                    let existingSnapshot = try Store.Snapshot(
                         queue: queue,
-                        registry: context,
                         properties: [.discriminator(for: snapshot.type)] + snapshot.properties[...],
                         values: (existingRow ?? [])[...],
                         relatedSnapshots: &relatedSnapshots
@@ -396,20 +433,27 @@ extension DatabaseConnection where Store == DatabaseStore {
             return nil
         }
     }
+    
+    nonisolated public mutating func match(snapshot: consuming Store.Snapshot) throws -> Store.Snapshot? {
+        var remappedIdentifiers = self.remappedIdentifiers
+        let result = try fetchByUniqueness(snapshot, onNone: nil) { existing, candidate in
+            remappedIdentifiers[candidate.persistentIdentifier] = existing.persistentIdentifier
+            return existing
+        }
+        self.remappedIdentifiers = remappedIdentifiers
+        return result
+    }
 }
 
 extension DatabaseConnection where Store == DatabaseStore {
     nonisolated package func inheritedSnapshots(for snapshot: Store.Snapshot) throws -> [Store.Snapshot] {
-        guard let store = self.attachment?.store,
-              let entity = store.schema.entitiesByName[snapshot.entityName],
+        guard let entity = self.schema?.entitiesByName[snapshot.entityName],
               let superentity = entity.superentity else {
             return []
         }
         var snapshot = snapshot
         let indices = snapshot.export.inheritedDependencies
-        guard !indices.isEmpty else {
-            return []
-        }
+        guard !indices.isEmpty else { return [] }
         var inheritedSnapshots = [Store.Snapshot]()
         try snapshot.recursiveExportChain(
             on: superentity,
@@ -417,68 +461,5 @@ extension DatabaseConnection where Store == DatabaseStore {
             inheritedTraversalSnapshots: &inheritedSnapshots
         )
         return inheritedSnapshots
-    }
-    
-    nonisolated private func updateRow(
-        from oldSnapshot: consuming Store.Snapshot? = nil,
-        to newSnapshot: consuming Store.Snapshot
-    ) throws {
-        guard let transaction = self.transaction else {
-            preconditionFailure("Updating backing data is only allowed during a transaction.")
-        }
-        let entityName = newSnapshot.entityName
-        let primaryKey = newSnapshot.primaryKey
-        let export = newSnapshot.export
-        var columnsToUpdate = [String]()
-        var valuesToUpdate = [any Sendable]()
-        var propertiesChanges = [String]()
-        var oldValues = [any Sendable]()
-        var newValues = [any Sendable]()
-        _ = oldSnapshot?.diff(from: newSnapshot) { property, lhs, rhs in
-            if let column = property.column,
-               let index = export.columns.firstIndex(of: column) {
-                columnsToUpdate.append(export.columns[index])
-                valuesToUpdate.append(export.values[index])
-            }
-            propertiesChanges.append(property.name)
-            oldValues.append(lhs)
-            newValues.append(rhs)
-        }
-        if !columnsToUpdate.isEmpty {
-            let _ = try execute.update(
-                table: newSnapshot.entityName,
-                columns: columnsToUpdate,
-                values: valuesToUpdate,
-                where: "\(pk) = ?",
-                bindings: [primaryKey]
-            )
-        }
-        try transaction.externalStorageTransaction.apply(export.externalStorageData)
-        if !propertiesChanges.isEmpty {
-            transaction.informDidUpdateRow(
-                for: primaryKey,
-                in: entityName,
-                columns: propertiesChanges,
-                oldValues: oldValues,
-                newValues: newValues
-            )
-        }
-    }
-    
-    nonisolated private func deleteRow(_ snapshot: consuming Store.Snapshot) throws {
-        guard let transaction = self.transaction else {
-            preconditionFailure("Deleting backing data is only allowed during a transaction.")
-        }
-        let entityName = snapshot.entityName
-        let primaryKey = snapshot.primaryKey
-        let delete = snapshot.delete
-        let _ = try execute.delete(from: entityName, where: "\(pk) = ?", bindings: [primaryKey])
-        try transaction.externalStorageTransaction.apply(delete.externalStorageData)
-        transaction.informDidDeleteRow(
-            primaryKey,
-            in: entityName,
-            preservedColumns: delete.columns.isEmpty ? nil : delete.columns,
-            preservedValues: delete.values.isEmpty ? nil : delete.values
-        )
     }
 }

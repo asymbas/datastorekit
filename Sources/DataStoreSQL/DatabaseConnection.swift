@@ -22,12 +22,15 @@ public struct DatabaseConnection<Store>: ~Copyable, Sendable where Store: Databa
     nonisolated package weak var queue: DatabaseQueue<Store>?
     nonisolated package let handle: Store.Handle
     nonisolated package let context: Store.Context?
-    nonisolated package let storeIdentifier: String
     nonisolated package var externalDependencies: [PersistentIdentifier: [Int]] = [:]
     nonisolated package var snapshots: [PersistentIdentifier: Store.Snapshot] = [:]
     nonisolated package var remappedIdentifiers: [PersistentIdentifier: PersistentIdentifier] = [:]
     nonisolated package var snapshotsToReregister: [PersistentIdentifier: Store.Snapshot] = [:]
     nonisolated public let editingState: (any EditingStateProviding)?
+    
+    nonisolated package var provider: (any DataStoreSnapshotProvider)? {
+        context ?? attachment
+    }
     
     nonisolated package var transaction: Store.Transaction? {
         get { _transaction.load()?.transaction }
@@ -47,14 +50,12 @@ public struct DatabaseConnection<Store>: ~Copyable, Sendable where Store: Databa
     
     nonisolated package init(
         for editingState: (any EditingStateProviding)? = nil,
-        storeIdentifier: String,
         queue: DatabaseQueue<Store>? = nil,
         handle: Store.Handle,
         context: Store.Context? = nil,
         transaction: Store.Transaction? = nil
     ) {
         self.editingState = editingState
-        self.storeIdentifier = storeIdentifier
         self.queue = queue
         self.handle = handle
         self.context = context
@@ -64,7 +65,6 @@ public struct DatabaseConnection<Store>: ~Copyable, Sendable where Store: Databa
     
     nonisolated internal init(connection: consuming Self) {
         self.editingState = connection.editingState
-        self.storeIdentifier = connection.storeIdentifier
         self.queue = connection.queue
         self.handle = connection.handle
         self.context = connection.context
@@ -111,6 +111,27 @@ public struct DatabaseConnection<Store>: ~Copyable, Sendable where Store: Databa
     nonisolated public func query(_ sql: String, bindings: [any Sendable] = [])
     throws -> [[String: any Sendable]] {
         try handle.query(sql, bindings: bindings)
+    }
+}
+
+extension DatabaseConnection where Store: DatabaseProtocol {
+    nonisolated package func primaryKey<PrimaryKey: LosslessStringConvertible & Sendable>(
+        for persistentIdentifier: PersistentIdentifier,
+        as type: PrimaryKey.Type = String.self
+    ) -> PrimaryKey {
+        if let primaryKey = self.context?.primaryKey(for: persistentIdentifier, as: PrimaryKey.self) {
+            return primaryKey
+        }
+        if let primaryKey = self.attachment?.primaryKey(for: persistentIdentifier, as: PrimaryKey.self) {
+            return primaryKey
+        }
+        preconditionFailure()
+    }
+    
+    nonisolated package func resolvedPersistentIdentifier(for persistentIdentifier: PersistentIdentifier)
+    -> PersistentIdentifier? {
+        context?.resolvedPersistentIdentifier(for: persistentIdentifier) ??
+        attachment?.resolvedPersistentIdentifier(for: persistentIdentifier)
     }
 }
 

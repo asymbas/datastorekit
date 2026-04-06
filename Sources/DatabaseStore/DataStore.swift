@@ -128,7 +128,7 @@ public final class DatabaseStore: DataStore, Sendable {
         }
         self.identifier = configuration.name
         do {
-            let manager = ModelManager(configuration: configuration)
+            let manager = ModelManager(configuration: configuration, schema: schema)
             self.queue = try configuration.makeDatabaseQueue(manager)
             self.manager = manager
             self.configuration = configuration

@@ -21,7 +21,7 @@ public final class DatabaseQueue<Store>: Sendable where Store: DatabaseProtocol 
     nonisolated private final let timeout: DispatchTimeInterval
     nonisolated private final let writerPool: ConnectionPool
     nonisolated private final let readerPool: ConnectionPool?
-    nonisolated internal final let attachment: Store.Attachment?
+    nonisolated package final let attachment: Store.Attachment?
     
     nonisolated package final let makeTransaction:
     @Sendable (any EditingStateProviding, Store.Handle) -> Store.Transaction?
@@ -183,7 +183,7 @@ extension DatabaseQueue {
             }
         }
         logger.trace("DatabaseConnection acquired: \(handle.id)")
-        return .init(for: editingState, storeIdentifier: attachment!.storeIdentifier, queue: self, handle: handle, context: context)
+        return .init(for: editingState, queue: self, handle: handle, context: context)
     }
     
     /// Requests a connection for a specific data store role.
