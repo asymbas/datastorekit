@@ -1445,6 +1445,16 @@ where LHS: SQLPredicateExpression, RHS: SQLPredicateExpression {
                 clause = (lhsClause == "NULL") ? "TRUE" : "FALSE"
                 break
             }
+            do {
+                // TODO: Apply to `PredicateExpressions.NotEqual`.
+                if let rhsValue: any Sendable = sendable(cast: rhsValue),
+                   let fragment = try context.translateEphemeralEquality(lhs: lhs.copy(), rhsValue: rhsValue) {
+                    _ = rhs.bindings.popLast()
+                    return fragment
+                }
+            } catch {
+                return .invalid("Error: \(error)")
+            }
             if lhsClause == "NULL" {
                 if let rhsValue = rhsValue as? SQLValue, rhsValue == .null {
                     clause = "TRUE"
