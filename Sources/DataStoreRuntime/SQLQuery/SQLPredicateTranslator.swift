@@ -405,6 +405,7 @@ extension SQLPredicateTranslator {
         var properties = [PropertyMetadata]()
         properties.reserveCapacity(schemaMetadata.count + 1)
         properties.append(primaryKeyColumn)
+        // TODO: Use the updated `TableReference` instead.
         for var property in schemaMetadata where !property.flags.contains(.isExternal) {
             defer { properties.append(property) }
             switch property.metadata {
@@ -1042,8 +1043,8 @@ extension SQLPredicateTranslator {
             if let superclass = class_getSuperclass(Variable.self) as? any PersistentModel.Type {
                 loadSchemaMetadata(for: superclass, key: key)
                 return try Variable.schemaMetadata(for: keyPath)
-                ?? parseKeyPathForProperty(keyPath)
                 ?? lookupPropertyMetadata(superclass: superclass, subclass: Variable.self, keyPath: keyPath)
+                ?? parseKeyPathForProperty(keyPath)
             } else {
                 loadSchemaMetadata(for: Variable.self, key: key)
                 return try Variable.schemaMetadata(for: keyPath)
