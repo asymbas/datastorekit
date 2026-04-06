@@ -217,7 +217,16 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
             try accumulate(&result, property)
         }
         func makeTableReferences(_ property: inout PropertyMetadata) throws {
-            let owningEntityName = isInherited ? (entity.superentity?.name ?? entityName) : entityName
+            let owningEntity: Schema.Entity = {
+                guard isInherited else { return entity }
+                var current = entity
+                while current.inheritedPropertiesByName[property.name] != nil {
+                    guard let superentity = current.superentity else { break }
+                    current = superentity
+                }
+                return current
+            }()
+            let owningEntityName = owningEntity.name
             switch property.metadata {
             case let relationship as Schema.Relationship where relationship.inverseName != nil:
                 // Bidirectional relationship.
@@ -236,13 +245,13 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                     case !relationship.isToOneRelationship where !inverseRelationship.isToOneRelationship:
                         // Set many-to-many with a deterministic ordering for intermediary tables.
                         let intermediaryTable = IntermediaryTableReference(
-                            lhsTable: entity.name,
+                            lhsTable: owningEntityName,
                             lhsColumn: relationship.name,
                             rhsTable: destinationEntity.name,
                             rhsColumn: inverseRelationship.name
                         )
                         guard let lhsReference = intermediaryTable.join(
-                            from: (nil, entity.name),
+                            from: (nil, owningEntityName),
                             to: (nil, intermediaryTable.name)
                         ) else {
                             fatalError("From LHS table to intermediary table failed: \(intermediaryTable)")
@@ -256,15 +265,12 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                         array = Array<TableReference>(unsafeUninitializedCapacity: 2) {
                             $0[0] = lhsReference; $0[1] = rhsReference; $1 = 2
                         }
-                        logger.trace(
-                            "Created reference for many-to-many relationship: \(array)",
-                            metadata: [
-                                "intermediary_table": "\(intermediaryTable)",
-                                "lhs_table": "\(lhsReference)",
-                                "rhs_table": "\(rhsReference)",
-                                "reference": "\(array)"
-                            ]
-                        )
+                        logger.trace("Created reference for many-to-many relationship: \(array)", metadata: [
+                            "intermediary_table": "\(intermediaryTable)",
+                            "lhs_table": "\(lhsReference)",
+                            "rhs_table": "\(rhsReference)",
+                            "reference": "\(array)"
+                        ])
                     case relationship.isToOneRelationship:
                         // Set one-to-one or many-to-one relationships where `self` holds the foreign key.
                         let reference = TableReference(
@@ -279,19 +285,16 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                         let cardinality = inverseRelationship.isToOneRelationship ? "one-to-one" : "many-to-one"
                         let type = reference.isSelfReferencing ? "self-reference" : "reference"
                         let ownership = reference.isOwningReference() ? "owning" : "non-owning"
-                        logger.trace(
-                            "Created \(type) for \(ownership) \(cardinality) relationship: \(reference)",
-                            metadata: [
-                                "is_self_referencing": "\(type)",
-                                "is_owning_reference": "\(ownership)",
-                                "cardinality": "\(cardinality)",
-                                "reference": "\(reference)"
-                            ]
-                        )
+                        logger.trace("Created \(type) for \(ownership) \(cardinality) relationship: \(reference)", metadata: [
+                            "is_self_referencing": "\(type)",
+                            "is_owning_reference": "\(ownership)",
+                            "cardinality": "\(cardinality)",
+                            "reference": "\(reference)"
+                        ])
                     default:
                         // Access to relationship where `self` does not hold the foreign key.
                         let reference = TableReference(
-                            sourceTable: entity.name,
+                            sourceTable: owningEntityName,
                             sourceColumn: pk,
                             destinationTable: destinationEntity.name,
                             destinationColumn: inverseRelationship.name + "_pk"
@@ -302,14 +305,11 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                         }
                         let type = reference.isSelfReferencing ? "self-reference" : "reference"
                         let ownership = reference.isOwningReference() ? "owning" : "non-owning"
-                        logger.trace(
-                            "Created \(type) for \(ownership) one-to-many relationship.",
-                            metadata: [
-                                "is_self_referencing": "\(type)",
-                                "is_owning_reference": "\(ownership)",
-                                "reference": "\(reference)"
-                            ]
-                        )
+                        logger.trace("Created \(type) for \(ownership) one-to-many relationship.", metadata: [
+                            "is_self_referencing": "\(type)",
+                            "is_owning_reference": "\(ownership)",
+                            "reference": "\(reference)"
+                        ])
                     }
                     property.reference = array
                 }
@@ -324,14 +324,11 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                 property.reference = [reference]
                 let type = reference.isSelfReferencing ? "self-reference" : "reference"
                 let ownership = reference.isOwningReference() ? "owning" : "non-owning"
-                logger.trace(
-                    "Created \(type) for \(ownership) unidirectional to-one relationship.",
-                    metadata: [
-                        "is_self_referencing": "\(type)",
-                        "is_owning_reference": "\(ownership)",
-                        "reference": "\(reference)"
-                    ]
-                )
+                logger.trace("Created \(type) for \(ownership) unidirectional to-one relationship.", metadata: [
+                    "is_self_referencing": "\(type)",
+                    "is_owning_reference": "\(ownership)",
+                    "reference": "\(reference)"
+                ])
             case _ where entity.inheritedPropertiesByName[property.name] is Schema.Attribute:
                 guard let superentity = entity.superentity else {
                     fatalError("Missing superentity for inherited property: \(description)")
@@ -344,14 +341,11 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                     destinationColumn: pk
                 )
                 property.reference = [reference]
-                logger.trace(
-                    "Created inheritance reference.",
-                    metadata: [
-                        "superentity": "\(superentity.name)",
-                        "subentity": "\(entity.name)",
-                        "reference": "\(reference)"
-                    ]
-                )
+                logger.trace("Created inheritance reference.", metadata: [
+                    "superentity": "\(superentity.name)",
+                    "subentity": "\(entity.name)",
+                    "reference": "\(reference)"
+                ])
             default:
                 break
             }
@@ -399,7 +393,7 @@ nonisolated private func findInheritedPropertyMetadata(
     guard let superentity = entity.superentity else {
         return nil
     }
-    if #available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *) {
+    if false, #available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *) {
         logger.warning("Inheritance is not fully implemented: \(superentity.name).\(property.name)")
     }
     guard let superclass = Schema.type(for: superentity.name) else {
