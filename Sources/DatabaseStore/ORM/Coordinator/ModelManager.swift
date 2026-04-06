@@ -9,6 +9,7 @@
 
 import Collections
 import DataStoreCore
+import DataStoreSQL
 import Logging
 import SQLiteHandle
 import SQLSupport
@@ -17,18 +18,21 @@ import Synchronization
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.coordinator")
 
-public final class ModelManager: Sendable {
-    internal typealias Snapshot = DatabaseSnapshot
+public final class ModelManager: DatabaseAttachment, DataStoreSnapshotProvider {
+    public typealias Context = SnapshotRegistry
+    public typealias Snapshot = DatabaseSnapshot
     nonisolated private let storage: Mutex<[PersistentIdentifier: DatabaseBackingData]> = .init([:])
     nonisolated private let entityCacheRevisions: Mutex<[String: UInt64]> = .init([:])
     nonisolated internal let globalCacheRevision: Atomic<UInt64> = .init(0)
     nonisolated internal let isCachingSnapshots: Bool
     nonisolated internal let state: Atomic<State> = .init(.idle)
     nonisolated internal let editingStates: Mutex<[PersistentIdentifier: OrderedSet<EditingState.ID>]> = .init([:])
-    nonisolated internal let registries: Mutex<[EditingState.ID: SnapshotRegistry]> = .init([:])
+    nonisolated internal let registries: Mutex<[EditingState.ID: Context]> = .init([:])
     nonisolated internal let configuration: DatabaseConfiguration
+    nonisolated internal let schema: Schema
     nonisolated internal let broadcaster: EventBroadcaster = .init()
-    nonisolated package let inheritance: InheritanceResolver = .init()
+    nonisolated internal let inheritance: InheritanceResolver = .init()
+    /// Tracks relationships between models by their `PersistentIdentifier`.
     nonisolated public let graph: ReferenceGraph = .init()
     
     nonisolated internal var store: DatabaseStore? {
@@ -39,9 +43,11 @@ public final class ModelManager: Sendable {
         .init(editingStates.withLock(\.keys))
     }
     
-    nonisolated internal init(configuration: DatabaseConfiguration) {
+    nonisolated internal init(configuration: DatabaseConfiguration, schema: Schema) {
         self.configuration = configuration
+        self.schema = schema
         self.isCachingSnapshots = !configuration.options.contains(.disableSnapshotCaching)
+        inheritance.bootstrap(manager: self)
     }
     
     deinit {
@@ -58,24 +64,29 @@ public final class ModelManager: Sendable {
         case idle = 0
         case transaction
     }
+    
+    internal enum Error: Swift.Error {
+        case primaryKeyNotFound(PersistentIdentifier)
+    }
 }
 
+// MARK: Fetching `SnapshotRegistry`
+
 extension ModelManager {
-    nonisolated internal func backingData(from entityName: String) -> [(PersistentIdentifier, DatabaseBackingData)] {
-        storage.withLock { storage in
-            var result = [(PersistentIdentifier, DatabaseBackingData)]()
-            for (identifier, backingData) in storage where identifier.entityName == entityName {
-                result.append((identifier, backingData))
-            }
-            return result
-        }
+    /// Inherited from `DatabaseAttachment.makeObjectContext(editingState:)`.
+    nonisolated public func makeObjectContext(editingState: some EditingStateProviding) -> Context? {
+        registry(for: editingState)
     }
     
-    nonisolated internal func registry<T>(for editingState: T, isTransaction: Bool) -> SnapshotRegistry?
+    /// Retrieves a `SnapshotRegistry` instance that is associated with a `ModelContext`.
+    nonisolated package func registry<T>(for editingState: T) -> Context?
     where T: EditingStateProviding {
-        guard isCachingSnapshots else {
-            return nil
-        }
+        registry(for: editingState, isTransaction: false)
+    }
+    
+    nonisolated internal func registry<T>(for editingState: T, isTransaction: Bool) -> Context?
+    where T: EditingStateProviding {
+        guard isCachingSnapshots else { return nil }
         guard state.load(ordering: .acquiring) != .transaction else {
             logger.notice("SnapshotRegistry is currently in a transaction: \(editingState.id)")
             return nil
@@ -88,22 +99,18 @@ extension ModelManager {
             let state = registry.state.load(ordering: .relaxed)
             guard state == .idle else {
                 logger.notice("SnapshotRegistry is busy: \(editingState.id) = \(state)")
-                if isTransaction {
-                    return registry
-                }
+                if isTransaction { return registry }
                 return nil
             }
             logger.debug("SnapshotRegistry is found for ModelManager: \(editingState.id)")
             return registry
         } ?? nil
     }
-    
-    /// Retrieves a `SnapshotRegistry` instance that is associated with a `ModelContext`.
-    nonisolated package func registry<T>(for editingState: T) -> SnapshotRegistry?
-    where T: EditingStateProviding {
-        registry(for: editingState, isTransaction: false)
-    }
-    
+}
+
+// MARK: Link `EditingState`
+
+extension ModelManager {
     /// Creates or replaces a `SnapshotRegistry` instance for the `ModelContext` it will be associated to.
     /// - Parameter editingState: The editing state that owns the registry.
     nonisolated internal func initializeState(for editingState: EditingState) {
@@ -143,7 +150,196 @@ extension ModelManager {
     }
 }
 
+// MARK: Inheritance Resolution
+
 extension ModelManager {
+    /// Inherited from `DataStoreSnapshotProvider.resolvedPersistentIdentifier(for:)`.
+    nonisolated public func resolvedPersistentIdentifier(for persistentIdentifier: PersistentIdentifier) -> PersistentIdentifier? {
+        inheritance.resolvedPersistentIdentifier(for: persistentIdentifier)
+    }
+    
+    nonisolated internal func setResolvedEntityName(_ resolvedEntityName: String, for persistentIdentifier: PersistentIdentifier) {
+        inheritance.set(persistentIdentifier: persistentIdentifier, resolvingTo: persistentIdentifier)
+    }
+}
+
+// MARK: Primary Key Resolution
+
+extension ModelManager {
+    /// Inherited from `DataStoreSnapshotProvider.primaryKey(for:as:)`.
+    ///
+    /// Returns the typed primary key from the model's backing data before resorting to decoding.
+    ///
+    /// - Parameters:
+    ///   - persistentIdentifier: The identifier assigned to the model's backing data.
+    ///   - type: The original type to cast the primary key to, otherwise it will be converted.
+    /// - Returns:
+    ///   The typed primary key found in the backing data or derived from the `PersistentIdentifier`.
+    nonisolated public func primaryKey<PrimaryKey: LosslessStringConvertible & Sendable>(
+        for persistentIdentifier: PersistentIdentifier,
+        as type: PrimaryKey.Type = String.self
+    ) -> PrimaryKey {
+        switch _primaryKey(for: persistentIdentifier, as: type) {
+        case let cachedPrimaryKey?: cachedPrimaryKey
+        case nil: persistentIdentifier.primaryKey(as: type)
+        }
+    }
+    
+    nonisolated internal func _primaryKey<PrimaryKey: LosslessStringConvertible & Sendable>(
+        for persistentIdentifier: PersistentIdentifier,
+        as type: PrimaryKey.Type = String.self
+    ) -> PrimaryKey? {
+        switch _primaryKey(for: persistentIdentifier) {
+        case let cachedPrimaryKey as PrimaryKey: cachedPrimaryKey
+        case let cachedPrimaryKey?: PrimaryKey(cachedPrimaryKey.description)
+        default: nil
+        }
+    }
+    
+    nonisolated internal func _primaryKey(for persistentIdentifier: PersistentIdentifier)
+    -> (any LosslessStringConvertible & Sendable)? {
+        storage.withLock { $0[persistentIdentifier]?.primaryKey }
+    }
+    
+    nonisolated internal func primaryKeys<PrimaryKey: LosslessStringConvertible & Sendable>(
+        for persistentIdentifiers: [PersistentIdentifier],
+        as type: PrimaryKey.Type = String.self
+    ) -> [PrimaryKey] {
+        guard !persistentIdentifiers.isEmpty else { return [] }
+        let count = persistentIdentifiers.count
+        var output = Array<PrimaryKey?>(repeating: nil, count: count)
+        var missingIdentifiers = [(index: Int, identifier: PersistentIdentifier)]()
+        missingIdentifiers.reserveCapacity(count)
+        storage.withLock { storage in
+            for (index, identifier) in persistentIdentifiers.enumerated() {
+                if let backingData = storage[identifier] {
+                    if let typedPrimaryKey = backingData.primaryKey as? PrimaryKey {
+                        output[index] = typedPrimaryKey
+                    } else {
+                        output[index] = PrimaryKey(backingData.primaryKey.description)
+                    }
+                } else {
+                    missingIdentifiers.append((index, identifier))
+                }
+            }
+        }
+        for (index, identifier) in missingIdentifiers {
+            output[index] = identifier.primaryKey(as: type)
+        }
+        return output.map(\.unsafelyUnwrapped)
+    }
+    
+    nonisolated internal func primaryKeys<PrimaryKey: LosslessStringConvertible & Sendable>(
+        for persistentIdentifiers: [PersistentIdentifier],
+        as type: PrimaryKey.Type = String.self
+    ) -> [PersistentIdentifier: PrimaryKey] {
+        guard !persistentIdentifiers.isEmpty else { return [:] }
+        let count = persistentIdentifiers.count
+        var output = [PersistentIdentifier: PrimaryKey](minimumCapacity: count)
+        var missingIdentifiers = [PersistentIdentifier]()
+        missingIdentifiers.reserveCapacity(count)
+        storage.withLock { storage in
+            for identifier in persistentIdentifiers {
+                if let backingData = storage[identifier] {
+                    if let typedPrimaryKey = backingData.primaryKey as? PrimaryKey {
+                        output[identifier] = typedPrimaryKey
+                    } else {
+                        output[identifier] = PrimaryKey(backingData.primaryKey.description)
+                    }
+                } else {
+                    missingIdentifiers.append(identifier)
+                }
+            }
+        }
+        for identifier in missingIdentifiers {
+            output[identifier] = identifier.primaryKey(as: type)
+        }
+        return output
+    }
+    
+    nonisolated internal func _primaryKeys<PrimaryKey: LosslessStringConvertible & Sendable>(
+        for persistentIdentifiers: [PersistentIdentifier],
+        as type: PrimaryKey.Type = String.self
+    ) -> [PersistentIdentifier: PrimaryKey] {
+        guard !persistentIdentifiers.isEmpty else { return [:] }
+        let count = persistentIdentifiers.count
+        return storage.withLock { storage in
+            var output = [PersistentIdentifier: PrimaryKey](minimumCapacity: count)
+            for identifier in persistentIdentifiers {
+                guard let backingData = storage[identifier] else { continue }
+                if let typedPrimaryKey = backingData.primaryKey as? PrimaryKey {
+                    output[identifier] = typedPrimaryKey
+                } else {
+                    output[identifier] = PrimaryKey(backingData.primaryKey.description)
+                }
+            }
+            return output
+        }
+    }
+    
+    nonisolated internal func _primaryKeys(for persistentIdentifiers: [PersistentIdentifier])
+    -> [PersistentIdentifier: any LosslessStringConvertible & Sendable] {
+        guard !persistentIdentifiers.isEmpty else { return [:] }
+        let count = persistentIdentifiers.count
+        return storage.withLock { storage in
+            var output = [PersistentIdentifier: any LosslessStringConvertible & Sendable](minimumCapacity: count)
+            for identifier in persistentIdentifiers {
+                if let backingData = storage[identifier] {
+                    output[identifier] = backingData.primaryKey
+                }
+            }
+            return output
+        }
+    }
+}
+
+// MARK: Fetching `DatabaseBackingData`
+
+extension ModelManager {
+    nonisolated internal func backingData(for persistentIdentifier: PersistentIdentifier)
+    -> DatabaseBackingData? {
+        if let backingData = self.storage.withLock({ $0[persistentIdentifier] }) {
+            return backingData
+        }
+        let primaryKey = primaryKey(for: persistentIdentifier)
+        guard let resolvedPersistentIdentifier = resolvedPersistentIdentifier(for: persistentIdentifier),
+              resolvedPersistentIdentifier.entityName != persistentIdentifier.entityName else {
+            return nil
+        }
+        guard let storeIdentifier = persistentIdentifier.storeIdentifier else {
+            preconditionFailure("PersistentIdentifier cannot have a backing data with a nil store identifier.")
+        }
+        do {
+            let resolvedIdentifier = try PersistentIdentifier.identifier(
+                for: storeIdentifier,
+                entityName: resolvedPersistentIdentifier.entityName,
+                primaryKey: primaryKey
+            )
+            return storage.withLock { $0[resolvedIdentifier] }
+        } catch {
+            preconditionFailure("Unable to resolve identifier for backing data: \(error)")
+        }
+    }
+    
+    nonisolated internal func backingDatas(of entityName: String) -> [DatabaseBackingData] {
+        storage.withLock { storage in
+            var result = [DatabaseBackingData]()
+            for (identifier, backingData) in storage where identifier.entityName == entityName {
+                result.append(backingData)
+            }
+            return result
+        }
+    }
+}
+
+// MARK: Fetching `DatabaseSnapshot`
+
+extension ModelManager {
+    /// Inherited from `DataStoreSnapshotProvider.snapshot(for:)`.
+    nonisolated public func snapshot(for persistentIdentifier: PersistentIdentifier) -> Snapshot? {
+        snapshot(for: persistentIdentifier, remappedIdentifiers: [:])
+    }
+    
     /// Fetches the snapshot from the internal storage.
     ///
     /// - Parameters:
@@ -183,78 +379,36 @@ extension ModelManager {
     }
     
     nonisolated internal func snapshots(
-        for identifiers: [PersistentIdentifier],
+        for persistentIdentifiers: [PersistentIdentifier],
         remappedIdentifiers: [PersistentIdentifier: PersistentIdentifier] = [:]
     ) -> [PersistentIdentifier: Snapshot] {
-        guard !identifiers.isEmpty else { return [:] }
-        let backingDataMapping = self.storage.withLock { storage in
-            var result = [PersistentIdentifier: DatabaseBackingData](minimumCapacity: identifiers.count)
-            for identifier in identifiers {
-                if let backingData = storage[identifier] {
+        guard !persistentIdentifiers.isEmpty else { return [:] }
+        let backingDatas = self.storage.withLock { storage in
+            var result = [PersistentIdentifier: DatabaseBackingData](minimumCapacity: persistentIdentifiers.count)
+            for persistentIdentifier in persistentIdentifiers {
+                if let backingData = storage[persistentIdentifier] {
                     backingData.accessedTimestamp = .now()
-                    result[identifier] = backingData
+                    result[persistentIdentifier] = backingData
                 }
             }
             return result
         }
-        var snapshots = [PersistentIdentifier: Snapshot](minimumCapacity: backingDataMapping.count)
-        for (identifier, backingData) in backingDataMapping {
+        var snapshots = [PersistentIdentifier: Snapshot](minimumCapacity: backingDatas.count)
+        for (persistentIdentifier, backingData) in backingDatas {
             if let snapshot = try? Snapshot(backingData: backingData) {
-                let identifier = remappedIdentifiers[identifier] ?? identifier
-                snapshots[identifier] = remappedIdentifiers.isEmpty
+                let persistentIdentifier = remappedIdentifiers[persistentIdentifier] ?? persistentIdentifier
+                snapshots[persistentIdentifier] = remappedIdentifiers.isEmpty
                 ? snapshot
-                : snapshot.copy(
-                    persistentIdentifier: identifier,
-                    remappedIdentifiers: remappedIdentifiers
-                )
+                : snapshot.copy(persistentIdentifier: persistentIdentifier, remappedIdentifiers: remappedIdentifiers)
             }
         }
         return snapshots
     }
-    
-    nonisolated internal func upsert(snapshot: Snapshot, from registry: SnapshotRegistry) throws -> DatabaseBackingData? {
-        let persistentIdentifier = snapshot.persistentIdentifier
-        guard !snapshot.isPartial else {
-            logger.debug("Skipping cache for partial snapshot: \(persistentIdentifier)")
-            return nil
-        }
-        let backingData: DatabaseBackingData
-        switch storage.withLock({ $0 [persistentIdentifier] }) {
-        case let existingSnapshot? where existingSnapshot.createdTimestamp < snapshot.timestamp:
-            if let id = existingSnapshot.subscription.withLock({ $0?.id }) {
-                logger.trace("Found subscription identifier: \(id)")
-                self.broadcaster.broadcast(for: id, value: .init(snapshot.values))
-            }
-            existingSnapshot.createdTimestamp = snapshot.timestamp
-            existingSnapshot.values.withLock { values in values = snapshot.values }
-            logger.debug("Updated existing cached snapshot: \(persistentIdentifier)")
-            backingData = existingSnapshot
-        default:
-            backingData = .init(registry: registry, persistentIdentifier: persistentIdentifier, values: snapshot.values)
-            storage.withLock { storage in
-                storage[persistentIdentifier] = backingData
-                logger.debug("Cached new snapshot: \(persistentIdentifier)")
-            }
-            try self.initialize(for: persistentIdentifier, from: registry.id)
-        }
-        try Task.checkCancellation()
-        graph.set(owner: persistentIdentifier, mapping: extractRelationshipReferences(from: snapshot))
-        return backingData
-    }
-    
-    /// Invalidates tracked identifiers that are no longer present in the active set.
-    /// - Parameter persistentIdentifiers: The identifiers that should remain active.
-    nonisolated internal func validation(persistentIdentifiers: Set<PersistentIdentifier>) throws {
-        let trackedIdentifiers = Set(self.editingStates.withLock(\.keys))
-        let staleIdentifiers = trackedIdentifiers.subtracting(persistentIdentifiers)
-        let remainingIdentifiers = persistentIdentifiers.subtracting(trackedIdentifiers)
-        if staleIdentifiers.isEmpty && remainingIdentifiers.isEmpty { return }
-        logger.debug("Stale identifiers to invalidate: -\(staleIdentifiers.count) +\(remainingIdentifiers.count)")
-        for staleIdentifier in staleIdentifiers {
-            invalidate(persistentIdentifier: staleIdentifier)
-        }
-    }
-    
+}
+
+// MARK: Managing
+
+extension ModelManager {
     nonisolated internal func initialize(
         for persistentIdentifier: PersistentIdentifier,
         from editingStateID: EditingState.ID
@@ -293,170 +447,77 @@ extension ModelManager {
         cleanup(persistentIdentifier: persistentIdentifier)
     }
     
+    nonisolated internal func upsert(snapshot: Snapshot, from registry: Context) throws -> DatabaseBackingData? {
+        let persistentIdentifier = snapshot.persistentIdentifier
+        guard !snapshot.isPartial else {
+            logger.debug("Skipping cache for partial snapshot: \(persistentIdentifier)")
+            return nil
+        }
+        let backingData: DatabaseBackingData
+        switch storage.withLock({ $0 [persistentIdentifier] }) {
+        case let existingSnapshot? where existingSnapshot.createdTimestamp < snapshot.timestamp:
+            if let id = existingSnapshot.subscription.withLock({ $0?.id }) {
+                logger.trace("Found subscription identifier: \(id)")
+                self.broadcaster.broadcast(for: id, value: .init(snapshot.values))
+            }
+            existingSnapshot.createdTimestamp = snapshot.timestamp
+            existingSnapshot.values.withLock { values in values = snapshot.values }
+            logger.debug("Updated existing cached snapshot: \(persistentIdentifier)")
+            backingData = existingSnapshot
+        default:
+            // Walk up hierarchy.
+            var inheritanceChain = Set<String>()
+            if let entity = self.schema.entitiesByName[persistentIdentifier.entityName] {
+                var current = entity.superentity
+                while let superentity = current {
+                    inheritanceChain.insert(superentity.name)
+                    current = superentity.superentity
+                }
+            }
+            backingData = .init(
+                registry: registry,
+                inheritanceChain: inheritanceChain,
+                persistentIdentifier: persistentIdentifier,
+                values: snapshot.values
+            )
+            storage.withLock { storage in
+                storage[persistentIdentifier] = backingData
+                logger.debug("Cached new snapshot: \(persistentIdentifier)")
+            }
+            try self.initialize(for: persistentIdentifier, from: registry.id)
+        }
+        try Task.checkCancellation()
+        graph.set(owner: persistentIdentifier, mapping: extractRelationshipReferences(from: snapshot))
+        return backingData
+    }
+    
     /// Removes all cached state associated to the `PersistentModel`.
     /// - Parameter persistentIdentifier: The model's identifier to clean up.
     nonisolated private func cleanup(persistentIdentifier: PersistentIdentifier) {
         graph.removeAll(for: persistentIdentifier)
         graph.removeIncomingEdges(to: persistentIdentifier)
-        inheritance.remove(primaryKey: primaryKey(for: persistentIdentifier))
+        inheritance.remove(persistentIdentifier: persistentIdentifier)
         storage.withLock { storage in
             if let backingData = storage.removeValue(forKey: persistentIdentifier) {
                 backingData.stopListening()
             }
         }
     }
+    
+    @available(*, deprecated, message: "")
+    nonisolated internal func validation(persistentIdentifiers: Set<PersistentIdentifier>) throws {
+        let trackedIdentifiers = Set(self.editingStates.withLock(\.keys))
+        let staleIdentifiers = trackedIdentifiers.subtracting(persistentIdentifiers)
+        let remainingIdentifiers = persistentIdentifiers.subtracting(trackedIdentifiers)
+        if staleIdentifiers.isEmpty && remainingIdentifiers.isEmpty { return }
+        logger.debug("Stale identifiers to invalidate: -\(staleIdentifiers.count) +\(remainingIdentifiers.count)")
+        for staleIdentifier in staleIdentifiers {
+            invalidate(persistentIdentifier: staleIdentifier)
+        }
+    }
 }
 
-extension ModelManager {
-    nonisolated internal func backingData(for persistentIdentifier: PersistentIdentifier)
-    -> DatabaseBackingData? {
-        storage.withLock { $0[persistentIdentifier] }
-    }
-}
-
-extension ModelManager {
-    nonisolated internal func entityName(for primaryKey: String) -> String? {
-        inheritance.entityName(for: primaryKey)
-    }
-    
-    nonisolated internal func entityName(for persistentIdentifier: PersistentIdentifier) -> String? {
-        inheritance.entityName(for: primaryKey(for: persistentIdentifier))
-    }
-    
-    nonisolated internal func setEntityName(_ resolvedEntityName: String, for primaryKey: String) {
-        inheritance.set(resolvedEntityName: resolvedEntityName, primaryKey: primaryKey)
-    }
-    
-    /// Returns the primary key from the model's backing data.
-    ///
-    /// - Parameter persistentIdentifier: The identifier assigned to the model's backing data.
-    /// - Returns: The primary key.
-    nonisolated internal func _primaryKey(for persistentIdentifier: PersistentIdentifier)
-    -> (any LosslessStringConvertible & Sendable)? {
-        storage.withLock { $0[persistentIdentifier]?.primaryKey }
-    }
-    
-    /// Returns the typed primary key from the model's backing data.
-    ///
-    /// - Parameters:
-    ///   - persistentIdentifier: The identifier assigned to the model's backing data.
-    ///   - type: The original type to cast the primary key to, otherwise it will be converted.
-    /// - Returns: The typed primary key.
-    nonisolated internal func _primaryKey<PrimaryKey: LosslessStringConvertible & Sendable>(
-        for persistentIdentifier: PersistentIdentifier,
-        as type: PrimaryKey.Type = String.self
-    ) -> PrimaryKey? {
-        switch _primaryKey(for: persistentIdentifier) {
-        case let cachedPrimaryKey as PrimaryKey: cachedPrimaryKey
-        case let cachedPrimaryKey?: PrimaryKey(cachedPrimaryKey.description)
-        default: nil
-        }
-    }
-    
-    /// Returns the typed primary key from the model's backing data before resorting to decoding.
-    ///
-    /// - Parameters:
-    ///   - persistentIdentifier: The identifier assigned to the model's backing data.
-    ///   - type: The original type to cast the primary key to, otherwise it will be converted.
-    /// - Returns: The typed primary key found in the backing data or derived from the `PersistentIdentifier`.
-    nonisolated internal func primaryKey<PrimaryKey: LosslessStringConvertible & Sendable>(
-        for persistentIdentifier: PersistentIdentifier,
-        as type: PrimaryKey.Type = String.self
-    ) -> PrimaryKey {
-        switch _primaryKey(for: persistentIdentifier, as: type) {
-        case let cachedPrimaryKey?: cachedPrimaryKey
-        case nil: persistentIdentifier.primaryKey(as: type)
-        }
-    }
-    
-    nonisolated internal func _primaryKeys(
-        for persistentIdentifiers: [PersistentIdentifier]
-    ) -> [PersistentIdentifier: any LosslessStringConvertible & Sendable] {
-        guard !persistentIdentifiers.isEmpty else { return [:] }
-        return storage.withLock { storage in
-            var output = [PersistentIdentifier: any LosslessStringConvertible & Sendable](minimumCapacity: persistentIdentifiers.count)
-            for identifier in persistentIdentifiers {
-                if let backingData = storage[identifier] {
-                    output[identifier] = backingData.primaryKey
-                }
-            }
-            return output
-        }
-    }
-    
-    nonisolated internal func _primaryKeys<PrimaryKey: LosslessStringConvertible & Sendable>(
-        for persistentIdentifiers: [PersistentIdentifier],
-        as type: PrimaryKey.Type = String.self
-    ) -> [PersistentIdentifier: PrimaryKey] {
-        guard !persistentIdentifiers.isEmpty else { return [:] }
-        return storage.withLock { storage in
-            var output = [PersistentIdentifier: PrimaryKey](minimumCapacity: persistentIdentifiers.count)
-            for identifier in persistentIdentifiers {
-                guard let backingData = storage[identifier] else { continue }
-                if let typedPrimaryKey = backingData.primaryKey as? PrimaryKey {
-                    output[identifier] = typedPrimaryKey
-                } else {
-                    output[identifier] = PrimaryKey(backingData.primaryKey.description)
-                }
-            }
-            return output
-        }
-    }
-    
-    nonisolated internal func primaryKeys<PrimaryKey: LosslessStringConvertible & Sendable>(
-        for persistentIdentifiers: [PersistentIdentifier],
-        as type: PrimaryKey.Type = String.self
-    ) -> [PersistentIdentifier: PrimaryKey] {
-        guard !persistentIdentifiers.isEmpty else { return [:] }
-        var output = [PersistentIdentifier: PrimaryKey](minimumCapacity: persistentIdentifiers.count)
-        var missing = [PersistentIdentifier]()
-        missing.reserveCapacity(persistentIdentifiers.count)
-        storage.withLock { storage in
-            for identifier in persistentIdentifiers {
-                if let backingData = storage[identifier] {
-                    if let typedPrimaryKey = backingData.primaryKey as? PrimaryKey {
-                        output[identifier] = typedPrimaryKey
-                    } else {
-                        output[identifier] = PrimaryKey(backingData.primaryKey.description)
-                    }
-                } else {
-                    missing.append(identifier)
-                }
-            }
-        }
-        for identifier in missing {
-            output[identifier] = identifier.primaryKey(as: type)
-        }
-        return output
-    }
-    
-    nonisolated internal func primaryKeys<PrimaryKey: LosslessStringConvertible & Sendable>(
-        for persistentIdentifiers: [PersistentIdentifier],
-        as type: PrimaryKey.Type = String.self
-    ) -> [PrimaryKey] {
-        guard !persistentIdentifiers.isEmpty else { return [] }
-        var output = Array<PrimaryKey?>(repeating: nil, count: persistentIdentifiers.count)
-        var missing = [(index: Int, identifier: PersistentIdentifier)]()
-        missing.reserveCapacity(persistentIdentifiers.count)
-        storage.withLock { storage in
-            for (index, identifier) in persistentIdentifiers.enumerated() {
-                if let backingData = storage[identifier] {
-                    if let typedPrimaryKey = backingData.primaryKey as? PrimaryKey {
-                        output[index] = typedPrimaryKey
-                    } else {
-                        output[index] = PrimaryKey(backingData.primaryKey.description)
-                    }
-                } else {
-                    missing.append((index, identifier))
-                }
-            }
-        }
-        for (index, identifier) in missing {
-            output[index] = identifier.primaryKey(as: type)
-        }
-        return output.map(\.unsafelyUnwrapped)
-    }
-}
+// MARK: Cache
 
 extension ModelManager {
     nonisolated internal func currentGlobalGeneration() -> UInt64 {
@@ -471,9 +532,7 @@ extension ModelManager {
         guard !entities.isEmpty else { return [:] }
         return entityCacheRevisions.withLock { generations in
             var output = [String: UInt64](minimumCapacity: entities.count)
-            for entity in entities {
-                output[entity] = generations[entity] ?? 0
-            }
+            for entity in entities { output[entity] = generations[entity] ?? 0 }
             return output
         }
     }
@@ -488,6 +547,8 @@ extension ModelManager {
         }
     }
 }
+
+// MARK: ReferenceGraph
 
 extension ModelManager {
     internal enum IndexingMode: Sendable {
@@ -527,25 +588,24 @@ extension ModelManager {
     }
 }
 
+// MARK: Debug
+
 extension ModelManager {
-    nonisolated internal func debugDetailedLogging(listAll: Bool = false) {
-        let snapshot = self.editingStates.withLock { $0 }
+    nonisolated internal func debugDetailedLogging(level: Logger.Level = .info, listAll: Bool = false) {
+        let snapshot = self.editingStates.withLock(\.self)
         let total = snapshot.count
         var byEntity = [String: [(key: PersistentIdentifier, value: Int)]]()
         byEntity.reserveCapacity(snapshot.count)
         for (persistentIdentifier, states) in snapshot {
-            byEntity[persistentIdentifier.entityName, default: []]
-                .append((persistentIdentifier, states.count))
+            byEntity[persistentIdentifier.entityName, default: []].append((persistentIdentifier, states.count))
         }
         let entitySummaries = byEntity
             .sorted { $0.key < $1.key }
             .map { key, items in "\(key): \(items.count)" }
             .joined(separator: ", ")
-        let _0 = "total: \(total)"
-        let _1 = "entities: \(byEntity.count)"
-        let _2 = "[\(entitySummaries)]"
-        logger.info("PersistentIdentifiers — \(_0), \(_1) \(_2)")
-        graph.debugDetailedLogging(listAll: true)
+        let _0 = "total: \(total)"; let _1 = "entities: \(byEntity.count)"; let _2 = "[\(entitySummaries)]"
+        logger.log(level: level, "PersistentIdentifiers — \(_0), \(_1) \(_2)")
+        graph.debugDetailedLogging(level: level, listAll: true)
         graph.verifyIntegrity()
         guard listAll else { return }
         for (entity, items) in byEntity.sorted(by: { ($0.value.count, $0.key) > ($1.value.count, $1.key) }) {
@@ -553,7 +613,7 @@ extension ModelManager {
                 .sorted { ($0.value, "\($0.key)") > ($1.value, "\($1.key)") }
                 .map { "\($0.key) [\($0.value)]" }
                 .joined(separator: ", ")
-            logger.info("[\(entity)] \(items.count) identifiers: \(line)")
+            logger.log(level: level, "[\(entity)] \(items.count) identifiers: \(line)")
         }
     }
 }

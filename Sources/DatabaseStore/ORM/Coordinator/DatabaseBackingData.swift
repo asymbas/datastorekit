@@ -20,6 +20,7 @@ package final class DatabaseBackingData: Sendable {
     @DatabaseActor internal var cachedFetchResults: Set<Int> = []
     nonisolated private let _createdTimestamp: Atomic<UInt64> = .init(DispatchTime.now().uptimeNanoseconds)
     nonisolated private let _accessedTimestamp: Atomic<UInt64> = .init(DispatchTime.now().uptimeNanoseconds)
+    nonisolated internal let inheritanceChain: Set<String>
     nonisolated internal let recordIdentifier: RecordIdentifier
     nonisolated internal let values: Mutex<ContiguousArray<any DataStoreSnapshotValue>>
     nonisolated internal let subscription: Mutex<Subscription?>
@@ -55,11 +56,13 @@ package final class DatabaseBackingData: Sendable {
     nonisolated internal init(
         registry: SnapshotRegistry? = nil,
         storeIdentifier: String,
+        inheritanceChain: Set<String>,
         tableName: String,
         primaryKey: any LosslessStringConvertible & Sendable,
         values: ContiguousArray<any DataStoreSnapshotValue>
     ) {
         self.registry = registry
+        self.inheritanceChain = inheritanceChain
         self.recordIdentifier = .init(for: storeIdentifier, tableName: tableName, primaryKey: primaryKey)
         self.values = .init(values)
         self.subscription = .init(nil)
@@ -67,6 +70,7 @@ package final class DatabaseBackingData: Sendable {
     
     nonisolated internal convenience init(
         registry: SnapshotRegistry? = nil,
+        inheritanceChain: Set<String>,
         persistentIdentifier: PersistentIdentifier,
         values: ContiguousArray<any DataStoreSnapshotValue>
     ) {
@@ -78,6 +82,7 @@ package final class DatabaseBackingData: Sendable {
         self.init(
             registry: registry,
             storeIdentifier: storeIdentifier,
+            inheritanceChain: inheritanceChain,
             tableName: tableName,
             primaryKey: primaryKey,
             values: values

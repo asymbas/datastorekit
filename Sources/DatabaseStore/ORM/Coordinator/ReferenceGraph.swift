@@ -764,9 +764,9 @@ extension ReferenceGraph {
     }
     
     nonisolated internal func debugDetailedLogging(
+        level: Logger.Level = .info,
         listAll: Bool = false,
-        topCount: Int = 10,
-        logLevel: Logger.Level = .info
+        topCount: Int = 10
     ) {
         let snapshot = self.storage.withLock(\.self)
         let forward = snapshot.forward
@@ -799,20 +799,20 @@ extension ReferenceGraph {
         let _1 = "targets: \(totalTargets)"
         let _2 = "edges: \(totalEdges)"
         let _3 = "property-target-entity pairs: \(targetCountByProperty.count)"
-        logger.log(level: logLevel, "References - \(_0), \(_1), \(_2), \(_3)")
+        logger.log(level: level, "References - \(_0), \(_1), \(_2), \(_3)")
         if !ownerEntities.isEmpty {
             let summary = ownerEntities
                 .sorted { $0.key < $1.key }
                 .map { "\($0.key): \($0.value)" }
                 .joined(separator: ", ")
-            logger.log(level: logLevel, "Owner entities: [\(summary)]")
+            logger.log(level: level, "Owner entities: [\(summary)]")
         }
         if !targetEntities.isEmpty {
             let summary = targetEntities
                 .sorted { $0.key < $1.key }
                 .map { "\($0.key): \($0.value)" }
                 .joined(separator: ", ")
-            logger.log(level: logLevel, "Target entities: [\(summary)]")
+            logger.log(level: level, "Target entities: [\(summary)]")
         }
         if !targetEntityCountByName.isEmpty {
             let topProperties = targetCountByProperty
@@ -820,19 +820,19 @@ extension ReferenceGraph {
                 .prefix(topCount)
                 .map { "\($0.key): \($0.value)" }
                 .joined(separator: ", ")
-            logger.log(level: logLevel, "Top properties: [\(topProperties)]")
+            logger.log(level: level, "Top properties: [\(topProperties)]")
         }
         if !ownerEntityCountByName.isEmpty {
             let topOwners = ownerEntityCountByName.prefix(topCount)
                 .map { "\($0.0) [\($0.1)]" }
                 .joined(separator: ", ")
-            logger.log(level: logLevel, "Top owners by outgoing edges: \(topOwners)")
+            logger.log(level: level, "Top owners by outgoing edges: \(topOwners)")
         }
         if !targetEntityCountByName.isEmpty {
             let topTargets = targetEntityCountByName.prefix(topCount)
                 .map { "\($0.0) [\($0.1)]" }
                 .joined(separator: ", ")
-            logger.log(level: logLevel, "Top targets by incoming edges: \(topTargets)")
+            logger.log(level: level, "Top targets by incoming edges: \(topTargets)")
         }
         guard listAll else { return }
         let grouped: [
@@ -844,7 +844,7 @@ extension ReferenceGraph {
             $0[$1.key.entityName, default: []].append(($1.key, $1.value))
         }
         for (entity, items) in grouped.sorted(by: { $0.key < $1.key }) {
-            logger.log(level: logLevel, "[\(entity)] \(items.count) owners")
+            logger.log(level: level, "[\(entity)] \(items.count) owners")
             for (owner, byProperties) in items.sorted(by: { "\($0.0)" < "\($1.0)" }) {
                 let parts = byProperties
                     .sorted {
@@ -870,7 +870,7 @@ extension ReferenceGraph {
                 let ownerPrimaryKey = owner.primaryKey()
                 let ownerLine = "Outgoing references grouped by property for \(ownerEntityName) entity."
                 logger.log(
-                    level: logLevel,
+                    level: level,
                     "\(ownerLine)\n\(parts)",
                     metadata: [
                         "entity": "\(ownerEntityName)",
