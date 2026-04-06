@@ -170,6 +170,9 @@ nonisolated package func fetchExternalReferences(
                 entityName: concreteEntityName /*relationship.destination*/,
                 primaryKey: foreignKey
             )
+            return property.hasSubentities
+            ? try connection.resolvePersistentIdentifier(for: relatedIdentifier)
+            : relatedIdentifier
         }
     }
     if let graph = connection.context?.graph {
@@ -437,7 +440,11 @@ nonisolated package func fetchExternalReferenceKeysBatched(
                 entityName: concreteEntityName /*relationship.destination*/,
                 primaryKey: relatedPrimaryKey
             )
-            result[ownerIdentifier, default: []].append(relatedIdentifier)
+            result[ownerIdentifier, default: []].append(
+                property.hasSubentities
+                ? try connection.resolvePersistentIdentifier(for: relatedIdentifier)
+                : relatedIdentifier
+            )
         }
     }
     if let graph {

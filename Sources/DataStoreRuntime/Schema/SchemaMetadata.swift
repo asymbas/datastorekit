@@ -240,6 +240,9 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                           let inverseRelationship = destinationEntity.relationshipsByName[inverseName] else {
                         fatalError(SchemaError.relationshipTargetEntityNotRegistered.localizedDescription)
                     }
+                    if !destinationEntity.subentities.isEmpty {
+                        property.flags.insert(.hasSubentities)
+                    }
                     var array = [TableReference]()
                     switch true {
                     case !relationship.isToOneRelationship where !inverseRelationship.isToOneRelationship:

@@ -49,9 +49,11 @@ public struct PropertyMetadata: Equatable, Hashable, Sendable {
         
         nonisolated package static let isInherited: Self = .init(rawValue: 1 << 3)
         
-        nonisolated package static let isUnique: Self = .init(rawValue: 1 << 4)
+        nonisolated package static let hasSubentities: Self = .init(rawValue: 1 << 4)
         
-        nonisolated package static let isOptional: Self = .init(rawValue: 1 << 5)
+        nonisolated package static let isUnique: Self = .init(rawValue: 1 << 5)
+        
+        nonisolated package static let isOptional: Self = .init(rawValue: 1 << 6)
         
         nonisolated package let rawValue: UInt8
         
@@ -139,6 +141,10 @@ public struct PropertyMetadata: Equatable, Hashable, Sendable {
     nonisolated public var isInherited: Bool {
         guard metadata is Schema.Attribute else { return false }
         return reference != nil && reference?.count == 1
+    }
+    
+    nonisolated public var hasSubentities: Bool {
+        flags.contains(.hasSubentities)
     }
     
     /// Determines whether the entity's property is an attribute (inherited or composite).

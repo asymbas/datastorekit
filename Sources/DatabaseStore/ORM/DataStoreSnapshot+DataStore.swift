@@ -251,7 +251,8 @@ extension DatabaseSnapshot {
                     throw error
                 }
             }
-            if let relationship = property.metadata as? Schema.Relationship,
+            if property.hasSubentities,
+               let relationship = property.metadata as? Schema.Relationship,
                relationship.isToOneRelationship,
                let foreignKey = values[offset] as? String,
                let destinationEntity = schema.entitiesByName[relationship.destination],
