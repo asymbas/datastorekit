@@ -26,7 +26,7 @@ import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
-extension DatabaseSnapshot: DatabaseContext {
+extension DatabaseSnapshot: StoreBound {
     public typealias Store = DatabaseStore
 }
 
@@ -869,7 +869,7 @@ extension DatabaseSnapshot {
         #endif
         return .init(
             persistentIdentifier: persistentIdentifier,
-            primaryKey: primaryKey,
+            primaryKey: persistentIdentifier.primaryKey(),
             type: type,
             properties: properties,
             values: values,
@@ -943,9 +943,10 @@ extension DatabaseSnapshot {
                 persistentIdentifier: try PersistentIdentifier.identifier(
                     for: persistentIdentifier.storeIdentifier.unsafelyUnwrapped,
                     entityName: entity.name,
-                    primaryKey: persistentIdentifier.primaryKey()
+                    primaryKey: primaryKey
                 ),
                 type: superType,
+                properties: superProperties,
                 values: superValues
             )
             newSnapshot.flags.insert(.isPartial)
@@ -1791,12 +1792,13 @@ extension DatabaseSnapshot {
                 values.append(value)
             }
         }
-        let snapshot = Self(
+        var snapshot = Self(
             persistentIdentifier: superentityIdentifier,
             type: superType,
             properties: properties,
             values: values
         )
+        snapshot.flags.insert(.isPartial)
         relatedSnapshots[superentityIdentifier] = consume snapshot
         return try Self.fetchSuperentitySnapshots(
             for: superentityIdentifier,
@@ -1873,6 +1875,54 @@ extension DatabaseSnapshot {
             walkDown(entity)
         }
         return entityInheritanceChain
+    }
+    
+    nonisolated package static func fetchInheritanceDependencies(
+        for persistentIdentifier: PersistentIdentifier,
+        from entity: Schema.Entity,
+        upTo excludedAncestor: Schema.Entity,
+        type: any (PersistentModel & SendableMetatype).Type,
+        connection: borrowing DatabaseConnection<Store>
+    ) throws -> [(property: PropertyMetadata, value: any Sendable)] {
+        let chain = Self.collectClassTableInheritanceHierarchy(from: entity, upTo: excludedAncestor)
+        guard !chain.isEmpty, let root = chain.first else {
+            return []
+        }
+        return try connection.fetch(
+            SQL {
+                "SELECT \(chain.map { "\(quote($0.name)).*" }.joined(separator: ", "))"
+                From(root.name)
+                for index in 1..<chain.count {
+                    let left = quote(chain[index - 1].name)
+                    let right = quote(chain[index].name)
+                    "LEFT JOIN \(right) ON \(left).\(quote(pk)) = \(right).\(quote(pk))"
+                }
+                "WHERE \(quote(root.name)).\(quote(pk)) = ?"
+                Limit(1)
+            }.sql,
+            bindings: [persistentIdentifier.primaryKey()],
+            into: [(property: PropertyMetadata, value: any Sendable)]()
+        ) { collection, row in
+            for column in row.columns where column.name != pk {
+                guard let property = type.schemaMetadata(for: column.name) else {
+                    continue
+                }
+                collection.append((property, column.value))
+            }
+        }
+    }
+    
+    nonisolated package static func collectClassTableInheritanceHierarchy(
+        from entity: Schema.Entity,
+        upTo excludedAncestor: Schema.Entity
+    ) -> [Schema.Entity] {
+        var chain = [Schema.Entity]()
+        var current: Schema.Entity? = entity
+        while let entity = current, entity.name != excludedAncestor.name {
+            chain.append(entity)
+            current = entity.superentity
+        }
+        return chain.reversed()
     }
     
     package enum FetchHierarchyDirection {

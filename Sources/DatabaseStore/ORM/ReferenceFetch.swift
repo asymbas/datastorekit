@@ -158,16 +158,9 @@ nonisolated package func fetchExternalReferences(
     }
     let relatedIdentifiers = try results.compactMap { result -> PersistentIdentifier? in
         try (result[relationshipAlias] as? String).flatMap { foreignKey -> PersistentIdentifier? in
-            let concreteEntityName = try resolveConcreteEntityName(
-                for: foreignKey,
-                destination: relationship.destination,
-                storeIdentifier: storeIdentifier,
-                schema: schema,
-                connection: connection
-            )
-            return try PersistentIdentifier.identifier(
+            let relatedIdentifier = try PersistentIdentifier.identifier(
                 for: storeIdentifier,
-                entityName: concreteEntityName /*relationship.destination*/,
+                entityName: relationship.destination,
                 primaryKey: foreignKey
             )
             return property.hasSubentities
@@ -428,16 +421,9 @@ nonisolated package func fetchExternalReferenceKeysBatched(
             guard let relatedPrimaryKey = row[1] as? String else {
                 continue
             }
-            let concreteEntityName = try resolveConcreteEntityName(
-                for: relatedPrimaryKey,
-                destination: relationship.destination,
-                storeIdentifier: storeIdentifier,
-                schema: schema,
-                connection: connection
-            )
             let relatedIdentifier = try PersistentIdentifier.identifier(
                 for: storeIdentifier,
-                entityName: concreteEntityName /*relationship.destination*/,
+                entityName: relationship.destination,
                 primaryKey: relatedPrimaryKey
             )
             result[ownerIdentifier, default: []].append(
@@ -458,97 +444,6 @@ nonisolated package func fetchExternalReferenceKeysBatched(
         }
     }
     return result
-}
-
-nonisolated package func resolveConcreteEntityName(
-    for primaryKey: String,
-    destination: String,
-    manager: ModelManager? = nil
-) -> String {
-    manager?.entityName(for: primaryKey) ?? destination
-}
-
-nonisolated package func resolveConcreteEntityName(
-    for primaryKey: String,
-    destination: String,
-    storeIdentifier: String,
-    schema: Schema,
-    connection: borrowing DatabaseConnection<DatabaseStore>,
-    manager: ModelManager? = nil
-) throws -> String {
-    if let resolved = manager?.entityName(for: primaryKey) {
-        return resolved
-    }
-    guard let destinationEntity = schema.entitiesByName[destination] else {
-        throw SchemaError.relationshipTargetEntityNotRegistered
-    }
-    guard !destinationEntity.subentities.isEmpty else {
-        return destination
-    }
-    let temporaryIdentifier = try PersistentIdentifier.identifier(
-        for: storeIdentifier,
-        entityName: destination,
-        primaryKey: primaryKey
-    )
-    let resolved = try fetchInheritanceEntity(
-        for: temporaryIdentifier,
-        on: destinationEntity,
-        connection: connection
-    ).name
-    manager?.setEntityName(resolved, for: primaryKey)
-    return resolved
-}
-
-nonisolated package func resolveConcreteEntityName(
-    for primaryKey: String,
-    destination: String,
-    storeIdentifier: String,
-    schema: Schema,
-    connection: borrowing DatabaseConnection<DatabaseStore>
-) throws -> String {
-    guard let destinationEntity = schema.entitiesByName[destination] else {
-        throw SchemaError.relationshipTargetEntityNotRegistered
-    }
-    guard !destinationEntity.subentities.isEmpty else {
-        logger.trace(
-            "Destination entity has no subentities: \(destination)",
-            metadata: [
-                "destination": "\(destination)",
-                "destination_entity": "\(destinationEntity)"
-            ]
-        )
-        return destination
-    }
-    let temporaryIdentifier = try PersistentIdentifier.identifier(
-        for: storeIdentifier,
-        entityName: destination,
-        primaryKey: primaryKey
-    )
-    return try fetchInheritanceEntity(
-        for: temporaryIdentifier,
-        on: destinationEntity,
-        connection: connection
-    ).name
-}
-
-nonisolated package func fetchInheritanceEntity(
-    for persistentIdentifier: PersistentIdentifier,
-    on entity: Schema.Entity,
-    connection: borrowing DatabaseConnection<DatabaseStore>
-) throws -> Schema.Entity {
-    for subentity in entity.subentities {
-        let rows = try connection.query(
-            """
-            SELECT 1 FROM "\(subentity.name)"
-            WHERE "\(pk)" = ?
-            LIMIT 1
-            """,
-            bindings: [persistentIdentifier.primaryKey()]
-        )
-        guard !rows.isEmpty else { continue }
-        return try fetchInheritanceEntity(for: persistentIdentifier, on: subentity, connection: connection)
-    }
-    return entity
 }
 
 nonisolated package func fetchRowsByPrimaryKeys(

@@ -65,6 +65,28 @@ extension DatabaseSnapshot {
         )
     }
     
+    nonisolated internal init(
+        queue: DatabaseQueue<Store>,
+        properties: consuming ArraySlice<PropertyMetadata>,
+        values: consuming ArraySlice<any Sendable>,
+        relatedSnapshots: inout [PersistentIdentifier: Self]
+    ) throws {
+        guard let storeIdentifier = queue.attachment?.store?.identifier else {
+            preconditionFailure("A DatabaseQueue must always be attached to a DatabaseStore.")
+        }
+        guard let configuration = queue.attachment?.configuration else {
+            preconditionFailure("A DatabaseQueue must always have a DatabaseConfiguration.")
+        }
+        self = try Self(
+            storeIdentifier: storeIdentifier,
+            configuration: configuration,
+            queue: queue,
+            properties: properties,
+            values: values,
+            relatedSnapshots: &relatedSnapshots
+        )
+    }
+    
     nonisolated public init(
         storeIdentifier: String,
         configuration: DatabaseConfiguration,
@@ -87,59 +109,30 @@ extension DatabaseSnapshot {
         guard let type = discriminator.valueType as? any PersistentModel.Type else {
             throw ModelMappingError.discriminatorKeyNotFound
         }
-        guard let value = discriminator.defaultValue ?? schema.entity(for: type),
-              let entity = value as? Schema.Entity else {
+        guard let entity = (discriminator.defaultValue as? Schema.Entity) ?? schema.entity(for: type) else {
             throw SchemaError.entityNotRegistered
         }
-        var properties = properties
-        let persistentIdentifier = try PersistentIdentifier.identifier(
+        let connection = try queue.request(.reader)
+        let provider = connection.provider
+        let resolvedEntity = try connection.resolveEntity(entity, for: .identifier(
             for: storeIdentifier,
             entityName: entity.name,
             primaryKey: primaryKey
-        )
-        let connection = try queue.request(.reader)
-        let resolvedEntity: Schema.Entity
-        let inheritedValues: [String: any DataStoreSnapshotValue]
-        do {
-            resolvedEntity = try fetchInheritanceEntity(
-                for: persistentIdentifier,
-                on: entity,
-                connection: connection
-            )
-            if entity.superentity != nil || !entity.subentities.isEmpty {
-                inheritedValues = try Self.fetchInheritanceDependencies(
-                    for: persistentIdentifier,
-                    on: entity,
-                    connection: connection,
-                    direction: .both,
-                    excludeExistingValues: true
-                )
-            } else {
-                inheritedValues = [:]
-            }
-        } catch {
-            queue.release(consume connection)
-            throw error
+        ))
+        guard let resolvedType = Schema.type(for: resolvedEntity.name) else {
+            preconditionFailure()
         }
-        let resolvedType = (Schema.type(for: resolvedEntity.name)) ?? type
         let resolvedPersistentIdentifier = try PersistentIdentifier.identifier(
             for: storeIdentifier,
             entityName: resolvedEntity.name,
             primaryKey: primaryKey
         )
-        if resolvedEntity.superentity != nil {
-            do {
-                _ = try Self.fetchSuperentitySnapshots(
-                    for: resolvedPersistentIdentifier,
-                    on: resolvedEntity,
-                    connection: connection,
-                    relatedSnapshots: &relatedSnapshots
-                )
-            } catch {
-                throw error
-            }
-        }
-        queue.release(consume connection)
+       
+        logger.debug("Creating snapshot for \(resolvedEntity.name) that inherits from \(entity.name).", metadata: [
+            "type": "\(type)",
+            "resolvedType": "\(resolvedType)",
+//                    "row": "\(zip(properties.map(\.name), values))"
+        ])
         if let relatedSnapshot = relatedSnapshots[resolvedPersistentIdentifier] {
             logger.trace("\(resolvedEntity.name) snapshot found in related snapshots: \(primaryKey)")
             self = consume relatedSnapshot
@@ -177,34 +170,35 @@ extension DatabaseSnapshot {
             entityName: resolvedEntity.name,
             properties: .init(resolvedType.databaseSchemaMetadata)
         )
-        if !inheritedValues.isEmpty {
-            logger.debug("Creating snapshot for \(resolvedEntity.name) that inherits from \(entity.name).", metadata: [
-                "type": "\(type)",
-                "resolvedType": "\(resolvedType)",
-                "row": "\(zip(properties.map(\.name), values))"
-            ])
-            for index in properties.indices {
-                let existing = properties[index]
-                if inheritedValues[existing.name] != nil {
-                    continue
-                }
-                guard var resolvedProperty = resolvedType.schemaMetadata(for: existing.name) else {
-                    continue
-                }
-                resolvedProperty.isSelected = existing.isSelected
-                properties[index] = resolvedProperty
+        let didResolveToSubentity = resolvedEntity.name != entity.name
+        if didResolveToSubentity {
+            let inheritedValues = try Self.fetchInheritanceDependencies(
+                for: resolvedPersistentIdentifier,
+                from: resolvedEntity,
+                upTo: entity,
+                type: resolvedType,
+                connection: connection
+            )
+            logger.debug("\(entity.name) -> \(resolvedEntity.name) inherited: \(inheritedValues.map(\.property))")
+            for (property, value) in inheritedValues {
+                try setValue(value, at: property, externalStorageURL: configuration.externalStorageURL)
             }
+            queue.release(consume connection)
         } else {
+            queue.release(consume connection)
             logger.debug("Creating snapshot for \(entity.name).", metadata: [
                 "type": "\(type)",
-                "row": "\(zip(properties.map(\.name), values))"
             ])
         }
         let configuration = configuration
         var excludedProperties = [PropertyMetadata]()
         var cursor = values.index(after: values.startIndex)
         properties = properties.dropFirst()
-        for (index, property) in properties.enumerated() {
+        for (index, var property) in properties.enumerated() {
+            if didResolveToSubentity, var resolved = resolvedType.schemaMetadata(for: property.name) {
+                resolved.isSelected = property.isSelected
+                property = resolved
+            }
             let offset = cursor
             let description = "\(primaryKey) \(discriminator.index)-\(entityName).\(property)"
             logger.trace("Assigning result set column \(offset) to property \(index): \(description)")
@@ -254,15 +248,14 @@ extension DatabaseSnapshot {
             if property.hasSubentities,
                let relationship = property.metadata as? Schema.Relationship,
                relationship.isToOneRelationship,
-               let foreignKey = values[offset] as? String,
-               let destinationEntity = schema.entitiesByName[relationship.destination],
-               !destinationEntity.subentities.isEmpty {
+               let foreignKey = values[offset] as? String {
+                let identifier = try PersistentIdentifier.identifier(
+                    for: storeIdentifier,
+                    entityName: relationship.destination,
+                    primaryKey: foreignKey
+                )
                 try setValue(
-                    try PersistentIdentifier.identifier(
-                        for: storeIdentifier,
-                        entityName: registry?.entityName(for: foreignKey) ?? relationship.destination,
-                        primaryKey: foreignKey
-                    ),
+                    provider?.resolvedPersistentIdentifier(for: identifier) ?? identifier,
                     at: property,
                     externalStorageURL: configuration.externalStorageURL
                 )
@@ -281,6 +274,7 @@ extension DatabaseSnapshot {
             let connection = try queue.request(.reader)
             let results = Mutex<[Int: any DataStoreSnapshotValue]>(.init(minimumCapacity: count))
             let excludedPropertiesCopy = consume excludedProperties
+            let persistentIdentifier = self.persistentIdentifier
             DispatchQueue.concurrentPerform(iterations: count) { index in
                 let property = excludedPropertiesCopy[index]
                 guard let relationship = property.metadata as? Schema.Relationship else {
@@ -289,26 +283,14 @@ extension DatabaseSnapshot {
                 do {
                     let value: any DataStoreSnapshotValue
                     if let graph = registry?.graph,
-                       let cachedTargets = graph.cachedReferencesIfPresent(
-                        for: resolvedPersistentIdentifier,
-                        at: property.name
-                       ) {
+                       let cachedTargets = graph.cachedReferencesIfPresent(for: persistentIdentifier, at: property.name) {
                         value = try ensureRelationshipValue(cachedTargets, in: relationship)
                         logger.trace("Resolved excluded properties using graph: \(property) = \(cachedTargets)")
                     } else {
-                        value = try fetchExternalReferences(
-                            for: resolvedPersistentIdentifier,
-                            in: property,
-                            schema: configuration.schema,
-                            connection: connection
-                        )
+                        value = try fetchExternalReferences(for: persistentIdentifier, in: property, connection: connection)
                         if let graph = registry?.graph,
                            let targets = ReferenceGraph.normalizeTargets(value) {
-                            graph.setReferences(
-                                for: resolvedPersistentIdentifier,
-                                at: property.name,
-                                to: targets
-                            )
+                            graph.setReferences(for: persistentIdentifier, at: property.name, to: targets)
                         }
                         logger.debug("Resolved excluded properties using store: \(property) = \(value)")
                     }
@@ -331,12 +313,7 @@ extension DatabaseSnapshot {
                 }
                 do {
                     let connection = try queue.request(.reader)
-                    self.values[property.index] = try fetchExternalReferences(
-                        for: resolvedPersistentIdentifier,
-                        in: property,
-                        schema: configuration.schema,
-                        connection: connection
-                    )
+                    self.values[property.index] = try fetchExternalReferences(for: persistentIdentifier, in: property, connection: connection)
                 } catch {
                     logger.error("An error occurred fetching reference: \(property) -> \(error)")
                 }
