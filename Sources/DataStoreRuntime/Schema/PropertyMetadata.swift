@@ -139,8 +139,9 @@ public struct PropertyMetadata: Equatable, Hashable, Sendable {
     
     /// Determines whether the entity's property is inherited from a superentity.
     nonisolated public var isInherited: Bool {
-        guard metadata is Schema.Attribute else { return false }
-        return reference != nil && reference?.count == 1
+        flags.contains(.isInherited)
+//        guard metadata is Schema.Attribute else { return false }
+//        return reference != nil && reference?.count == 1
     }
     
     nonisolated public var hasSubentities: Bool {
@@ -201,6 +202,34 @@ public struct PropertyMetadata: Equatable, Hashable, Sendable {
         if metadata.isOptional { flags.insert(.isOptional) }
     }
     
+    nonisolated internal init(
+        index: Int,
+        name: String? = nil,
+        keyPath: AnyKeyPath & Sendable,
+        defaultValue: Any? = nil,
+        metadata: any SchemaProperty,
+        enclosing: (any SchemaProperty)? = nil,
+        reference: [TableReference]? = nil,
+        flags: Flags? = nil
+    ) {
+        self.index = index
+        self.name = name ?? metadata.name
+        self.keyPath = keyPath
+        self.metadata = metadata
+        self.enclosing = enclosing
+        self.reference = reference
+        if let flags {
+            self.flags = flags
+        } else {
+            self.flags =
+            (metadata is Schema.Attribute) ||
+            (metadata as? Schema.Relationship)?.isToOneRelationship == true
+            ? .isSelected : []
+            if metadata.isUnique { self.flags.insert(.isUnique) }
+            if metadata.isOptional { self.flags.insert(.isOptional) }
+        }
+    }
+    
     nonisolated internal func copy(
         index: Int? = nil,
         name: String? = nil,
@@ -208,7 +237,8 @@ public struct PropertyMetadata: Equatable, Hashable, Sendable {
         defaultValue: Any? = nil,
         metadata: (any SchemaProperty)? = nil,
         enclosing: (any SchemaProperty)? = nil,
-        reference: [TableReference]? = nil
+        reference: [TableReference]? = nil,
+        flags: Flags? = nil
     ) -> Self {
         .init(
             index: index ?? self.index,
@@ -217,7 +247,8 @@ public struct PropertyMetadata: Equatable, Hashable, Sendable {
             defaultValue: defaultValue ?? self.defaultValue,
             metadata: metadata ?? self.metadata,
             enclosing: enclosing ?? self.enclosing,
-            reference: reference ?? self.reference
+            reference: reference ?? self.reference,
+            flags: flags ?? self.flags
         )
     }
     

@@ -1074,7 +1074,9 @@ extension SQLPredicateTranslator {
                 if options.contains(.allowKeyPathVariantsForPropertyLookup) {
                     subclass.addKeyPathVariantToPropertyMetadata(keyPath, for: property)
                 }
-                let property = property.copy(keyPath: keyPath)
+                var flags = property.flags
+                flags.insert(.isInherited)
+                let property = property.copy(keyPath: keyPath, flags: flags)
                 self.keyPaths[keyPath] = property
                 return property
             }
