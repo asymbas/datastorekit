@@ -145,6 +145,16 @@ where Root: SQLPredicateExpression {
             }
             switch root.property?.metadata {
             case let relationship as Schema.Relationship:
+                #if true
+                var resolvedType: Any.Type = root.type ?? Root.Output.self
+                resolvedType = unwrapOptionalMetatype(resolvedType)
+                if let collectionType = resolvedType as? any RelationshipCollection.Type {
+                    resolvedType = unwrapArrayMetatype(collectionType)
+                }
+                guard let type = resolvedType as? any PersistentModel.Type else {
+                    return root.invalid("Root.Output.self is not a PersistentModel.Type", description)
+                }
+                #else
                 guard let type = root.type as? any PersistentModel.Type else {
                     return root.invalid("Root.Output.self is not a PersistentModel.Type", description)
                 }
@@ -271,24 +281,33 @@ where Root: SQLPredicateExpression {
     }
     
     private func resolveComputedProperty<T>(_ context: inout Context<T>, _ root: consuming Fragment) -> Fragment {
+        let isFiltered = root.kind == .subquery
+        let filteredAlias = isFiltered ? root.alias : nil
+        let filterSQL = isFiltered && !root.clause.isEmpty && root.clause != "[INVALID]"
+        ? " AND (\(root.clause))"
+        : ""
         switch kind {
         case .collectionFirst:
             return resolve { _, _ in
                 "NULL"
             } referencingColumn: { lhsAlias, lhsTable, foreignKeyColumn, rhsAlias in
-                """
-                SELECT "\(lhsAlias)"."\(pk)" -- collectionFirst (reference)
-                FROM "\(lhsTable)" AS "\(lhsAlias)"
-                WHERE "\(lhsAlias)"."\(foreignKeyColumn)" = "\(rhsAlias)"."\(pk)"
+                let alias = filteredAlias ?? lhsAlias
+                return """
+                SELECT "\(alias)"."\(pk)" -- collectionFirst (reference)
+                FROM "\(lhsTable)" AS "\(alias)"
+                WHERE "\(alias)"."\(foreignKeyColumn)" = "\(rhsAlias)"."\(pk)"\(filterSQL)
                 LIMIT 1
                 """
             } referencingIntermediaryTable: { join, lhs, rhs in
-                """
-                SELECT "\(rhs.alias)"."\(pk)" -- collectionFirst (intermediary)
-                FROM "\(join.table)" AS "\(join.alias)"
-                JOIN "\(rhs.table)" AS "\(rhs.alias)"
-                ON "\(rhs.alias)"."\(pk)" = "\(join.alias)"."\(rhs.column)"
-                WHERE "\(join.alias)"."\(lhs.column)" = "\(lhs.alias)"."\(pk)"
+                let elementAlias = filteredAlias ?? rhs.alias
+                let elementJoin = filterSQL.isEmpty ? "" : """
+                    \nJOIN "\(rhs.table)" AS "\(elementAlias)"
+                    ON "\(elementAlias)"."\(pk)" = "\(join.alias)"."\(rhs.column)"
+                    """
+                return """
+                SELECT "\(elementAlias)"."\(pk)" -- collectionFirst (intermediary)
+                FROM "\(join.table)" AS "\(join.alias)"\(elementJoin)
+                WHERE "\(join.alias)"."\(lhs.column)" = "\(lhs.alias)"."\(pk)"\(filterSQL)
                 LIMIT 1
                 """
             }
@@ -296,57 +315,73 @@ where Root: SQLPredicateExpression {
             return resolve { _, _ in
                 "NULL"
             } referencingColumn: { lhsAlias, lhsTable, foreignKeyColumn, rhsAlias in
-                """
-                SELECT "\(lhsAlias)"."\(pk)" -- bidirectionalCollectionLast (reference)
-                FROM "\(lhsTable)" AS "\(lhsAlias)"
-                WHERE "\(lhsAlias)"."\(foreignKeyColumn)" = "\(rhsAlias)"."\(pk)"
-                ORDER BY "\(lhsAlias)"."\(pk)" DESC
+                let alias = filteredAlias ?? lhsAlias
+                return """
+                SELECT "\(alias)"."\(pk)" -- bidirectionalCollectionLast (reference)
+                FROM "\(lhsTable)" AS "\(alias)"
+                WHERE "\(alias)"."\(foreignKeyColumn)" = "\(rhsAlias)"."\(pk)"\(filterSQL)
+                ORDER BY "\(alias)"."\(pk)" DESC
                 LIMIT 1
                 """
             } referencingIntermediaryTable: { join, lhs, rhs in
-                """
-                SELECT "\(rhs.alias)"."\(pk)" -- bidirectionalCollectionLast (intermediary)
-                FROM "\(join.table)" AS "\(join.alias)"
-                JOIN "\(rhs.table)" AS "\(rhs.alias)"
-                ON "\(rhs.alias)"."\(pk)" = "\(join.alias)"."\(rhs.column)"
-                WHERE "\(join.alias)"."\(lhs.column)" = "\(lhs.alias)"."\(pk)"
-                ORDER BY "\(rhs.alias)"."\(pk)" DESC
+                let elementAlias = filteredAlias ?? rhs.alias
+                let elementJoin = filterSQL.isEmpty ? "" : """
+                    \nJOIN "\(rhs.table)" AS "\(elementAlias)"
+                    ON "\(elementAlias)"."\(pk)" = "\(join.alias)"."\(rhs.column)"
+                    """
+                return """
+                SELECT "\(elementAlias)"."\(pk)" -- bidirectionalCollectionLast (intermediary)
+                FROM "\(join.table)" AS "\(join.alias)"\(elementJoin)
+                WHERE "\(join.alias)"."\(lhs.column)" = "\(lhs.alias)"."\(pk)"\(filterSQL)
+                ORDER BY "\(elementAlias)"."\(pk)" DESC
                 LIMIT 1
                 """
             }
         case .collectionCount:
-            return resolve { sourceAlias, attribute in
-                "LENGTH(\(quote(sourceAlias)).\(quote(attribute)))"
+            return resolve { _, _ in
+                "NULL"
             } referencingColumn: { lhsAlias, lhsTable, foreignKeyColumn, rhsAlias in
-                """
+                let alias = filteredAlias ?? lhsAlias
+                return """
                 SELECT COUNT(*) -- collectionCount (reference)
-                FROM "\(lhsTable)" AS "\(lhsAlias)"
-                WHERE "\(lhsAlias)"."\(foreignKeyColumn)" = "\(rhsAlias)"."\(pk)"
+                FROM "\(lhsTable)" AS "\(alias)"
+                WHERE "\(alias)"."\(foreignKeyColumn)" = "\(rhsAlias)"."\(pk)"\(filterSQL)
                 """
-            } referencingIntermediaryTable: { join, lhs, _ in
-                """
-                SELECT COUNT(*) -- collectionFirst (intermediary)
-                FROM "\(join.table)" AS "\(join.alias)"
-                WHERE "\(join.alias)"."\(lhs.column)" = "\(lhs.alias)"."\(pk)"
+            } referencingIntermediaryTable: { join, lhs, rhs in
+                let elementAlias = filteredAlias ?? rhs.alias
+                let elementJoin = filterSQL.isEmpty ? "" : """
+                    \nJOIN "\(rhs.table)" AS "\(elementAlias)"
+                    ON "\(elementAlias)"."\(pk)" = "\(join.alias)"."\(rhs.column)"
+                    """
+                return """
+                SELECT COUNT(*) -- collectionCount (intermediary)
+                FROM "\(join.table)" AS "\(join.alias)"\(elementJoin)
+                WHERE "\(join.alias)"."\(lhs.column)" = "\(lhs.alias)"."\(pk)"\(filterSQL)
                 """
             }
         case .collectionIsEmpty:
             return resolve { sourceAlias, attribute in
                 "\(quote(sourceAlias)).\(quote(attribute)) = ''"
             } referencingColumn: { lhsAlias, lhsTable, foreignKeyColumn, rhsAlias in
-                """
+                let alias = filteredAlias ?? lhsAlias
+                return """
                 NOT EXISTS ( -- collectionIsEmpty (reference)
                     SELECT 1
-                    FROM "\(lhsTable)" AS "\(lhsAlias)"
-                    WHERE "\(lhsAlias)"."\(foreignKeyColumn)" = "\(rhsAlias)"."\(pk)"
+                    FROM "\(lhsTable)" AS "\(alias)"
+                    WHERE "\(alias)"."\(foreignKeyColumn)" = "\(rhsAlias)"."\(pk)"\(filterSQL)
                 )
                 """
-            } referencingIntermediaryTable: { join, lhs, _ in
-                """
+            } referencingIntermediaryTable: { join, lhs, rhs in
+                let elementAlias = filteredAlias ?? rhs.alias
+                let elementJoin = filterSQL.isEmpty ? "" : """
+                    \nJOIN "\(rhs.table)" AS "\(elementAlias)"
+                    ON "\(elementAlias)"."\(pk)" = "\(join.alias)"."\(rhs.column)"
+                    """
+                return """
                 NOT EXISTS ( -- collectionIsEmpty (intermediary)
                     SELECT 1
-                    FROM "\(join.table)" AS "\(join.alias)"
-                    WHERE "\(join.alias)"."\(lhs.column)" = "\(lhs.alias)"."\(pk)"
+                    FROM "\(join.table)" AS "\(join.alias)"\(elementJoin)
+                    WHERE "\(join.alias)"."\(lhs.column)" = "\(lhs.alias)"."\(pk)"\(filterSQL)
                 )
                 """
             }
@@ -430,6 +465,18 @@ where Root: SQLPredicateExpression {
                         context.createTableAlias(root.key, reference[0].destinationTable),
                         reference[0].destinationTable
                     )
+                    #if true
+                    let sourceTuple = (
+                        context.createTableAlias(root.key, reference[0].sourceTable),
+                        reference[0].sourceTable,
+                        reference[0].destinationColumn
+                    )
+                    let destinationTuple = (
+                        context.createTableAlias(root.key, reference[1].destinationTable),
+                        reference[1].destinationTable,
+                        reference[1].sourceColumn
+                    )
+                    #else
                     let sourceTuple = (
                         context.createTableAlias(root.key, reference[0].sourceTable),
                         reference[0].sourceTable,
@@ -440,6 +487,7 @@ where Root: SQLPredicateExpression {
                         reference[1].destinationTable,
                         reference[1].destinationColumn
                     )
+                    #endif
                     let sql = intermediaryHandler(joinTuple, sourceTuple, destinationTuple)
                     return root.copy(clause: "(\(sql))", kind: .functionCall)
                 default:
@@ -1511,7 +1559,73 @@ where LHS: SQLPredicateExpression,
       LHS.Output: Sequence,
       RHS.Output == Bool {
     func evaluate<T>(_ context: inout Context<T>) -> Fragment {
-        fatalError("Filter has not been implemented.")
+        context.log(.trace, "Filter.Element.Type is \(Element.self).self.")
+        let sequence = self.sequence.query(&context)
+        context.log(.trace, "Sequence fragment: \(sequence.description)")
+        guard let sequenceKey = sequence.key,
+              let sequenceAlias = sequence.alias else {
+            return sequence.invalid("Incomplete Filter.sequence")
+        }
+        guard sequence.property?.metadata is Schema.Relationship else {
+            return sequence.invalid("Filter requires a relationship sequence")
+        }
+        context.path.append(sequenceKey)
+        defer { context.key = context.path.popLast() }
+        let element = self.variable.query(&context)
+        context.log(.trace, "Element fragment: \(element.description)")
+        guard let elementKey = element.key,
+              let elementAlias = element.alias,
+              let elementEntity = element.entity else {
+            return element.invalid("Incomplete Filter.variable")
+        }
+        let condition = self.filter.query(&context)
+        context.log(.trace, "Condition fragment: \(condition.description)")
+        switch element.type {
+        case let type as any (PersistentModel & SendableMetatype).Type:
+            request: if let relationship = sequence.property?.metadata as? Schema.Relationship {
+                guard let inverseKeyPath = relationship.inverseKeyPath,
+                      let inverseKeyPath: (AnyKeyPath & Sendable) = sendable(cast: inverseKeyPath) else {
+                    context.log(.debug, "Relationship is unidirectional: \(sequence.description)")
+                    break request
+                }
+                guard let inverseProperty = type.schemaMetadata(for: inverseKeyPath) else {
+                    return element.invalid("Missing inverse relationship metadata")
+                }
+                guard var reference = sequence.property?.reference else {
+                    preconditionFailure("Relationship is missing reference metadata: \(sequence.description)")
+                }
+                if reference.count == 2 {
+                    context.log(.debug, "Relationship is many-to-many: \(sequence.label)")
+                    reference[0].lhsAlias = sequenceAlias
+                    reference[0].rhsAlias = context.createTableAlias(sequenceKey, reference[0].rhsTable)
+                    reference[1].lhsAlias = reference[0].rhsAlias
+                    reference[1].rhsAlias = elementAlias
+                    if context.references[elementKey, default: []].append(reference[0]).inserted {
+                        context.log(.trace, "Inserted JOIN clause reference (filter many-to-many): \(reference[0])")
+                    }
+                } else {
+                    guard var inverseReference = inverseProperty.reference else {
+                        break request
+                    }
+                    context.log(.debug, "Relationship is one-to-many: \(sequence.label)")
+                    inverseReference[0].sourceAlias = elementAlias
+                    inverseReference[0].destinationAlias = sequenceAlias
+                    if context.references[elementKey, default: []].append(inverseReference[0]).inserted {
+                        context.log(.trace, "Inserted JOIN clause reference (filter one-to-many): \(inverseReference[0])")
+                    }
+                }
+            }
+            _ = context.references[elementKey].take()
+        default:
+            context.log(.debug, "Filter on non-model sequence: \(element.description)")
+        }
+        return sequence.copy(
+            clause: condition.clause,
+            bindings: condition.bindings,
+            alias: elementAlias,
+            entity: elementEntity,
+            kind: .subquery
+        )
     }
 }
 
@@ -1686,7 +1800,7 @@ where LHS: SQLPredicateExpression, RHS: SQLPredicateExpression {
     }
 }
 
-/// `$0.property ?? "other"
+/// `$0.property ?? "other"`
 extension PredicateExpressions.NilCoalesce: SQLPredicateExpression
 where LHS: SQLPredicateExpression, RHS: SQLPredicateExpression {
     func evaluate<T>(_ context: inout Context<T>) -> Fragment {
