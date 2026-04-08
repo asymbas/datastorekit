@@ -97,6 +97,28 @@ extension DatabaseSnapshot {
         values: consuming ArraySlice<any Sendable>,
         relatedSnapshots: inout [PersistentIdentifier: Self]
     ) throws {
+        let connection = try queue.request(.reader)
+        self = try Self(
+            storeIdentifier: storeIdentifier,
+            configuration: configuration,
+            connection: connection,
+            properties: properties,
+            values: values,
+            relatedSnapshots: &relatedSnapshots
+        )
+        queue.release(consume connection)
+    }
+    
+    nonisolated public init(
+        storeIdentifier: String,
+        configuration: DatabaseConfiguration,
+        connection: borrowing DatabaseConnection<Store>,
+        registry: SnapshotRegistry? = nil,
+        schema: Schema? = nil,
+        properties: consuming ArraySlice<PropertyMetadata>,
+        values: consuming ArraySlice<any Sendable>,
+        relatedSnapshots: inout [PersistentIdentifier: Self]
+    ) throws {
         guard let schema = schema ?? configuration.schema else {
             preconditionFailure()
         }
@@ -112,7 +134,6 @@ extension DatabaseSnapshot {
         guard let entity = (discriminator.defaultValue as? Schema.Entity) ?? schema.entity(for: type) else {
             throw SchemaError.entityNotRegistered
         }
-        let connection = try queue.request(.reader)
         let provider = connection.provider
         let resolvedEntity = try connection.resolveEntity(entity, for: .identifier(
             for: storeIdentifier,
@@ -147,7 +168,7 @@ extension DatabaseSnapshot {
                     let relatedSnapshot = try Self(
                         storeIdentifier: storeIdentifier,
                         configuration: configuration,
-                        queue: queue,
+                        connection: connection,
                         registry: registry,
                         properties: properties[propertiesOffset...],
                         values: values[nextEntityOffset...],
@@ -182,9 +203,7 @@ extension DatabaseSnapshot {
             for (property, value) in inheritedValues {
                 try setValue(value, at: property, externalStorageURL: configuration.externalStorageURL)
             }
-            queue.release(consume connection)
         } else {
-            queue.release(consume connection)
             logger.debug("Creating snapshot for \(entity.name).", metadata: [
                 "type": "\(type)",
             ])
@@ -227,7 +246,7 @@ extension DatabaseSnapshot {
                     let relatedSnapshot = try Self(
                         storeIdentifier: storeIdentifier,
                         configuration: configuration,
-                        queue: queue,
+                        connection: connection,
                         registry: registry,
                         properties: properties[properties.index(properties.startIndex, offsetBy: index)...],
                         values: values[offset...],
@@ -270,7 +289,6 @@ extension DatabaseSnapshot {
         if !excludedProperties.isEmpty {
             let count = excludedProperties.count
             #if swift(>=6.2)
-            let connection = try queue.request(.reader)
             let results = Mutex<[Int: any DataStoreSnapshotValue]>(.init(minimumCapacity: count))
             let excludedPropertiesCopy = consume excludedProperties
             let persistentIdentifier = self.persistentIdentifier
@@ -298,7 +316,6 @@ extension DatabaseSnapshot {
                     logger.error("An error occurred fetching reference: \(property) -> \(error)")
                 }
             }
-            queue.release(consume connection)
             results.withLock {
                 for (index, value) in $0 {
                     self.values[index] = value

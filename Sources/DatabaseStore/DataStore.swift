@@ -907,11 +907,7 @@ public final class DatabaseStore: DataStore, Sendable {
                             continue
                         }
                         var relatedSnapshots: [PersistentIdentifier: Snapshot]? = nil
-                        if let cascadedSnapshot = try? self.fetch(
-                            for: cascadedIdentifier.primaryKey(),
-                            entity: entity,
-                            relatedSnapshots: &relatedSnapshots
-                        ) {
+                        if let cascadedSnapshot = try? connection.fetch(for: cascadedIdentifier) {
                             deleted.append(Payload(snapshot: cascadedSnapshot))
                         }
                     }
