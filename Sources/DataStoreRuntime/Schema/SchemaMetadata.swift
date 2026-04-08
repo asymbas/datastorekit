@@ -238,7 +238,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                 if let type = type as? any (PersistentModel & SendableMetatype).Type {
                     guard let destinationEntity = Schema([type]).entity(for: type),
                           let inverseRelationship = destinationEntity.relationshipsByName[inverseName] else {
-                        fatalError(SchemaError.relationshipTargetEntityNotRegistered.localizedDescription)
+                        preconditionFailure()
                     }
                     if !destinationEntity.subentities.isEmpty {
                         property.flags.insert(.hasSubentities)
@@ -257,13 +257,13 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                             from: (nil, owningEntityName),
                             to: (nil, intermediaryTable.name)
                         ) else {
-                            fatalError("From LHS table to intermediary table failed: \(intermediaryTable)")
+                            preconditionFailure("From LHS table to intermediary table failed: \(intermediaryTable)")
                         }
                         guard let rhsReference = intermediaryTable.join(
                             from: (nil, intermediaryTable.name),
                             to: (nil, destinationEntity.name)
                         ) else {
-                            fatalError("From intermediary table to RHS table failed: \(intermediaryTable)")
+                            preconditionFailure("From intermediary table to RHS table failed: \(intermediaryTable)")
                         }
                         array = Array<TableReference>(unsafeUninitializedCapacity: 2) {
                             $0[0] = lhsReference; $0[1] = rhsReference; $1 = 2
@@ -303,8 +303,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                             destinationColumn: inverseRelationship.name + "_pk"
                         )
                         array = Array<TableReference>(unsafeUninitializedCapacity: 1) {
-                            $0[0] = reference
-                            $1 = 1
+                            $0[0] = reference; $1 = 1
                         }
                         let type = reference.isSelfReferencing ? "self-reference" : "reference"
                         let ownership = reference.isOwningReference() ? "owning" : "non-owning"
@@ -334,7 +333,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                 ])
             case _ where entity.inheritedPropertiesByName[property.name] is Schema.Attribute:
                 guard let superentity = entity.superentity else {
-                    fatalError("Missing superentity for inherited property: \(description)")
+                    preconditionFailure("Missing superentity for inherited property: \(description)")
                 }
                 // Create an implicit reference between subclass and superclass tables.
                 let reference = TableReference(
@@ -400,15 +399,20 @@ nonisolated private func findInheritedPropertyMetadata(
         logger.warning("Inheritance is not fully implemented: \(superentity.name).\(property.name)")
     }
     guard let superclass = Schema.type(for: superentity.name) else {
-        fatalError("The superentity's associated superclass type is not registered: \(superentity.name)")
+        logger.warning(
+            "The superentity's associated superclass type is not registered: \(superentity.name)",
+            metadata: [
+                "entity": "\(entity.name).\(property.name)",
+                "superentity": "\(superentity.name)",
+                "schema_metadata_keys": "\(schemaMetadata.keys.map(\.name))"
+            ]
+        )
+        return nil
     }
-    logger.trace(
-        "Ascending the entity hierarchy to find PropertyMetadata.",
-        metadata: [
-            "entity": "\(entity.name).\(property.name)",
-            "superentity": "\(superentity.name).\(property.name)"
-        ]
-    )
+    logger.trace("Ascending the entity hierarchy to find PropertyMetadata.", metadata: [
+        "entity": "\(entity.name).\(property.name)",
+        "superentity": "\(superentity.name).\(property.name)"
+    ])
     let superentitySchemaMetadata: [PropertyMetadata]
     if let cachedSchemaMetadata = schemaMetadata[superentity] {
         superentitySchemaMetadata = cachedSchemaMetadata

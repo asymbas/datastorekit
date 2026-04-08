@@ -135,13 +135,9 @@ public struct PropertyMetadata: Equatable, Hashable, Sendable {
         valueType is any RawRepresentable.Type
     }
     
-    // TODO: Use the flag instead.
-    
     /// Determines whether the entity's property is inherited from a superentity.
     nonisolated public var isInherited: Bool {
         flags.contains(.isInherited)
-//        guard metadata is Schema.Attribute else { return false }
-//        return reference != nil && reference?.count == 1
     }
     
     nonisolated public var hasSubentities: Bool {

@@ -939,9 +939,12 @@ extension DatabaseSnapshot {
             }
         }
         if !superProperties.isEmpty {
+            guard let storeIdentifier = self.persistentIdentifier.storeIdentifier else {
+                throw Self.Error.identifierNotAssociatedToStore
+            }
             var newSnapshot = Self(
                 persistentIdentifier: try PersistentIdentifier.identifier(
-                    for: persistentIdentifier.storeIdentifier.unsafelyUnwrapped,
+                    for: storeIdentifier,
                     entityName: entity.name,
                     primaryKey: primaryKey
                 ),

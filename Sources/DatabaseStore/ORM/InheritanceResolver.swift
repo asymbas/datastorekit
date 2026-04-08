@@ -74,7 +74,7 @@ extension InheritanceResolver {
         for persistentIdentifier: PersistentIdentifier,
         connection: borrowing DatabaseConnection<DatabaseStore>
     ) throws -> PersistentIdentifier {
-        if let resolvedPersistentIdentifier = try resolvedPersistentIdentifier(for: persistentIdentifier) {
+        if let resolvedPersistentIdentifier = resolvedPersistentIdentifier(for: persistentIdentifier) {
             return resolvedPersistentIdentifier
         }
         guard let destinationEntity = self.manager.schema.entitiesByName[persistentIdentifier.entityName] else {
@@ -96,7 +96,9 @@ extension InheritanceResolver {
             entityName: resolvedConcreteEntity.name,
             primaryKey: manager.primaryKey(for: persistentIdentifier)
         )
-        try set(persistentIdentifier: persistentIdentifier, resolvingTo: resolvedPersistentIdentifier)
+        if resolvedConcreteEntity.name != persistentIdentifier.entityName {
+            set(persistentIdentifier: persistentIdentifier, resolvingTo: resolvedPersistentIdentifier)
+        }
         return resolvedPersistentIdentifier
     }
     

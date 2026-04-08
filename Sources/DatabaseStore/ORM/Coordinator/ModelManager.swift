@@ -18,6 +18,8 @@ import Synchronization
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.coordinator")
 
+// TODO: Rename `ModelManager`.
+
 public final class ModelManager: DatabaseAttachment, DataStoreSnapshotProvider {
     public typealias Context = SnapshotRegistry
     public typealias Snapshot = DatabaseSnapshot

@@ -356,7 +356,7 @@ public final class DatabaseStore: DataStore, Sendable {
         if !configuration.options.contains(.disablePredicateCaching),
            let key = translation.key,
            let registry = self.manager.registry(for: request.editingState),
-           let result = try registry.cachedResult(forKey: key) as? DataStoreFetchResultMap {
+           let result = registry.cachedResult(forKey: key) as? DataStoreFetchResultMap {
             logger.info("Fetched \(result.fetchedIdentifiers.count) cached \(entityName) identifiers.")
             return result.fetchedIdentifiers
         }

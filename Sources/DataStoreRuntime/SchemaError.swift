@@ -15,4 +15,5 @@ public enum SchemaError: Swift.Error {
     case internalInconsistency
     /// The target entity was not found in the schema.
     case relationshipTargetEntityNotRegistered
+    case propertyMetadataNotFound
 }

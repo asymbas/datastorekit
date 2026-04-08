@@ -127,7 +127,6 @@ extension DatabaseSnapshot {
             entityName: resolvedEntity.name,
             primaryKey: primaryKey
         )
-       
         logger.debug("Creating snapshot for \(resolvedEntity.name) that inherits from \(entity.name).", metadata: [
             "type": "\(type)",
             "resolvedType": "\(resolvedType)",

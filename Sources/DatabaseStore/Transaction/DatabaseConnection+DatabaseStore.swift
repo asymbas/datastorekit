@@ -70,7 +70,7 @@ extension DatabaseConnection where Store == DatabaseStore {
         }
         return try attachment.inheritance.resolvePersistentIdentifier(for: persistentIdentifier, connection: self)
         #else
-        return try attachment!.inheritance.resolvedPersistentIdentifier(for: persistentIdentifier, connection: self)
+        return try attachment!.inheritance.resolvePersistentIdentifier(for: persistentIdentifier, connection: self)
         #endif
     }
 }
