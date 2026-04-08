@@ -25,3 +25,37 @@ extension Schema.Entity {
         Schema.type(for: self.name) ?? reflectEntity(self)
     }
 }
+
+// TODO: Cast relationships to `PersistentModel` and register them implicitly.
+
+extension TypeRegistry {
+    nonisolated public static func bootstrap(schema: Schema, types: [any PersistentModel.Type] = []) {
+        var visited = Set<ObjectIdentifier>()
+        func register(_ type: any PersistentModel.Type, entity: Schema.Entity?) {
+            guard visited.insert(ObjectIdentifier(type)).inserted else { return }
+            let typeName = Schema.entityName(for: type)
+            let typeAsClass: AnyClass = type as AnyObject as! AnyClass
+            if TypeRegistry.getValue(forType: typeAsClass) == nil {
+                let mangledTypeName = _mangledTypeName(type) ?? typeName
+                TypeRegistry.register(typeAsClass, typeName: typeName, mangledTypeName: mangledTypeName, metadata: entity)
+                logger.trace("TypeRegistry bootstrap registered \(typeName)")
+            }
+            if let superentity = entity?.superentity ?? schema.entitiesByName[typeName]?.superentity,
+               let superType = types.first(where: { Schema.entityName(for: $0) == superentity.name }) ?? superentity.type {
+                register(superType, entity: superentity)
+            }
+            if let superclass = class_getSuperclass(type),
+               let superType = superclass as? any PersistentModel.Type {
+                let superName = Schema.entityName(for: superType)
+                register(superType, entity: schema.entitiesByName[superName])
+            }
+        }
+        for entity in schema.entities {
+            let resolvedType = types.first(where: { Schema.entityName(for: $0) == entity.name }) ?? entity.type
+            guard let resolvedType else {
+                preconditionFailure("Entity has an unknown type: \(entity.name)")
+            }
+            register(resolvedType, entity: entity)
+        }
+    }
+}
