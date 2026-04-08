@@ -877,6 +877,17 @@ extension DatabaseSnapshot {
         )
     }
     
+    nonisolated package func upcast(to persistentIdentifier: PersistentIdentifier) -> Self {
+        .init(
+            persistentIdentifier: persistentIdentifier,
+            primaryKey: primaryKey,
+            type: type,
+            properties: properties,
+            values: values,
+            flags: flags
+        )
+     }
+    
     nonisolated public func update(
         from other: Self,
         onChange: (

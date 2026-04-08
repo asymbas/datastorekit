@@ -204,6 +204,12 @@ public final class DatabaseStore: DataStore, Sendable {
                 preloadedResult = consume result
             }
             let translation = try translator.translate(request)
+            #if DEBUG
+            if Request.self is DataStoreFetchRequest<Model>.Type,
+               let requestedIdentifiers = translation.requestedIdentifiers {
+                logger.debug("SwiftData requested identifiers Request<\(Model.self)> on \(entityName) entity: \(requestedIdentifiers)")
+            }
+            #endif
             if shouldCheckCancellation { try Task.checkCancellation() }
             request: if let result = preloadedResult.take() {
                 guard result.key == translation.key else {
@@ -280,6 +286,20 @@ public final class DatabaseStore: DataStore, Sendable {
                         values: row[...],
                         relatedSnapshots: &relatedSnapshots
                     )
+                }
+            }
+            // TODO: Experiment with how to resolve inherited relationships when SwiftData faults one.
+            if let requestedIdentifiers = translation.requestedIdentifiers, !requestedIdentifiers.isEmpty {
+                let requestedByPrimaryKey: [String: PersistentIdentifier] = requestedIdentifiers.reduce(into: [:]) {
+                    $0[$1.primaryKey()] = $1
+                }
+                fetchedSnapshots = fetchedSnapshots.map { snapshot in
+                    guard let requestedIdentifier = requestedByPrimaryKey[snapshot.primaryKey],
+                          requestedIdentifier != snapshot.persistentIdentifier else {
+                        return snapshot
+                    }
+                    var snapshot = snapshot
+                    return snapshot.upcast(to: requestedIdentifier)
                 }
             }
             let result: Result
