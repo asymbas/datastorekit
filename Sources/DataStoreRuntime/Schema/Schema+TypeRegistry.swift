@@ -9,7 +9,11 @@
 
 import DataStoreCore
 import DataStoreSupport
+import Logging
+import ObjectiveC
 import SwiftData
+
+nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.bootstrap")
 
 extension Schema {
     /// Returns the model type associated with the entity's name.
