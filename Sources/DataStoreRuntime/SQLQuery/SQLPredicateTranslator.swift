@@ -395,7 +395,9 @@ extension SQLPredicateTranslator {
         var columns = [String]()
         var foreignKeyColumns = [PropertyMetadata]()
         let entityAlias = alias
-        loadSchemaMetadata(for: Model.self, key: key)
+        loadSchemaMetadata(for: Model.self)
+        // TODO: Temporarily removed key to verify that this prevented references from being completely consumed.
+//        loadSchemaMetadata(for: Model.self, key: key)
         guard var primaryKeyColumn = self.keyPaths[\Model.persistentModelID] else {
             preconditionFailure("Primary key was not registered in context: \(type)")
         }
@@ -481,10 +483,25 @@ extension SQLPredicateTranslator {
         }
         for keyPath in relationshipKeyPathsForPrefetching {
             log(.debug, "Processing key path for prefetching: \(keyPath)")
+            #if true
+            let property: PropertyMetadata?
+            if let resolved = self.keyPaths[keyPath] {
+                property = resolved
+            } else if let keyPath: PartialKeyPath<Model> & Sendable = sendable(cast: keyPath)  {
+                property = Model.schemaMetadata(for: keyPath)
+            } else {
+                property = nil
+            }
+            guard let property else {
+                log(.warning, "KeyPath for prefetching not found: \(keyPath)")
+                continue
+            }
+            #else
             guard let property = self.keyPaths[keyPath] else {
                 log(.warning, "KeyPath for prefetching not found: \(keyPath)")
                 continue
             }
+            #endif
             guard let relationship = property.metadata as? Schema.Relationship else {
                 preconditionFailure("Expected property metadata to reference a Schema.Relationship.")
             }

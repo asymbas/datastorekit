@@ -145,17 +145,12 @@ where Root: SQLPredicateExpression {
             }
             switch root.property?.metadata {
             case let relationship as Schema.Relationship:
-                #if true
                 var resolvedType: Any.Type = root.type ?? Root.Output.self
                 resolvedType = unwrapOptionalMetatype(resolvedType)
                 if let collectionType = resolvedType as? any RelationshipCollection.Type {
                     resolvedType = unwrapArrayMetatype(collectionType)
                 }
                 guard let type = resolvedType as? any PersistentModel.Type else {
-                    return root.invalid("Root.Output.self is not a PersistentModel.Type", description)
-                }
-                #else
-                guard let type = root.type as? any PersistentModel.Type else {
                     return root.invalid("Root.Output.self is not a PersistentModel.Type", description)
                 }
                 assert(Root.Output.self is any PersistentModel.Type)
