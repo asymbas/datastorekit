@@ -184,6 +184,12 @@ where T: PersistentModel & SendableMetatype {
                 references.formUnion(remaining)
             }
         }
+        let emittedJoinAliases: Set<String> = references.reduce(into: []) {
+            $0.insert($1.rhsAlias ?? $1.rhsTable)
+        }
+        let dedupedImplicitReferences = self.implicitReferences.filter {
+            !emittedJoinAliases.contains($0.rhsAlias ?? $0.rhsTable)
+        }
         let statement = SQL {
             if options.contains(.explainQueryPlan) { "\nEXPLAIN QUERY PLAN\n" }
             if !ctes.isEmpty { With { SQLForEach(ctes) { $0 } } }
@@ -199,8 +205,8 @@ where T: PersistentModel & SendableMetatype {
                     """
                 }
             }
-            if !implicitReferences.isEmpty {
-                ForEach(implicitReferences) {
+            if !dedupedImplicitReferences.isEmpty {
+                ForEach(dedupedImplicitReferences) {
                     Join.left(
                         $0.rhsTable,
                         as: $0.rhsAlias!,
