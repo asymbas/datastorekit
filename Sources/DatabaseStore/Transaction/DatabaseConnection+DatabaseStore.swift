@@ -94,8 +94,11 @@ extension DatabaseConnection where Store == DatabaseStore {
             preconditionFailure("The queue was unexpectedly nil.")
         }
         let entityName = Schema.entityName(for: Model.self)
-        let propertiesCollected = keyPaths.reduce(into: [PropertyMetadata]()) { partialResult, keyPath in
-            partialResult.append(Model.schemaMetadata(for: keyPath).unsafelyUnwrapped)
+        let propertiesCollected = try keyPaths.reduce(into: [PropertyMetadata]()) { partialResult, keyPath in
+            guard let property = Model.schemaMetadata(for: keyPath) else {
+                throw SchemaError.propertyMetadataNotFound
+            }
+            partialResult.append(property)
         }
         var properties = [PropertyMetadata.discriminator(for: Model.self)]
         + (propertiesCollected.isEmpty ? Model.databaseSchemaMetadata : propertiesCollected)
@@ -115,7 +118,14 @@ extension DatabaseConnection where Store == DatabaseStore {
         )
         var relatedSnapshots = [PersistentIdentifier: Store.Snapshot]()
         let snapshots = try result.map { row in
-            try Store.Snapshot(queue: queue, properties: properties[...], values: row[...], relatedSnapshots: &relatedSnapshots)
+            try Store.Snapshot(
+                storeIdentifier: attachment!.store!.identifier,
+                configuration: attachment!.configuration,
+                connection: self,
+                properties: properties[...],
+                values: row[...],
+                relatedSnapshots: &relatedSnapshots
+            )
         }
         logger.debug("Fetched \(snapshots.count) \(entityName) snapshots.", metadata: [
             "sql": "\(sql.joined(separator: "\n"))",
@@ -150,6 +160,13 @@ extension DatabaseConnection where Store == DatabaseStore {
         as type: Model.Type
     ) throws -> Store.Snapshot? where Model: PersistentModel {
         try fetch(for: primaryKey, as: type, properties: [])
+    }
+    
+    nonisolated public func fetch(for persistentIdentifier: PersistentIdentifier) throws -> Store.Snapshot? {
+        guard let type = Schema.type(for: persistentIdentifier.entityName) else {
+            preconditionFailure()
+        }
+        return try fetch(for: primaryKey(for: persistentIdentifier), as: type)
     }
 }
 
