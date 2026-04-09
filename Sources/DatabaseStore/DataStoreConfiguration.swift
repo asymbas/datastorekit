@@ -205,6 +205,11 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         }()
         if mode == .trace || options.contains(._internal) { DataStoreDebugging.mode = .trace }
         let schema = schema ?? (!types.isEmpty ? Schema(types) : nil)
+        #if true
+        if let schema {
+            TypeRegistry.bootstrap(schema: schema, types: types)
+        }
+        #else
         for entity in schema?.entities ?? [] {
             switch types.first(where: { String(describing: $0) == entity.name }) ?? entity.type {
             case let type as any (PersistentModel & AnyObject).Type:
@@ -213,6 +218,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                 preconditionFailure("Entity has an unknown type: \(entity.name)")
             }
         }
+        #endif
         let constraints = (schema?.entities ?? []).reduce(into: [String: [[String]]]()) { result, entity in
             result[entity.name] = entity.uniquenessConstraints.reduce(into: [[String]]()) { result, group in
                 result.append(group.reduce(into: [String]()) { result, propertyName in

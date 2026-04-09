@@ -19,21 +19,24 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
 
 nonisolated package func makePropertyMetadataArray<T>(schema: Schema, for type: T.Type) -> (
     result: [PropertyMetadata],
-    keyPathVariants: [AnyKeyPath & Sendable: AnyKeyPath & Sendable]
+    keyPathVariants: [AnyKeyPath & Sendable: AnyKeyPath & Sendable],
+    compositeKeyPaths: [AnyKeyPath & Sendable: PropertyMetadata]
 ) where T: PersistentModel & SendableMetatype {
     makeSchemaMetadata(schema, for: type, into: [PropertyMetadata]()) { $0.append($1) }
 }
 
 nonisolated package func makePropertyMetadataDictionary<T>(schema: Schema, for type: T.Type) -> (
     result: [String: PropertyMetadata],
-    keyPathVariants: [AnyKeyPath & Sendable: AnyKeyPath & Sendable]
+    keyPathVariants: [AnyKeyPath & Sendable: AnyKeyPath & Sendable],
+    compositeKeyPaths: [AnyKeyPath & Sendable: PropertyMetadata]
 ) where T: PersistentModel & SendableMetatype {
     makeSchemaMetadata(schema, for: type, into: [String: PropertyMetadata]()) { $0[$1.name] = $1 }
 }
 
 nonisolated package func makePropertyMetadataDictionaryInversion<T>(schema: Schema, for type: T.Type) -> (
     result: [(AnyKeyPath & Sendable): PropertyMetadata],
-    keyPathVariants: [AnyKeyPath & Sendable: AnyKeyPath & Sendable]
+    keyPathVariants: [AnyKeyPath & Sendable: AnyKeyPath & Sendable],
+    compositeKeyPaths: [AnyKeyPath & Sendable: PropertyMetadata]
 ) where T: PersistentModel & SendableMetatype {
     makeSchemaMetadata(schema, for: type, into: [(AnyKeyPath & Sendable): PropertyMetadata]()) { $0[$1.keyPath] = $1 }
 }
@@ -47,7 +50,8 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
     accumulate: (inout Result, PropertyMetadata) throws -> Void
 ) rethrows -> (
     result: Result,
-    keyPathVariants: [AnyKeyPath & Sendable: AnyKeyPath & Sendable]
+    keyPathVariants: [AnyKeyPath & Sendable: AnyKeyPath & Sendable],
+    compositeKeyPaths: [AnyKeyPath & Sendable: PropertyMetadata]
 ) where Model: PersistentModel & SendableMetatype, Result: Collection {
     let entityName = Schema.entityName(for: Model.self)
     let entity = schema?.entitiesByName[entityName] ?? Schema.Entity(entityName)
@@ -65,6 +69,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
     )
     var result = consume result
     var keyPathVariants = [AnyKeyPath & Sendable: AnyKeyPath & Sendable]()
+    var compositeKeyPaths = [AnyKeyPath & Sendable: PropertyMetadata]()
     var schemaMetadata = [Schema.Entity: [PropertyMetadata]]()
     var auxiliaryMetadata = [PropertyMetadata]()
     try accumulate(&result, .discriminator(for: Model.self))
@@ -164,6 +169,9 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
             }
             isInherited = true
             _ = registerKeyPath(property.keyPath)
+            for variant in collectKeyPathVariants(property.keyPath, from: entity) {
+                _ = registerKeyPath(variant)
+            }
         case false:
             logger.trace("Property is not inherited: \(description)")
             guard let property = schemaMetadata[entity]?.first(where: { $0.name == property.name }) else {
@@ -211,6 +219,15 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
             canonicalProperty.flags.insert(.isInherited)
         }
         try accumulate(&result, canonicalProperty)
+        if let composite = property as? Schema.CompositeAttribute,
+           let compositeType = unwrapOptionalMetatype(composite.valueType) as? any PredicateCodableKeyPathProviding.Type {
+            collectCompositePredicateCodableKeyPaths(
+                compositeType,
+                composite: composite,
+                parentKeyPath: keyPath,
+                into: &compositeKeyPaths
+            )
+        }
         if let type = Model.self as? any SQLPassthrough.Type {
             var property = insertSQLQueryPassthrough(for: type)
             property.flags.insert(.isExternal)
@@ -384,7 +401,42 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
         try accumulate(&result, property)
     }
     logger.trace("\(Model.self).self key path property name mapping: \(result)")
-    return (result, keyPathVariants)
+    return (result, keyPathVariants, compositeKeyPaths)
+}
+
+nonisolated private func collectCompositePredicateCodableKeyPaths<CompositeRoot>(
+    _ compositeType: CompositeRoot.Type,
+    composite: Schema.CompositeAttribute,
+    parentKeyPath: AnyKeyPath & Sendable,
+    into compositeKeyPaths: inout [AnyKeyPath & Sendable: PropertyMetadata]
+) where CompositeRoot: PredicateCodableKeyPathProviding {
+    let parent = parentKeyPath as AnyKeyPath
+    for (name, partialKeyPath) in CompositeRoot.predicateCodableKeyPaths {
+        guard let subAttributeIndex = composite.properties.firstIndex(where: { $0.name == name }) else {
+            logger.trace("Composite sub-attribute name not found in schema: \(composite.name).\(name)")
+            continue
+        }
+        let subAttribute = composite.properties[subAttributeIndex]
+        guard let appended = parent.appending(path: partialKeyPath as AnyKeyPath) else {
+            logger.trace("Failed to append composite sub key path: \(composite.name).\(name)")
+            continue
+        }
+        guard let fullKeyPath: AnyKeyPath & Sendable = sendable(cast: appended) else {
+            preconditionFailure("Composite sub key path is not Sendable: \(composite.name).\(name)")
+        }
+        var subProperty = PropertyMetadata(
+            index: subAttributeIndex,
+            name: subAttribute.name,
+            keyPath: fullKeyPath,
+            metadata: subAttribute,
+            enclosing: composite,
+        )
+        subProperty.flags.insert(.isExternal)
+        compositeKeyPaths[fullKeyPath] = subProperty
+        logger.debug("Registered composite sub key path: \(composite.name).\(subAttribute.name)", metadata: [
+            "key_path": "\(fullKeyPath)"
+        ])
+    }
 }
 
 nonisolated private func findInheritedPropertyMetadata(
@@ -437,4 +489,34 @@ nonisolated private func findInheritedPropertyMetadata(
             schemaMetadata: &schemaMetadata
         )
     }
+}
+
+// FIXME: The given entity does not have the full metadata yet. Use `subclasses(of:)`.
+
+nonisolated internal func collectKeyPathVariants(
+    _ keyPath: AnyKeyPath & Sendable,
+    from entity: Schema.Entity
+) -> [AnyKeyPath & Sendable] {
+    var variants = [AnyKeyPath & Sendable]()
+    func walk(_ currentEntity: Schema.Entity) {
+        for subentity in currentEntity.subentities {
+            guard let subType = Schema.type(for: subentity.name) else { continue }
+            if let variant = castKeyPath(keyPath, to: subType) {
+                variants.append(variant)
+            }
+            walk(subentity)
+        }
+    }
+    func castKeyPath<T: PersistentModel>(
+        _ keyPath: AnyKeyPath & Sendable,
+        to type: T.Type
+    ) -> (AnyKeyPath & Sendable)? {
+        sendable(cast: keyPath as? PartialKeyPath<T> as Any)
+    }
+    walk(entity)
+    logger.debug("Collected key path variants: \(variants)", metadata: [
+        "key_path": "\(keyPath)",
+        "entity": "\(entity.name)"
+    ])
+    return variants
 }

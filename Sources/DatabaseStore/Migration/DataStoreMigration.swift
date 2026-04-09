@@ -28,6 +28,9 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
 
 extension DataStoreMigration {
     nonisolated internal static func load(schema: Schema, shouldRegister: Bool = false) -> DatabaseSchema {
+        if shouldRegister {
+            TypeRegistry.bootstrap(schema: schema)
+        }
         var indexes = [any IndexDefinition]()
         let tableDefinitions = Self.makeTableDefinitions(
             schema: schema,
@@ -48,11 +51,17 @@ extension DataStoreMigration {
             guard let type = registeredType ?? entity.type else {
                 fatalError("The associated type for \(entity.name) entity was not registered.")
             }
+            #if true
+            if registeredType == nil {
+                TypeRegistry.register(type, typeName: entity.name, metadata: entity)
+            }
+            #else
             if shouldRegister || registeredType == nil {
                 // Register metatype if it was never supplied during initialization.
                 TypeRegistry.register(type, typeName: entity.name, metadata: entity)
             }
-            var (schemaMetadata, keyPathVariants) = makePropertyMetadataArray(schema: selection, for: type)
+            #endif
+            var (schemaMetadata, keyPathVariants, _) = makePropertyMetadataArray(schema: selection, for: type)
             let discriminator = schemaMetadata.removeFirst()
             var schemaIndex: PropertyMetadata?
             var schemaUnique: PropertyMetadata?
