@@ -408,9 +408,7 @@ public struct PreparedStatement: ~Copyable, Sendable {
     }
 }
 
-public struct ResultRows: AsyncSequence, Sendable, Sequence {
-    /// Inherited from `AsyncSequence.AsyncIterator`.
-    public typealias AsyncIterator = ResultAsyncIterator
+public struct ResultRows: Sendable, Sequence {
     /// Inherited from `Sequence.Iterator`.
     public typealias Iterator = ResultIterator
     nonisolated(unsafe) internal let pointer: OpaquePointer
@@ -423,12 +421,6 @@ public struct ResultRows: AsyncSequence, Sendable, Sequence {
     nonisolated public func makeIterator() -> Iterator {
         sqlite3_reset(pointer)
         return Iterator(pointer: pointer)
-    }
-    
-    /// Inherited from `AsyncSequence.makeAsyncIterator()`.
-    nonisolated public func makeAsyncIterator() -> AsyncIterator {
-        sqlite3_reset(pointer)
-        return AsyncIterator(pointer: pointer)
     }
     
     public struct ResultIterator: IteratorProtocol, Sendable {
@@ -450,51 +442,6 @@ public struct ResultRows: AsyncSequence, Sendable, Sequence {
             }
             self.isFinished = true
             return nil
-        }
-    }
-    
-    public struct ResultAsyncIterator: AsyncIteratorProtocol, Sendable {
-        /// Inherited from `AsyncIteratorProtocol.Element`.
-        public typealias Element = ResultRow
-        nonisolated(unsafe) private let pointer: OpaquePointer
-        nonisolated private var isFinished: Bool = false
-        
-        nonisolated internal init(pointer: OpaquePointer) {
-            self.pointer = pointer
-        }
-        
-        /// Inherited from `AsyncIteratorProtocol.next()`.
-        nonisolated public mutating func next() async throws -> Element? {
-            if isFinished { return nil }
-            let pointer = Mutex<OpaquePointer>(pointer)
-            let result: (
-                row: ResultRow?,
-                terminal: Bool
-            ) = try await withCheckedThrowingContinuation { @Sendable continuation in
-                Task {
-                    if Task.isCancelled {
-                        continuation.resume(throwing: CancellationError())
-                        return
-                    }
-                    let resultCode = sqlite3_step(pointer.withLock(\.self))
-                    if Task.isCancelled {
-                        continuation.resume(throwing: CancellationError())
-                        return
-                    }
-                    switch resultCode {
-                    case SQLITE_ROW:
-                        continuation.resume(returning: (ResultRow(pointer: pointer.withLock(\.self)), false))
-                    case SQLITE_DONE:
-                        continuation.resume(returning: (nil, true))
-                    default:
-                        sqlite3_reset(pointer.withLock(\.self))
-                        let handle = sqlite3_db_handle(pointer.withLock(\.self))
-                        continuation.resume(throwing: SQLError(pointer: handle!))
-                    }
-                }
-            }
-            if result.terminal { self.isFinished = true }
-            return result.row
         }
     }
 }
