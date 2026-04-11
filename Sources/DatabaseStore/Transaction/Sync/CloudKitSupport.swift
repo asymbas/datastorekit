@@ -66,10 +66,10 @@ extension DatabaseConfiguration.CloudKitDatabase {
         nonisolated internal static let tableName: String = "_CloudKitState"
         case storeIdentifier = "store_identifier"
         case didBootstrapZone = "did_bootstrap_zone"
-        case lastSyncAtMicroseconds = "last_sync_at_microseconds"
+        case lastSyncAtMicroseconds = "last_sync"
         case lastErrorCode = "last_error_code"
-        case lastEnqueuedHistoryPrimaryKey = "last_enqueued_history_primary_key"
-        case stateSerialization = "sync_engine_state"
+        case lastEnqueuedHistoryPrimaryKey = "last_enqueued_history_pk"
+        case stateSerialization = "state_serialization"
         
         nonisolated internal static var createTable: String {
             """
