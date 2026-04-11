@@ -502,7 +502,7 @@ where T: PersistentModel & SendableMetatype {
     /// The persistent identifier of the inserted model.
     nonisolated public var changedPersistentIdentifier: PersistentIdentifier
     
-    nonisolated fileprivate init(
+    nonisolated internal init(
         as type: Model.Type,
         transactionIdentifier: TransactionIdentifier,
         changeIdentifier: ChangeIdentifier,
@@ -542,7 +542,9 @@ where T: PersistentModel & SendableMetatype {
     /// The key paths for the properties that were updated.
     nonisolated public var updatedAttributes: [PropertyUpdate]
     
-    nonisolated fileprivate init(
+    nonisolated internal var fields: [String]
+    
+    nonisolated internal init(
         as type: Model.Type,
         transactionIdentifier: TransactionIdentifier,
         changeIdentifier: ChangeIdentifier,
@@ -552,6 +554,7 @@ where T: PersistentModel & SendableMetatype {
         self.transactionIdentifier = transactionIdentifier
         self.changeIdentifier = changeIdentifier
         self.changedPersistentIdentifier = changedPersistentIdentifier
+        self.fields = keys
         self.updatedAttributes = keys.reduce(into: .init()) { partialResult, propertyName in
             switch T.schemaMetadata(for: propertyName) {
             case let property?:
@@ -596,7 +599,7 @@ where T: PersistentModel & SendableMetatype {
         preservedValues[keyPath]
     }
     
-    nonisolated fileprivate init(
+    nonisolated internal init(
         as type: Model.Type,
         transactionIdentifier: TransactionIdentifier,
         changeIdentifier: ChangeIdentifier,
