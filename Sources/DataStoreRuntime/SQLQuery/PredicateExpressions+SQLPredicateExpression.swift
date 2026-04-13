@@ -1152,7 +1152,13 @@ where Input: SQLPredicateExpression {
         guard let desiredType = desiredType as? any (PersistentModel & SendableMetatype).Type else {
             return input.copy(clause: input.clause, bindings: input.bindings, type: Desired.self, kind: .expression)
         }
-        context.loadSchemaMetadata(for: desiredType)
+        context.loadSchemaMetadata(for: desiredType, key: input.key)
+        if let model = input.bindings.last as? any PersistentModel {
+            // TODO: Map concrete entity name to the `PersistentModel`.
+            context.log(.debug, "Last binding is a model: \(model)")
+        } else {
+            context.log(.debug, "Last binding is not a model: \(input.bindings.last.debugDescription)")
+        }
         guard let inputEntity = input.entity,
               let inputAlias = input.alias,
               let desiredEntity = context.schema.entity(for: desiredType) ?? Schema([desiredType]).entity(for: desiredType) else {
@@ -1951,6 +1957,13 @@ where Input: SQLPredicateExpression {
            let inputEntity = input.entity,
            let inputAlias = input.alias,
            let desiredEntity = context.schema.entity(for: desiredType) ?? Schema([desiredType]).entity(for: desiredType) {
+            context.loadSchemaMetadata(for: desiredType, key: input.key)
+            if let model = input.bindings.last as? any PersistentModel {
+                // TODO: Map concrete entity name to the `PersistentModel`.
+                context.log(.debug, "Last binding is a model: \(model)")
+            } else {
+                context.log(.debug, "Last binding is not a model: \(input.bindings.last.debugDescription)")
+            }
             guard let alias = context.createInheritedAlias(input.key, from: inputEntity, as: inputAlias, to: desiredEntity) else {
                 return input.copy(clause: "FALSE", kind: .binaryOperation)
             }

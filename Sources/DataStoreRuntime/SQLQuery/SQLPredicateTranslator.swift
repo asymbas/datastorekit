@@ -386,6 +386,30 @@ extension SQLPredicateTranslator {
 }
 
 extension SQLPredicateTranslator {
+    #if true
+    // TODO: Temporarily test matching to inherited properties.
+    nonisolated private mutating func resolveKeyPathNames<Model: PersistentModel>(
+        _ keyPaths: Set<AnyKeyPath & Sendable>,
+        for type: Model.Type
+    ) -> Set<String> {
+        guard !keyPaths.isEmpty else { return [] }
+        var names = Set<String>()
+        names.reserveCapacity(keyPaths.count)
+        for keyPath in keyPaths {
+            if let property = self.keyPaths[keyPath] {
+                names.insert(property.name)
+            } else if let keyPath: PartialKeyPath<Model> & Sendable = sendable(cast: keyPath),
+                      let property = Model.schemaMetadata(for: keyPath) {
+                names.insert(property.name)
+                self.keyPaths[keyPath] = property
+            } else {
+                log(.warning, "Could not resolve key path to property name: \(keyPath)")
+            }
+        }
+        return names
+    }
+    #endif
+    
     /// Disambiguates the names of result columns.
     nonisolated internal mutating func selectResultColumns<Model>(
         key: PredicateExpressions.VariableID?,
@@ -396,6 +420,10 @@ extension SQLPredicateTranslator {
         relationshipKeyPathsForPrefetching: Set<AnyKeyPath & Sendable> = [],
         includeJoins: Bool = true
     ) -> (columns: [String], properties: [PropertyMetadata]) where Model: PersistentModel {
+        #if true
+        let resolvedFetchNames = resolveKeyPathNames(propertiesToFetch, for: Model.self)
+        let resolvedPrefetchNames = resolveKeyPathNames(relationshipKeyPathsForPrefetching, for: Model.self)
+        #endif
         hasher.combine(propertiesToFetch)
         hasher.combine(relationshipKeyPathsForPrefetching)
         var columns = [String]()
@@ -426,15 +454,29 @@ extension SQLPredicateTranslator {
                 } else {
                     columnAlias = entityAlias
                 }
+                #if true
+                if !resolvedFetchNames.isEmpty && !resolvedFetchNames.contains(property.name) {
+                    property.isSelected = false
+                } else {
+                    columns.append(clause(columnAlias, property.name))
+                }
+                #else
                 if !propertiesToFetch.isEmpty && !propertiesToFetch.contains(property.keyPath) {
                     property.isSelected = false
                 } else {
                     columns.append(clause(columnAlias, property.name))
                 }
+                #endif
             case let relationship as Schema.Relationship:
+                #if true
+                if resolvedPrefetchNames.contains(property.name) {
+                    property.flags.insert(.prefetch)
+                }
+                #else
                 if relationshipKeyPathsForPrefetching.contains(property.keyPath) {
                     property.flags.insert(.prefetch)
                 }
+                #endif
                 if relationship.isToOneRelationship {
                     let columnAlias: String
                     if property.flags.contains(.isInherited),
