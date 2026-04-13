@@ -11,21 +11,22 @@ import DataStoreSupport
 import Foundation
 import SwiftData
 
-@DatabaseActor public protocol DataStoreSynchronizer: Sendable {
-    associatedtype Store: DataStore
-    associatedtype SyncConfiguration: DataStoreSynchronizerConfiguration
+public protocol DataStoreSynchronizer<Store>: Sendable {
+    associatedtype Store: DataStore & HistoryProviding
+    associatedtype SyncConfiguration: DataStoreSynchronizerConfiguration<Store>
     nonisolated var id: String { get }
     nonisolated var remoteAuthor: String { get }
+    nonisolated var lastProcessedToken: Store.HistoryType.TokenType? { get }
     func prepare() async throws
-    func sync() async throws
+    func sync(transactions: [Store.HistoryType]) async throws
 }
 
-public protocol DataStoreSynchronizerConfiguration: Sendable {
-    associatedtype Store: DataStore where Synchronizer.Store == Store
-    associatedtype Synchronizer: DataStoreSynchronizer
+public protocol DataStoreSynchronizerConfiguration<Store>: Sendable {
+    associatedtype Store: DataStore & HistoryProviding where Synchronizer.Store == Store
+    associatedtype Synchronizer: DataStoreSynchronizer<Store>
     var id: String { get }
     var remoteAuthor: String { get }
-    func makeSynchronizer(store: Store) -> any DataStoreSynchronizer
+    func makeSynchronizer(store: Store) -> any DataStoreSynchronizer<Store>
 }
 
 package struct SynchronizationState: Sendable {

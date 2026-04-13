@@ -114,7 +114,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                 for failedRecordSave in event.failedRecordSaves {
                     let recordID = failedRecordSave.record.recordID
                     let error = failedRecordSave.error
-                    logger.trace("Handling failed CloudKit record save.", metadata: [
+                    logger.error("Handling failed CloudKit record save.", metadata: [
                         "record_name": "\(recordID.recordName)",
                         "record_type": "\(failedRecordSave.record.recordType)",
                         "error_code": "\(error.code.rawValue)",
@@ -126,17 +126,10 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                             "record_name": "\(recordID.recordName)",
                             "record_type": "\(failedRecordSave.record.recordType)"
                         ])
-                        let ownership = try resolveProjectedRecordOwnership(
-                            recordType: failedRecordSave.record.recordType,
-                            recordID: recordID
-                        )
-                        let isReferenceRecord = enqueuedChangesByRecordID[recordID]?.isReferenceRecord ?? {
-                            if case .reference = ownership { return true }
-                            return false
-                        }()
+                        let conflictMetadata = try loadRecordMetadata(recordName: recordID.recordName)
+                        let isReferenceRecord = conflictMetadata?.targetPrimaryKey != nil
                         logger.trace("Resolved conflict ownership details.", metadata: [
                             "record_name": "\(recordID.recordName)",
-                            "ownership": "\(String(describing: ownership))",
                             "is_reference_record": "\(isReferenceRecord)"
                         ])
                         if isReferenceRecord {
@@ -161,12 +154,15 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                         }
                         let entityName: String
                         let primaryKey: String
+                        let persistentIdentifier: PersistentIdentifier
                         if let enqueued = enqueuedChangesByRecordID[recordID] {
                             entityName = enqueued.entityName
-                            primaryKey = enqueued.primaryKey
-                        } else if case let .root(resolvedEntityName, resolvedPrimaryKey)? = ownership {
-                            entityName = resolvedEntityName
-                            primaryKey = resolvedPrimaryKey
+                            primaryKey = enqueued.primaryKey()
+                            persistentIdentifier = enqueued
+                        } else if let conflictMetadata, conflictMetadata.targetPrimaryKey == nil {
+                            entityName = conflictMetadata.entityName
+                            primaryKey = conflictMetadata.primaryKey
+                            persistentIdentifier = try .identifier(for: store.identifier, entityName: conflictMetadata.entityName, primaryKey: conflictMetadata.primaryKey)
                         } else {
                             logger.trace("Skipped conflict resolution because root ownership could not be resolved.", metadata: [
                                 "record_name": "\(recordID.recordName)"
@@ -178,11 +174,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                             "entity_name": "\(entityName)",
                             "primary_key": "\(primaryKey)"
                         ])
-                        guard let _ = try snapshot(for: .init(
-                            for: store.identifier,
-                            tableName: entityName,
-                            primaryKey: primaryKey
-                        )) else {
+                        guard let _ = try snapshot(for: persistentIdentifier) else {
                             logger.trace("Skipped conflict resolution because the local snapshot was missing.", metadata: [
                                 "record_name": "\(recordID.recordName)",
                                 "entity_name": "\(entityName)",
@@ -202,12 +194,10 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                         ) { recordName, destinationEntityName in
                             try self.loadRecordMetadata(recordName: recordName)?.primaryKey
                         }
-                        let changedPropertyNames = enqueuedChangesByRecordID[recordID]?.changedPropertyNames
                         logger.trace("Loaded conflict snapshots for merge.", metadata: [
                             "record_name": "\(recordID.recordName)",
                             "entity_name": "\(entityName)",
-                            "primary_key": "\(primaryKey)",
-                            "changed_property_names": "\(String(describing: changedPropertyNames))"
+                            "primary_key": "\(primaryKey)"
                         ])
                         newPendingRecordZoneChanges.append(.saveRecord(recordID))
                         logger.trace("Re-enqueued root record after conflict merge.", metadata: [
@@ -298,7 +288,6 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
         }
     }
     
-    /// Inherited from `CKSyncEngineDelegate.nextRecordZoneChangeBatch(_:syncEngine:)`.
     public func nextRecordZoneChangeBatch(_ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine)
     async -> CKSyncEngine.RecordZoneChangeBatch? {
         let scope = context.options.scope
@@ -308,16 +297,21 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
             "filtered_count": "\(changes.count)",
             "scope": "\(scope)"
         ])
+        let cached = cachedRecordsForBatch
+        let enqueued = enqueuedChangesByRecordID
         let batch = await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: changes) { recordID in
-            guard let enqueued = await self.enqueuedChangesByRecordID[recordID] else {
+            if let record = cached[recordID] {
+                return record
+            }
+            guard let identifier = enqueued[recordID] else {
                 syncEngine.state.remove(pendingRecordZoneChanges: [.saveRecord(recordID)])
                 return nil
             }
-            guard self.configuration.delegate.shouldSyncEntity(enqueued.entityName) else {
+            guard self.configuration.delegate.shouldSyncEntity(identifier.entityName) else {
                 syncEngine.state.remove(pendingRecordZoneChanges: [.saveRecord(recordID)])
                 return nil
             }
-            guard let currentSnapshot = try? await self.snapshot(for: enqueued.identifier) else {
+            guard let currentSnapshot = try? await self.snapshot(for: identifier) else {
                 syncEngine.state.remove(pendingRecordZoneChanges: [.saveRecord(recordID)])
                 return nil
             }
@@ -327,6 +321,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
             }
             return records.first { $0.recordID == recordID }
         }
+        cachedRecordsForBatch.removeAll()
         return batch
     }
 }

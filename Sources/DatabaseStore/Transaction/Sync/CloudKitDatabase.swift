@@ -58,7 +58,7 @@ extension DatabaseConfiguration {
             )
         }
         
-        public func makeSynchronizer(store: Store) -> any DataStoreSynchronizer {
+        public func makeSynchronizer(store: Store) -> any DataStoreSynchronizer<Store> {
             Synchronizer(store: store, configuration: self)
         }
     }

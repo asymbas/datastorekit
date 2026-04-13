@@ -39,7 +39,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
  */
 
 extension DatabaseConfiguration.CloudKitDatabase {
-    public final class Replicator: DataStoreSynchronizer {
+    public final actor Replicator: DataStoreSynchronizer {
         public typealias Store = DatabaseStore
         public typealias SyncConfiguration = Store.Configuration.CloudKitDatabase
         private var syncEngine: CKSyncEngine?
@@ -48,8 +48,9 @@ extension DatabaseConfiguration.CloudKitDatabase {
         nonisolated internal let container: CKContainer
         nonisolated internal let database: CKDatabase
         nonisolated internal let zoneID: CKRecordZone.ID
-        internal var identifiers: [RecordIdentifier: RecordMetadata] = [:]
-        internal var enqueuedChangesByRecordID: [CKRecord.ID: EnqueuedRecord] = [:]
+        internal var identifiers: [PersistentIdentifier: RecordMetadata] = [:]
+        internal var enqueuedChangesByRecordID: [CKRecord.ID: PersistentIdentifier] = [:]
+        internal var cachedRecordsForBatch: [CKRecord.ID: CKRecord] = [:]
         internal var didPrepare: Bool = false
         internal var isHandlingAccountChange: Bool = false
         nonisolated public let id: String
@@ -59,7 +60,27 @@ extension DatabaseConfiguration.CloudKitDatabase {
             configuration.remoteAuthor
         }
         
-        nonisolated internal init(store: Store, configuration: SyncConfiguration) {
+        nonisolated public var lastProcessedToken: Store.HistoryType.TokenType? {
+            guard let row = try? store.queue.connection(.reader).query(
+                """
+                SELECT \(DatabaseConfiguration.CloudKitDatabase.StateTable.lastEnqueuedHistoryPrimaryKey.rawValue) AS history_pk
+                FROM \(DatabaseConfiguration.CloudKitDatabase.StateTable.tableName)
+                WHERE \(DatabaseConfiguration.CloudKitDatabase.StateTable.storeIdentifier.rawValue) = ?
+                LIMIT 1
+                """,
+                bindings: [store.identifier]
+            ).first,
+                  let watermark = row["history_pk"] as? Int64,
+                  watermark > 0 else {
+                return nil
+            }
+            return DatabaseHistoryToken(
+                id: Int(watermark),
+                tokenValue: [store.identifier: watermark]
+            )
+        }
+        
+        internal init(store: Store, configuration: SyncConfiguration) {
             let container: CKContainer = {
                 if let identifier = configuration.containerIdentifier {
                     return .init(identifier: identifier)
@@ -80,16 +101,13 @@ extension DatabaseConfiguration.CloudKitDatabase {
             self.container = container
             self.database = database
             self.zoneID = .init(zoneName: configuration.zoneName, ownerName: CKCurrentUserDefaultName)
-            logger.debug(
-                "Initialized CloudKit replicator.",
-                metadata: [
-                    "id": "\(configuration.id)",
-                    "store_identifier": "\(store.identifier)",
-                    "container_identifier": "\(configuration.containerIdentifier ?? "<default>")",
-                    "database_scope": "\(configuration.databaseScope)",
-                    "zone_name": "\(configuration.zoneName)"
-                ]
-            )
+            logger.debug("Initialized CloudKit replicator.", metadata: [
+                "id": "\(configuration.id)",
+                "store_identifier": "\(store.identifier)",
+                "container_identifier": "\(configuration.containerIdentifier ?? "<default>")",
+                "database_scope": "\(configuration.databaseScope)",
+                "zone_name": "\(configuration.zoneName)"
+            ])
         }
         
         internal struct State: Sendable {
@@ -99,39 +117,17 @@ extension DatabaseConfiguration.CloudKitDatabase {
             nonisolated internal var lastErrorCode: String?
         }
         
-        internal struct RecordMetadata {
+        internal struct RecordMetadata: Sendable {
             nonisolated internal let recordType: String
             nonisolated internal let recordName: String
-            nonisolated internal let identifier: RecordIdentifier
+            nonisolated internal var entityName: String
+            nonisolated internal var primaryKey: String
             nonisolated internal let targetPrimaryKey: String?
-            
-            nonisolated internal var entityName: String { identifier.tableName }
-            nonisolated internal var primaryKey: String { identifier.primaryKey.description }
         }
         
         internal struct OrderedInsertPlan {
             nonisolated internal let insertLayers: [[Store.Snapshot]]
             nonisolated internal let updateSnapshots: [Store.Snapshot]
-        }
-        
-        internal struct EnqueuedRecord {
-            nonisolated internal let operation: DataStoreOperation
-            nonisolated internal let identifier: RecordIdentifier
-            nonisolated internal let changedPropertyNames: Set<String>?
-            nonisolated internal let isReferenceRecord: Bool
-            nonisolated internal var entityName: String { identifier.tableName }
-            nonisolated internal var primaryKey: String { identifier.primaryKey.description }
-        }
-        
-        internal struct PendingChange: Sendable {
-            nonisolated internal let identifier: RecordIdentifier
-            nonisolated internal var operation: DataStoreOperation
-            nonisolated internal var historyPrimaryKey: Int64
-            nonisolated internal var transactionIdentifier: Int64
-            nonisolated internal var changedPropertyNames: Set<String>?
-            nonisolated internal var author: String?
-            nonisolated internal var entityName: String { identifier.tableName }
-            nonisolated internal var primaryKey: String { identifier.primaryKey.description }
         }
         
         internal struct IntermediaryRecordDescriptor {
@@ -140,16 +136,6 @@ extension DatabaseConfiguration.CloudKitDatabase {
             nonisolated internal let destinationEntityName: String
             nonisolated internal let sourceFieldName: String
             nonisolated internal let destinationFieldName: String
-        }
-        
-        internal enum ProjectedRecordOwnership {
-            case root(entityName: String, primaryKey: String)
-            case reference(
-                entityName: String,
-                primaryKey: String,
-                intermediaryTableName: String,
-                targetPrimaryKey: String
-            )
         }
         
         internal enum Error: Swift.Error, Sendable {
@@ -202,15 +188,64 @@ extension DatabaseConfiguration.CloudKitDatabase {
             logger.trace("Completed preparation.", metadata: ["did_prepare": "\(didPrepare)"])
         }
         
-        public func sync() async throws {
-            logger.trace("Starting CloudKit sync.")
-            try enqueuePendingChanges()
+        private func extractChangeIdentifier(_ change: HistoryChange) -> Int64? {
+            switch change {
+            case .insert(let insert): insert.changeIdentifier as? Int64
+            case .update(let update): update.changeIdentifier as? Int64
+            case .delete(let delete): delete.changeIdentifier as? Int64
+            @unknown default:
+                fatalError()
+            }
+        }
+        
+        /// Inherited from `DataStoreSynchronizer.sync(transactions:)`.
+        /// - Parameter transactions: The transaction delta.
+        public func sync(transactions: [Store.HistoryType]) async throws {
+            logger.trace("Starting CloudKit sync: \(transactions.count) transactions")
+            try initializeSyncEngineIfNeeded()
+            for change in coalesceTransactions(transactions) {
+                guard let type = Schema.type(for: change.changedPersistentIdentifier.entityName) else {
+                    throw SchemaError.entityNotRegistered
+                }
+                let pendingRecordZoneChanges = try makePendingRecordZoneChanges(for: change, as: type)
+                if pendingRecordZoneChanges.isEmpty == false {
+                    syncEngine?.state.add(pendingRecordZoneChanges: pendingRecordZoneChanges)
+                }
+            }
+            if let lastChangeIdentifier = transactions
+                .flatMap(\.changes)
+                .compactMap({ extractChangeIdentifier($0) })
+                .max() {
+                try saveState(lastEnqueuedHistoryPrimaryKey: lastChangeIdentifier, clearErrorCode: true)
+            }
             guard let syncEngine = self.syncEngine else {
                 throw Self.Error.noSyncEngine
             }
             try await syncEngine.sendChanges(.init())
+            var remainingAttempts = 10
+            while syncEngine.state.pendingRecordZoneChanges.isEmpty == false, remainingAttempts > 0 {
+                remainingAttempts -= 1
+                logger.trace("Pending record zone changes remain after send. Retrying.", metadata: [
+                    "pending_count": "\(syncEngine.state.pendingRecordZoneChanges.count)",
+                    "remaining_attempts": "\(remainingAttempts)"
+                ])
+                try await Task.sleep(for: .seconds(1))
+                try await syncEngine.sendChanges(.init())
+            }
             try await syncEngine.fetchChanges(.init())
             logger.trace("Completed CloudKit sync.")
+        }
+        
+        public func sync() async throws {
+            let watermark = self.lastProcessedToken?.watermark(for: store.identifier) ?? 0
+            let descriptor = HistoryDescriptor<DatabaseHistoryTransaction>()
+            let transactions = try store.fetchHistory(descriptor)
+                .filter { transaction in
+                    transaction.author != remoteAuthor &&
+                    transaction.changes.contains { (extractChangeIdentifier($0) ?? 0) > watermark }
+                }
+                .sorted { $0.transactionIdentifier < $1.transactionIdentifier }
+            try await sync(transactions: transactions)
         }
         
         public func fetchChanges() async throws {
@@ -228,7 +263,6 @@ extension DatabaseConfiguration.CloudKitDatabase {
             try await syncEngine.sendChanges(.init())
             logger.trace("Completed sending CloudKit changes.")
         }
-        
     }
 }
 
@@ -483,312 +517,126 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
 // MARK: Outgoing to CloudKit
 
 extension DatabaseConfiguration.CloudKitDatabase.Replicator {
-    private func enqueuePendingChanges() throws {
-        try initializeSyncEngineIfNeeded()
-        let state = try loadState()
-        let rows = try fetchHistory(
-            afterHistoryPrimaryKey: state.lastEnqueuedHistoryPrimaryKey,
-            excludingAuthor: configuration.remoteAuthor
-        )
-        let changes = try coalescePendingChanges(rows)
-        var lastEnqueuedHistoryPrimaryKey = state.lastEnqueuedHistoryPrimaryKey
-        for change in changes {
-            let pendingRecordZoneChanges = try makePendingRecordZoneChanges(for: change)
-            if pendingRecordZoneChanges.isEmpty == false {
-                syncEngine?.state.add(pendingRecordZoneChanges: pendingRecordZoneChanges)
-            }
-            lastEnqueuedHistoryPrimaryKey = change.historyPrimaryKey
-            try saveState(
-                lastEnqueuedHistoryPrimaryKey: lastEnqueuedHistoryPrimaryKey,
-                clearErrorCode: true
-            )
-        }
-    }
-    
-    internal func makePendingRecordZoneChanges(for change: PendingChange)
-    throws -> [CKSyncEngine.PendingRecordZoneChange] {
-        let existingMetadata = try loadOwnedRecordMetadata(for: change.identifier)
-        switch change.operation {
-        case .insert, .update:
-            guard let currentSnapshot = try snapshot(for: change.identifier) else {
-                let deleteChange = PendingChange(
-                    identifier: change.identifier,
-                    operation: .delete,
-                    historyPrimaryKey: change.historyPrimaryKey,
-                    transactionIdentifier: change.transactionIdentifier,
-                    changedPropertyNames: change.changedPropertyNames,
-                    author: change.author
-                )
-                return try makePendingRecordZoneChanges(for: deleteChange)
-            }
-            let projected = try projectedRecords(for: currentSnapshot)
-            let projectedIDs = Set(projected.map(\.recordID))
-            var pending = [CKSyncEngine.PendingRecordZoneChange]()
-            for record in projected {
-                enqueuedChangesByRecordID[record.recordID] = .init(
-                    operation: .insert,
-                    identifier: change.identifier,
-                    changedPropertyNames: change.changedPropertyNames,
-                    isReferenceRecord: record.recordType != makeRecordType(change.entityName)
-                )
-                pending.append(.saveRecord(record.recordID))
-            }
-            for metadata in existingMetadata {
-                let recordID = makeRecordID(recordName: metadata.recordName)
-                guard projectedIDs.contains(recordID) == false else {
+    private func coalesceTransactions(_ transactions: [Store.HistoryType]) -> [HistoryChange] {
+        var changes = [PersistentIdentifier: HistoryChange]()
+        for transaction in transactions {
+            for change in transaction.changes {
+                let changedPersistentIdentifier = change.changedPersistentIdentifier
+                guard configuration.delegate.shouldSyncEntity(changedPersistentIdentifier.entityName) else {
                     continue
                 }
-                enqueuedChangesByRecordID[recordID] = .init(
-                    operation: .delete,
-                    identifier: metadata.identifier,
-                    changedPropertyNames: change.changedPropertyNames,
-                    isReferenceRecord: metadata.recordType != makeRecordType(metadata.entityName)
-                )
-                pending.append(.deleteRecord(recordID))
+                switch change {
+                case .delete(let delete):
+                    changes[changedPersistentIdentifier] = .delete(delete)
+                case .insert(let insert):
+                    changes[changedPersistentIdentifier] = .insert(insert)
+                case .update(let update):
+                    changes[changedPersistentIdentifier] = changes[changedPersistentIdentifier] ?? .update(update)
+                @unknown default:
+                    fatalError()
+                }
             }
-            return pending
-        case .delete:
+        }
+        return Array(changes.values)
+    }
+    
+    /// Prepares the snapshot payload to send out to CloudKit.
+    /// - Parameter change: A single event operation.
+    internal func makePendingRecordZoneChanges<T: PersistentModel>(for change: HistoryChange, as type: T.Type)
+    throws -> [CKSyncEngine.PendingRecordZoneChange] {
+        let existingMetadata = try loadOwnedRecordMetadata(for: change.changedPersistentIdentifier)
+        switch change {
+        case .insert(let insert as DatabaseHistoryInsert<T>):
+            guard let currentSnapshot = try snapshot(for: change.changedPersistentIdentifier) else {
+                let deleteChange = DatabaseHistoryDelete(
+                    as: T.self,
+                    transactionIdentifier: insert.transactionIdentifier,
+                    changeIdentifier: insert.changeIdentifier,
+                    changedPersistentIdentifier: insert.changedPersistentIdentifier,
+                    changedPropertyNames: [],
+                    preservedValues: nil
+                )
+                return try makePendingRecordZoneChanges(for: .delete(deleteChange), as: T.self)
+            }
+            return try enqueueProjectedChanges(
+                for: insert.changedPersistentIdentifier,
+                snapshot: currentSnapshot,
+                existingMetadata: existingMetadata
+            )
+        case .update(let update as DatabaseHistoryUpdate<T>):
+            guard let currentSnapshot = try snapshot(for: change.changedPersistentIdentifier) else {
+                let deleteChange = DatabaseHistoryDelete(
+                    as: T.self,
+                    transactionIdentifier: update.transactionIdentifier,
+                    changeIdentifier: update.changeIdentifier,
+                    changedPersistentIdentifier: update.changedPersistentIdentifier,
+                    changedPropertyNames: [],
+                    preservedValues: nil
+                )
+                return try makePendingRecordZoneChanges(for: .delete(deleteChange), as: T.self)
+            }
+            return try enqueueProjectedChanges(
+                for: update.changedPersistentIdentifier,
+                snapshot: currentSnapshot,
+                existingMetadata: existingMetadata
+            )
+        case .delete(let delete as DatabaseHistoryDelete<T>):
             guard !existingMetadata.isEmpty else {
                 return []
             }
-            var pending = existingMetadata.map { metadata in
+            var pending = try existingMetadata.map { metadata in
                 let recordID = makeRecordID(recordName: metadata.recordName)
-                enqueuedChangesByRecordID[recordID] = .init(
-                    operation: .delete,
-                    identifier: metadata.identifier,
-                    changedPropertyNames: change.changedPropertyNames,
-                    isReferenceRecord: metadata.recordType != makeRecordType(metadata.entityName)
+                enqueuedChangesByRecordID[recordID] = try .identifier(
+                    for: store.identifier,
+                    entityName: metadata.entityName,
+                    primaryKey: metadata.primaryKey
                 )
                 return CKSyncEngine.PendingRecordZoneChange.deleteRecord(recordID)
             }
-            let relatedMetadata = try loadRelatedRecordMetadata(targetPrimaryKey: change.primaryKey)
+            let relatedMetadata = try loadRelatedRecordMetadata(targetPrimaryKey: delete.changedPersistentIdentifier.primaryKey())
             for metadata in relatedMetadata {
                 let recordID = makeRecordID(recordName: metadata.recordName)
-                enqueuedChangesByRecordID[recordID] = .init(
-                    operation: .delete,
-                    identifier: metadata.identifier,
-                    changedPropertyNames: nil,
-                    isReferenceRecord: true
+                enqueuedChangesByRecordID[recordID] = try .identifier(
+                    for: store.identifier,
+                    entityName: metadata.entityName,
+                    primaryKey: metadata.primaryKey
                 )
                 pending.append(.deleteRecord(recordID))
             }
             return pending
-     
+        @unknown default:
+            fatalError()
         }
     }
     
-    private func fetchHistory(
-        afterHistoryPrimaryKey historyPrimaryKey: Int64,
-        excludingAuthor author: String
-    ) throws -> [HistoryTable.Row] {
-        logger.trace("Fetching history rows.", metadata: [
-            "history_primary_key": "\(historyPrimaryKey)",
-            "excluding_author": "\(author)"
-        ])
-        let connection = try store.queue.connection(.reader)
-        var rows = try queryHistoryRows(
-            databaseName: "main",
-            afterHistoryPrimaryKey: historyPrimaryKey,
-            excludingAuthor: author,
-            connection: connection
-        )
-        logger.trace("Loaded history rows from the main database.", metadata: [
-            "row_count": "\(rows.count)"
-        ])
-        if let mainURL = try connection.mainDatabaseURL() {
-            let archiveURLs = archiveDatabaseURLs(mainURL: mainURL)
-            logger.trace("Loaded history archive locations.", metadata: [
-                "main_database_url": "\(mainURL.path)",
-                "archive_count": "\(archiveURLs.count)"
-            ])
-            for archiveURL in archiveURLs {
-                let databaseName = "archive_\(archiveURL.deletingPathExtension().lastPathComponent)"
-                do {
-                    logger.trace("Attaching history archive database.", metadata: [
-                        "database_name": "\(databaseName)",
-                        "archive_path": "\(archiveURL.path)"
-                    ])
-                    try connection.attachDatabase(at: archiveURL, as: databaseName)
-                    defer {
-                        logger.trace("Detaching history archive database.", metadata: [
-                            "database_name": "\(databaseName)"
-                        ])
-                        try? connection.detachDatabaseIfAttached(named: databaseName)
-                    }
-                    let archiveRows = try queryHistoryRows(
-                        databaseName: databaseName,
-                        afterHistoryPrimaryKey: historyPrimaryKey,
-                        excludingAuthor: author,
-                        connection: connection
-                    )
-                    logger.trace("Loaded history rows from archive database.", metadata: [
-                        "database_name": "\(databaseName)",
-                        "row_count": "\(archiveRows.count)"
-                    ])
-                    rows += archiveRows
-                } catch {
-                    logger.trace("Failed to read history archive database.", metadata: [
-                        "database_name": "\(databaseName)",
-                        "error": "\(error)"
-                    ])
-                    try? connection.detachDatabaseIfAttached(named: databaseName)
-                }
-            }
-        } else {
-            logger.trace("Skipped archive lookup because the main database URL was unavailable.")
+    private func enqueueProjectedChanges(
+        for identifier: PersistentIdentifier,
+        snapshot: Store.Snapshot,
+        existingMetadata: [RecordMetadata]
+    ) throws -> [CKSyncEngine.PendingRecordZoneChange] {
+        let projected = try projectedRecords(for: snapshot)
+        let projectedIDs = Set(projected.map(\.recordID))
+        var pending = [CKSyncEngine.PendingRecordZoneChange]()
+        for record in projected {
+            cachedRecordsForBatch[record.recordID] = record
         }
-        rows.sort { $0.pk < $1.pk }
-        logger.trace("Completed fetching history rows.", metadata: ["row_count": "\(rows.count)"])
-        return rows
-    }
-    
-    private func queryHistoryRows(
-        databaseName: String,
-        afterHistoryPrimaryKey historyPrimaryKey: Int64,
-        excludingAuthor author: String,
-        connection: borrowing DatabaseConnection<Store>
-    ) throws -> [HistoryTable.Row] {
-        try connection.query(
-            """
-            SELECT
-                \(HistoryTable.pk.rawValue) AS history_pk,
-                \(HistoryTable.event.rawValue) AS change_type,
-                \(HistoryTable.timestamp.rawValue) AS transaction_identifier,
-                \(HistoryTable.entityName.rawValue) AS entity_name,
-                \(HistoryTable.entityPrimaryKey.rawValue) AS entity_pk,
-                \(HistoryTable.author.rawValue) AS author,
-                \(HistoryTable.propertyNames.rawValue) AS property_names
-            FROM \(databaseName).\(HistoryTable.tableName)
-            WHERE \(HistoryTable.storeIdentifier.rawValue) = ?
-            AND \(HistoryTable.pk.rawValue) > ?
-            AND (
-                \(HistoryTable.author.rawValue) IS NULL
-                OR \(HistoryTable.author.rawValue) != ?
-            )
-            ORDER BY \(HistoryTable.pk.rawValue) ASC
-            """,
-            bindings: [store.identifier, historyPrimaryKey, author]
-        ).compactMap { row in
-            guard let historyPrimaryKey = row["history_pk"] as? Int64,
-                  let changeType = row["change_type"] as? String,
-                  let transactionIdentifier = row["transaction_identifier"] as? Int64,
-                  let entityName = row["entity_name"] as? String,
-                  let entityPrimaryKey = row["entity_pk"] as? String else {
-                return nil
-            }
-            return .init(
-                pk: historyPrimaryKey,
-                changeType: .init(rawValue: changeType)!,
-                transactionIdentifier: transactionIdentifier,
-                entityName: entityName,
-                entityPrimaryKey: entityPrimaryKey,
-                author: row["author"] as? String,
-                propertyNames: row["property_names"] as? String,
-                preservedValues: nil
-            )
+        for record in projected {
+            enqueuedChangesByRecordID[record.recordID] = identifier
+            pending.append(.saveRecord(record.recordID))
         }
-    }
-    
-    private func archiveDatabaseURLs(mainURL: URL) -> [URL] {
-        let directoryURL = HistoryTable.archiveDirectoryURL(mainURL: mainURL)
-        logger.trace("Scanning history archive directory.", metadata: ["directory": "\(directoryURL.path)"])
-        guard let urls = try? FileManager.default.contentsOfDirectory(
-            at: directoryURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else {
-            logger.trace("Skipped archive scan because the directory was unavailable or unreadable.", metadata: [
-                "directory": "\(directoryURL.path)"
-            ])
-            return []
-        }
-        let archiveURLs = urls
-            .filter { $0.pathExtension == "archive" }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        logger.trace("Loaded history archive files.", metadata: [
-            "archive_count": "\(archiveURLs.count)",
-            "files": "\(archiveURLs.map(\.lastPathComponent))"
-        ])
-        return archiveURLs
-    }
-    
-    private func coalescePendingChanges(_ rows: [HistoryTable.Row]) throws -> [PendingChange] {
-        logger.trace("Coalescing history rows into pending changes.", metadata: ["row_count": "\(rows.count)"])
-        var changes = [RecordIdentifier: PendingChange]()
-        changes.reserveCapacity(rows.count)
-        for row in rows {
-            logger.trace("Processing history row for pending change coalescing.", metadata: [
-                "entity_name": "\(row.entityName)",
-                "entity_primary_key": "\(row.entityPrimaryKey)",
-                "history_primary_key": "\(row.pk)",
-                "change_type": "\(row.changeType)",
-                "transaction_identifier": "\(row.transactionIdentifier)",
-                "author": "\(row.author, default: "nil")",
-                "propertyNames": "\(row.propertyNames, default: "nil")"
-            ])
-            guard configuration.delegate.shouldSyncEntity(row.entityName) else {
-                logger.trace("Skipped entity because syncing is disabled by the delegate: \(row.entityName)")
+        for metadata in existingMetadata {
+            let recordID = makeRecordID(recordName: metadata.recordName)
+            guard projectedIDs.contains(recordID) == false else {
                 continue
             }
-            let identifier = RecordIdentifier(
+            enqueuedChangesByRecordID[recordID] = try .identifier(
                 for: store.identifier,
-                tableName: row.entityName,
-                primaryKey: row.entityPrimaryKey
+                entityName: metadata.entityName,
+                primaryKey: metadata.primaryKey
             )
-            switch row.changeType {
-            case .delete:
-                changes[identifier] = .init(
-                    identifier: identifier,
-                    operation: .delete,
-                    historyPrimaryKey: row.pk,
-                    transactionIdentifier: row.transactionIdentifier,
-                    changedPropertyNames: nil,
-                    author: row.author
-                )
-                logger.trace("Recorded delete change.", metadata: [
-                    "entity_name": "\(identifier.tableName)",
-                    "primary_key": "\(identifier.primaryKey)"
-                ])
-            case .insert:
-                changes[identifier] = .init(
-                    identifier: identifier,
-                    operation: .insert,
-                    historyPrimaryKey: row.pk,
-                    transactionIdentifier: row.transactionIdentifier,
-                    changedPropertyNames: nil,
-                    author: row.author
-                )
-                logger.trace("Recorded insert as upsert change.", metadata: [
-                    "entity_name": "\(identifier.tableName)",
-                    "primary_key": "\(identifier.primaryKey)"
-                ])
-            case .update:
-                var existing = changes[identifier] ?? .init(
-                    identifier: identifier,
-                    operation: .update,
-                    historyPrimaryKey: row.pk,
-                    transactionIdentifier: row.transactionIdentifier,
-                    changedPropertyNames: [],
-                    author: row.author
-                )
-                existing.operation = .update
-                existing.historyPrimaryKey = row.pk
-                existing.transactionIdentifier = row.transactionIdentifier
-                existing.author = row.author
-                if existing.changedPropertyNames != nil {
-                    existing.changedPropertyNames?.formUnion(HistoryTable.changedPropertyNames(row.propertyNames))
-                }
-                changes[identifier] = existing
-                logger.trace("Merged update change.", metadata: [
-                    "entity_name": "\(identifier.tableName)",
-                    "primary_key": "\(identifier.primaryKey)",
-                    "changed_property_names": "\(existing.changedPropertyNames, default: "nil")"
-                ])
-            }
+            pending.append(.deleteRecord(recordID))
         }
-        let result = changes.values.sorted { $0.historyPrimaryKey < $1.historyPrimaryKey }
-        logger.trace("Completed coalescing pending changes.", metadata: ["result_count": "\(result.count)"])
-        return result
+        return pending
     }
 }
 
@@ -802,11 +650,19 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         guard changed.isEmpty == false || deleted.isEmpty == false else {
             return
         }
+        struct JoinTable {
+            let joinTable: String
+            let sourceColumn: String
+            let destinationColumn: String
+            let sourcePrimaryKey: String
+            let destinationPrimaryKey: String
+        }
         var allRemappedIdentifiers = [PersistentIdentifier: PersistentIdentifier]()
         var changedRecordsToPersist = [CKRecord]()
         var deletedRecordIDsToCleanup = [CKRecord.ID]()
         var operations = [DataStoreOperation: [Store.Snapshot]]()
         var recordNameToPrimaryKey = [String: String]()
+        var deferredJoinTableInserts = [JoinTable]()
         for event in changed {
             let record = event.record
             if let primaryKey = record[pk] as? String {
@@ -815,10 +671,14 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         }
         for event in changed.lazy {
             if let root = try resolveRootRecordOwnership(for: event.record) {
-                guard configuration.delegate.shouldSyncEntity(root.tableName) else {
+                guard configuration.delegate.shouldSyncEntity(root.entityName) else {
                     continue
                 }
-                let existingSnapshot = try snapshot(for: root)
+                let existingSnapshot = try snapshot(for: .identifier(
+                    for: store.identifier,
+                    entityName: root.entityName,
+                    primaryKey: root.primaryKey
+                ))
                 let incomingSnapshot = try Store.Snapshot(
                     existingSnapshot,
                     record: event.record,
@@ -854,6 +714,15 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                                 systemFields: event.record.systemFieldsData(),
                                 connection: connection
                             )
+                            let reference = descriptor.property.reference!
+                            deferredJoinTableInserts.append(.init(
+                                joinTable: reference[0].destinationTable,
+                                sourceColumn: reference[0].rhsColumn,
+                                destinationColumn: reference[1].lhsColumn,
+                                sourcePrimaryKey: sourcePrimaryKey,
+                                destinationPrimaryKey: destinationPrimaryKey
+                            ))
+                            changedRecordsToPersist.append(event.record)
                             logger.debug("Persisted intermediary record metadata: \(event.record.recordType)")
                         } else {
                             logger.debug("Deferred intermediary record — dependencies not yet available: \(event.record.recordType)")
@@ -865,15 +734,16 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         for event in deleted.lazy {
             let recordID = event.recordID
             if let owner = try resolveRootRecordOwnership(for: recordID),
-               let existingSnapshot = try snapshot(for: owner) {
+               let existingSnapshot = try snapshot(for: .identifier(
+                for: store.identifier,
+                entityName: owner.entityName,
+                primaryKey: owner.primaryKey
+               )) {
                 operations[.delete, default: []].append(existingSnapshot)
             }
             deletedRecordIDsToCleanup.append(recordID)
         }
-        let orderedInsertPlan = orderedInsertPlan(
-            inserted: operations[.insert] ?? [],
-            updated: operations[.update] ?? []
-        )
+        let orderedInsertPlan = orderedInsertPlan(inserted: operations[.insert] ?? [], updated: operations[.update] ?? [])
         if !orderedInsertPlan.insertLayers.isEmpty {
             for layer in orderedInsertPlan.insertLayers {
                 let result = try saveRemoteChanges(inserted: layer, updated: [], deleted: [])
@@ -887,6 +757,21 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         if let deleted = operations[.delete] {
             let result = try saveRemoteChanges(inserted: [], updated: [], deleted: deleted)
             allRemappedIdentifiers.merge(result.remappedIdentifiers) { _, new in new }
+        }
+        if !deferredJoinTableInserts.isEmpty {
+            let connection = try store.queue.connection(.writer)
+            for insert in deferredJoinTableInserts {
+                _ = try connection.query(
+                    """
+                    INSERT OR IGNORE INTO "\(insert.joinTable)" (
+                        "\(insert.sourceColumn)",
+                        "\(insert.destinationColumn)"
+                    ) VALUES (?, ?)
+                    """,
+                    bindings: [insert.sourcePrimaryKey, insert.destinationPrimaryKey]
+                )
+            }
+            logger.debug("Inserted \(deferredJoinTableInserts.count) deferred join table rows.")
         }
         for record in changedRecordsToPersist {
             try persistSavedRecordMetadata(record)
@@ -951,12 +836,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                         if updateSnapshots[relatedIdentifier] != nil {
                             continue
                         }
-                        let identifier = RecordIdentifier(
-                            for: store.identifier,
-                            tableName: relatedIdentifier.entityName,
-                            primaryKey: relatedIdentifier.primaryKey()
-                        )
-                        if (try? self.snapshot(for: identifier)) != nil {
+                        if (try? self.snapshot(for: relatedIdentifier)) != nil {
                             logger.notice("Satisfied dependency from local snapshot: \(property)")
                         }
                         continue
@@ -1004,7 +884,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
             }
             return snapshot
         }
-        return OrderedInsertPlan(insertLayers: insertLayers, updateSnapshots: updateResult)
+        return .init(insertLayers: insertLayers, updateSnapshots: updateResult)
     }
     
     internal func cloudKitErrorCodeString(_ error: Swift.Error) -> String {

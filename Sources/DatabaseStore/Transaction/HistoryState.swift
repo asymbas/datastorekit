@@ -12,6 +12,7 @@ import DataStoreRuntime
 import DataStoreSupport
 import Foundation
 import Logging
+import SwiftData
 import Synchronization
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.transaction")
@@ -21,17 +22,20 @@ public extension Notification.Name {
 }
 
 extension DataStoreSynchronizerConfiguration {
-    internal func makeDatabaseSynchronizer(store: Any) -> any DataStoreSynchronizer {
+    internal func makeDatabaseSynchronizer(store: Any) -> any DataStoreSynchronizer<DatabaseStore> {
         guard let store = store as? Self.Store else {
-            preconditionFailure()
+            preconditionFailure("Synchronizer store type mismatch: expected \(Self.Store.self)")
         }
-        return makeSynchronizer(store: store)
+        guard let synchronizer = makeSynchronizer(store: store) as? any DataStoreSynchronizer<DatabaseStore> else {
+            preconditionFailure("Synchronizer must use DatabaseStore: \(Self.Synchronizer.self)")
+        }
+        return synchronizer
     }
 }
 
 @DatabaseActor internal final class HistoryState: Sendable {
-    nonisolated internal unowned let store: DatabaseStore
-    internal let synchronizers: [any DataStoreSynchronizer]
+    nonisolated internal weak let store: DatabaseStore?
+    internal let synchronizers: [any DataStoreSynchronizer<DatabaseStore>]
     internal var synchronizationState: SynchronizationState
     internal var synchronizationStatusesByID: [String: SynchronizationStatus]
     internal let historyTTL: DateComponents
@@ -152,6 +156,7 @@ extension DataStoreSynchronizerConfiguration {
     }
     
     nonisolated internal func run(force: Bool = false) {
+        guard let store = self.store else { return }
         Task { @DatabaseActor in
             let now = Date()
             let shouldArchive = beginHistoryArchive(now: now, force: force)
@@ -226,6 +231,8 @@ extension DataStoreSynchronizerConfiguration {
     }
 }
 
+// MARK: Synchronization
+
 extension HistoryState {
     internal func synchronizationStatus(for id: String) -> SynchronizationStatus? {
         synchronizationStatusesByID[id]
@@ -260,6 +267,9 @@ extension HistoryState {
     }
     
     internal func runSynchronizationLoop() async {
+        guard let store = self.store else {
+            return
+        }
         defer {
             self.synchronizationState.task = nil
             if synchronizationState.isPending {
@@ -283,7 +293,9 @@ extension HistoryState {
                 #endif
                 try await synchronizer.prepare()
                 updateSynchronizationStatus(for: synchronizer.id, phase: .sending)
-                try await synchronizer.sync()
+                let token = synchronizer.lastProcessedToken
+                let transactions = try fetchTransactions(excludingAuthor: synchronizer.remoteAuthor, after: token)
+                try await synchronizer.sync(transactions: transactions)
                 updateSynchronizationStatus(for: synchronizer.id, phase: .finished)
             } catch {
                 logger.error("Synchronizer error: \(error)", metadata: [
@@ -292,6 +304,33 @@ extension HistoryState {
                 ])
                 updateSynchronizationStatus(for: synchronizer.id, phase: .failed, error: error)
             }
+        }
+    }
+    
+    nonisolated internal func fetchTransactions(
+        excludingAuthor author: String,
+        after token: DatabaseHistoryToken?
+    ) throws -> [DatabaseHistoryTransaction] {
+        guard let store = self.store else {
+            return []
+        }
+        let watermark = token?.watermark(for: store.identifier) ?? 0
+        let descriptor = HistoryDescriptor<DatabaseHistoryTransaction>()
+        return try store.fetchHistory(descriptor)
+            .filter { transaction in
+                transaction.author != author &&
+                transaction.changes.contains { changeIdentifier(of: $0) > watermark }
+            }
+            .sorted { $0.transactionIdentifier < $1.transactionIdentifier }
+    }
+    
+    nonisolated private func changeIdentifier(of change: HistoryChange) -> Int64 {
+        switch change {
+        case .insert(let insert): insert.changeIdentifier as? Int64 ?? 0
+        case .update(let update): update.changeIdentifier as? Int64 ?? 0
+        case .delete(let delete): delete.changeIdentifier as? Int64 ?? 0
+        @unknown default:
+            fatalError()
         }
     }
     

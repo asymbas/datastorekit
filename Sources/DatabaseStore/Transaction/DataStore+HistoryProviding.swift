@@ -512,6 +512,17 @@ where T: PersistentModel & SendableMetatype {
         self.changeIdentifier = changeIdentifier
         self.changedPersistentIdentifier = changedPersistentIdentifier
     }
+    
+    nonisolated internal func delete(as type: T.Type) -> DatabaseHistoryDelete<T> {
+        .init(
+            as: T.self,
+            transactionIdentifier: transactionIdentifier,
+            changeIdentifier: changeIdentifier,
+            changedPersistentIdentifier: changedPersistentIdentifier,
+            changedPropertyNames: [],
+            preservedValues: nil
+        )
+    }
 }
 
 public struct DatabaseHistoryUpdate<T>: HistoryUpdate
@@ -568,6 +579,17 @@ where T: PersistentModel & SendableMetatype {
                 ])
             }
         }
+    }
+    
+    nonisolated internal func delete(as type: T.Type) -> DatabaseHistoryDelete<T> {
+        .init(
+            as: T.self,
+            transactionIdentifier: transactionIdentifier,
+            changeIdentifier: changeIdentifier,
+            changedPersistentIdentifier: changedPersistentIdentifier,
+            changedPropertyNames: fields,
+            preservedValues: nil
+        )
     }
 }
 
