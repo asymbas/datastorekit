@@ -151,7 +151,7 @@ extension DatabaseSnapshot {
         logger.debug("Creating snapshot for \(resolvedEntity.name) that inherits from \(entity.name).", metadata: [
             "type": "\(type)",
             "resolvedType": "\(resolvedType)",
-//                    "row": "\(zip(properties.map(\.name), values))"
+            "row": "\(zip(properties.map(\.name), values))"
         ])
         if let relatedSnapshot = relatedSnapshots[resolvedPersistentIdentifier] {
             logger.trace("\(resolvedEntity.name) snapshot found in related snapshots: \(primaryKey)")
@@ -209,6 +209,7 @@ extension DatabaseSnapshot {
             ])
         }
         let configuration = configuration
+        let externalStorageURL = configuration.externalStorageURL
         var excludedProperties = [PropertyMetadata]()
         var cursor = values.index(after: values.startIndex)
         properties = properties.dropFirst()
@@ -267,22 +268,15 @@ extension DatabaseSnapshot {
                let relationship = property.metadata as? Schema.Relationship,
                relationship.isToOneRelationship,
                let foreignKey = values[offset] as? String {
-                let identifier = try PersistentIdentifier.identifier(
+                let relatedIdentifier = try PersistentIdentifier.identifier(
                     for: storeIdentifier,
                     entityName: relationship.destination,
                     primaryKey: foreignKey
                 )
-                try setValue(
-                    provider?.resolvedPersistentIdentifier(for: identifier) ?? identifier,
-                    at: property,
-                    externalStorageURL: configuration.externalStorageURL
-                )
+                let resolvedRelatedIdentifier = provider?.resolvedPersistentIdentifier(for: relatedIdentifier) ?? relatedIdentifier
+                try setValue(resolvedRelatedIdentifier, at: property, externalStorageURL: externalStorageURL)
             } else {
-                try setValue(
-                    values[offset],
-                    at: property,
-                    externalStorageURL: configuration.externalStorageURL
-                )
+                try setValue(values[offset], at: property, externalStorageURL: externalStorageURL)
             }
             values.formIndex(after: &cursor)
         }
@@ -411,7 +405,6 @@ extension DatabaseSnapshot {
             let externalStorageURL = store.configuration.externalStorageURL
             try setValue(attribute, value, at: property.index, externalStorageURL: externalStorageURL)
         case let relationship as Schema.Relationship:
-            let storeIdentifier = store.identifier
             try setValue(relationship, value, at: property.index)
         default:
             preconditionFailure("Property is not an attribute or a relationship: \(Swift.type(of: property.metadata))")
@@ -465,7 +458,7 @@ extension DatabaseSnapshot {
             logger.trace("Assigned column to attribute: \(description) = \(value) external storage")
         case let value as any DataStoreSnapshotValue:
             guard let value = SQLValue.convert(value, as: valueType) else {
-                fatalError("Column could not be assigned a value: \(description) = \(value) as \(Swift.type(of: value))")
+                preconditionFailure("Column could not be assigned a value: \(description) = \(value) as \(Swift.type(of: value))")
             }
             self.values[index] = value
             logger.trace("Assigned column to attribute: \(description) = \(value)")

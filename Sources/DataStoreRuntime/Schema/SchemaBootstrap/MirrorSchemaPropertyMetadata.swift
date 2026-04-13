@@ -89,10 +89,10 @@ nonisolated public func reflectSchemaMetadata<Model>(
             continue
         }
         guard let nameValue else {
-            fatalError("Unable to extract name required for PropertyMetadata: \(type)")
+            preconditionFailure("Unable to extract name required for PropertyMetadata: \(type)")
         }
         guard let keyPathValue else {
-            fatalError("Unable to extract key path for required PropertyMetadata: \(type)")
+            preconditionFailure("Unable to extract key path required for PropertyMetadata: \(type)")
         }
         try onPropertyMetadata(index, nameValue, keyPathValue, defaultValue, metadataValue)
     }

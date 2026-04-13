@@ -211,7 +211,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
             }
         }
         guard let keyPath = resolvedKeyPath else {
-            fatalError("No key path found for property: \(description)")
+            preconditionFailure("No key path found for property: \(description)")
         }
         var canonicalProperty = PropertyMetadata(index: index, keyPath: keyPath, metadata: property)
         try makeTableReferences(&canonicalProperty)

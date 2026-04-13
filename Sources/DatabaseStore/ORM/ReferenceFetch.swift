@@ -406,9 +406,6 @@ nonisolated package func fetchExternalReferenceKeysBatched(
         default:
             preconditionFailure("The relationship must have a reference: \(property)")
         }
-        guard let schema = schema ?? connection.schema else {
-            preconditionFailure("No schema was provided.")
-        }
         for row in try connection.fetch(sql, bindings: bindings) {
             guard let ownerPrimaryKey = row[0] as? String else {
                 continue

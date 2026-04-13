@@ -90,8 +90,11 @@ extension DatabaseConnection where Store == DatabaseStore {
         predicate sql: String...,
         bindings: [any Sendable] = []
     ) throws -> [Store.Snapshot] where Model: PersistentModel {
-        guard let queue = self.queue else {
-            preconditionFailure("The queue was unexpectedly nil.")
+        guard let storeIdentifier = self.storeIdentifier else {
+            preconditionFailure()
+        }
+        guard let configuration = self.attachment?.configuration else {
+            preconditionFailure()
         }
         let entityName = Schema.entityName(for: Model.self)
         let propertiesCollected = try keyPaths.reduce(into: [PropertyMetadata]()) { partialResult, keyPath in
@@ -109,18 +112,18 @@ extension DatabaseConnection where Store == DatabaseStore {
             properties[index].isSelected = hasColumn && !isInheritedColumn
         }
         let result = try fetch(
-              """
-              SELECT \(properties.filter(\.isSelected).compactMap(\.column).map(quote).joined(separator: ", ")) 
-              FROM "\(entityName)"
-              \(sql.joined(separator: "\n"))
-              """,
-              bindings: bindings
+            """
+            SELECT \(properties.filter(\.isSelected).compactMap(\.column).map(quote).joined(separator: ", ")) 
+            FROM "\(entityName)"
+            \(sql.joined(separator: "\n"))
+            """,
+            bindings: bindings
         )
         var relatedSnapshots = [PersistentIdentifier: Store.Snapshot]()
         let snapshots = try result.map { row in
             try Store.Snapshot(
-                storeIdentifier: attachment!.store!.identifier,
-                configuration: attachment!.configuration,
+                storeIdentifier: storeIdentifier,
+                configuration: configuration,
                 connection: self,
                 properties: properties[...],
                 values: row[...],

@@ -1335,8 +1335,10 @@ extension DatabaseSnapshot {
             return oldIdentifiers
         }
         let newEntityNameByPrimaryKey = Dictionary(
-            newIdentifiers.compactMap { identifier -> (String, String)? in
-                guard let storeIdentifier = identifier.storeIdentifier else { return nil }
+            try newIdentifiers.compactMap { identifier -> (String, String)? in
+                guard identifier.storeIdentifier != nil else {
+                    throw Error.identifierNotAssociatedToStore
+                }
                 return (identifier.primaryKey(), identifier.entityName)
             },
             uniquingKeysWith: { first, _ in first }

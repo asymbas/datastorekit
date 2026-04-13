@@ -25,6 +25,5 @@ public protocol DatabaseAttachment: AnyObject & Sendable, DataStoreSnapshotProvi
 }
 
 public protocol DatabaseContext: AnyObject & Identifiable & Sendable, DataStoreSnapshotProvider {
-    associatedtype Snapshot: DataStoreSnapshot
     nonisolated func snapshot(for persistentIdentifier: PersistentIdentifier) -> Snapshot?
 }

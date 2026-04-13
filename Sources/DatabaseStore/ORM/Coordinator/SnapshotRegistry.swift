@@ -33,7 +33,7 @@ internal struct DataStoreFetchResultMap: Identifiable, Sendable {
 /// A cached object with a lifecycle bound to a `ModelContext` via a linked `EditingState`.
 public final class SnapshotRegistry: DatabaseContext, DataStoreSnapshotProvider {
     public typealias Snapshot = DatabaseSnapshot
-    nonisolated private /*unowned*/ let manager: ModelManager
+    nonisolated private let manager: ModelManager
     /// Inherited from `Identifiable.id`.
     nonisolated public let id: EditingState.ID
     nonisolated private let key: Int
