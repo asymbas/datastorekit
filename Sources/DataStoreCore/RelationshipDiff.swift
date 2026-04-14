@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import SwiftData
+package import SwiftData
 
 /// Use for comparing against another to-many relationship collection.
 ///

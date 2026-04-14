@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Synchronization
+public import Synchronization
 
 public enum DataStoreDebugging: UInt8, AtomicRepresentable, Equatable, Hashable, Sendable {
     case `default` = 0

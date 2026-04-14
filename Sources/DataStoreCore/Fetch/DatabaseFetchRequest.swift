@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import SwiftData
+public import SwiftData
 
 public struct DatabaseFetchRequest<T>: FetchRequest where T: PersistentModel {
     nonisolated public var descriptor: FetchDescriptor<T>

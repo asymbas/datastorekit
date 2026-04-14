@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
+internal import Foundation
 
 public protocol ContextAttachmentKey: Sendable {
     associatedtype Value: Sendable

@@ -7,8 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
-import SwiftData
+public import Foundation
+public import SwiftData
 
 public struct SectionedFetchDescriptor<T, SectionID>: Sendable
 where T: PersistentModel, SectionID: Hashable & Sendable {

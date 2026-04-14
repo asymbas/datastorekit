@@ -7,8 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSupport
-import SwiftData
+public import DataStoreSupport
+public import SwiftData
 
 public protocol FetchResult<ModelType, SnapshotType>: Sendable, SendableMetatype
 where ModelType: PersistentModel, SnapshotType: DataStoreSnapshot {

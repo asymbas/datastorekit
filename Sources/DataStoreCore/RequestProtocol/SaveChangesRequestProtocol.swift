@@ -7,8 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSupport
-import SwiftData
+public import DataStoreSupport
+public import SwiftData
 
 public protocol SaveChangesRequest<SnapshotType>: Sendable, SendableMetatype {
     associatedtype SnapshotType: DataStoreSnapshot

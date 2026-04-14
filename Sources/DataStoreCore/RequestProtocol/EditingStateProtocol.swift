@@ -7,9 +7,9 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSupport
-import Foundation
-import SwiftData
+public import DataStoreSupport
+public import Foundation
+public import SwiftData
 
 public protocol EditingStateProviding: Identifiable, Sendable, SendableMetatype
 where ID == UUID {

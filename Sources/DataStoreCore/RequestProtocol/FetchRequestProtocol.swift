@@ -7,9 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSupport
-import Foundation
-import SwiftData
+public import DataStoreSupport
+public import SwiftData
 
 public protocol FetchRequest<ModelType>: Sendable, SendableMetatype
 where ModelType: PersistentModel, EditingStateType: EditingStateProviding {

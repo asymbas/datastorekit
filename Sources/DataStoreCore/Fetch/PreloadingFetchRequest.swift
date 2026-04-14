@@ -7,8 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
-import SwiftData
+public import SwiftData
 
 package struct PreloadFetchKey: Equatable, Hashable, Sendable {
     nonisolated package let editingStateID: EditingState.ID

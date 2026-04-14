@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import SwiftData
+public import SwiftData
 
 // TODO: Change name for `DataStoreDelegate`, because its purpose has changed.
 

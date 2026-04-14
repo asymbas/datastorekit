@@ -7,9 +7,9 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSupport
-import Foundation
-import SwiftData
+internal import DataStoreSupport
+package import Foundation
+public import SwiftData
 
 public protocol DataStoreSynchronizer<Store>: Sendable {
     associatedtype Store: DataStore & HistoryProviding
