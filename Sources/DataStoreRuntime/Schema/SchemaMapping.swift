@@ -83,6 +83,9 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                         guard case .success(_) = result else {
                             preconditionFailure("ColumnDefinition should never fail.")
                         }
+                        if relationship.isUnique, !relationship.isToOneRelationship {
+                            preconditionFailure("To-many relationship cannot be unique.")
+                        }
                         logger.trace("Creating relationship column: \(description)")
                     }
                 case let compositeAttribute as Schema.CompositeAttribute where !property.flags.contains(.isExternal):
