@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
+public import Foundation
 
 public struct PredicateTree: Equatable, Hashable, Identifiable, Sendable {
     nonisolated public let id: UUID

@@ -7,25 +7,25 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Collections
-import DataStoreCore
-import DataStoreRuntime
-import DataStoreSQL
-import DataStoreSupport
-import Foundation
-import Logging
-import SQLiteHandle
-import SQLiteStatement
-import Synchronization
+private import Collections
+private import Foundation
+private import Logging
+private import SQLiteStatement
+private import Synchronization
+package import DataStoreRuntime
+public import DataStoreCore
+public import DataStoreSQL
+public import DataStoreSupport
+public import SQLiteHandle
 
 #if swift(>=6.2)
-import SwiftData
+public import SwiftData
 #else
-@preconcurrency import SwiftData
+@preconcurrency public import SwiftData
 #endif
 
 #if canImport(CloudKit)
-import CloudKit
+private import CloudKit
 #endif
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
@@ -574,18 +574,6 @@ public final class DatabaseStore: DataStore, Sendable {
                     guard ownerIndexByPrimaryKey[ownerPrimaryKey] != nil else {
                         continue
                     }
-//                    for row in destinationRows {
-//                        var sink = [PersistentIdentifier: Snapshot]()
-//                        let snapshot = try Snapshot(
-//                            store: self,
-//                            registry: registry,
-//                            properties: destinationProperties[...],
-//                            values: row[...],
-//                            relatedSnapshots: &sink
-//                        )
-//                        prefetchedRelatedSnapshots[snapshot.persistentIdentifier] = snapshot
-//                        prefetchedRelatedSnapshots.merge(sink, uniquingKeysWith: { $1 })
-//                    }
                     let relatedIdentifiers = try destinationRows.compactMap { row in
                         try (row.first as? String).flatMap { destinationPrimaryKey in
                             try PersistentIdentifier.identifier(
@@ -894,7 +882,6 @@ public final class DatabaseStore: DataStore, Sendable {
                     ),
                     indices: indices,
                     shouldAddOnly: false,
-                    graph: connection.context?.graph,
                     connection: connection
                 )
                 invalidatedIdentifiers.formUnion(results.unlinked)
@@ -923,10 +910,9 @@ public final class DatabaseStore: DataStore, Sendable {
                     for _ in results.unlinked {}
                     for cascadedIdentifier in results.cascaded {
                         guard queuedDeletedIdentifiers.insert(cascadedIdentifier).inserted,
-                              let entity = self.schema.entitiesByName[cascadedIdentifier.entityName] else {
+                              schema.entitiesByName[cascadedIdentifier.entityName] != nil else {
                             continue
                         }
-                        var relatedSnapshots: [PersistentIdentifier: Snapshot]? = nil
                         if let cascadedSnapshot = try? connection.fetch(for: cascadedIdentifier) {
                             deleted.append(Payload(snapshot: cascadedSnapshot))
                         }

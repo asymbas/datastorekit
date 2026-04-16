@@ -7,9 +7,9 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
+public import Foundation
 
-@preconcurrency import SwiftData
+@preconcurrency public import SwiftData
 
 public struct ConstraintError: Error, LocalizedError {
     nonisolated public let code: Code

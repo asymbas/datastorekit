@@ -7,10 +7,9 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
-import SQLiteHandle
-import SQLiteStatement
-import SwiftData
+public import Foundation
+public import SQLiteStatement
+public import SwiftData
 
 public struct SQLPredicateResult: Sendable {
     nonisolated public let key: Int?

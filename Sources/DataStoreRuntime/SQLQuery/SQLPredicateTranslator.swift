@@ -7,20 +7,20 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Collections
-import DataStoreCore
-import DataStoreSQL
-import DataStoreSupport
-import Foundation
-import Logging
-import SQLiteHandle
-import SQLiteStatement
-import Synchronization
+private import SQLiteHandle
+private import Synchronization
+internal import Collections
+internal import DataStoreSQL
+internal import SQLiteStatement
+public import DataStoreCore
+public import DataStoreSupport
+public import Foundation
+public import Logging
 
 #if swift(>=6.2)
-import SwiftData
+public import SwiftData
 #else
-@preconcurrency import SwiftData
+@preconcurrency public import SwiftData
 #endif
 
 private typealias ForEach = SQLForEach
@@ -187,7 +187,7 @@ where T: PersistentModel & SendableMetatype {
         let emittedJoinAliases: Set<String> = references.reduce(into: []) {
             $0.insert($1.rhsAlias ?? $1.rhsTable)
         }
-        let dedupedImplicitReferences = self.implicitReferences.filter {
+        let dedupedImplicitReferences = implicitReferences.filter {
             !emittedJoinAliases.contains($0.rhsAlias ?? $0.rhsTable)
         }
         let statement = SQL {
@@ -205,6 +205,7 @@ where T: PersistentModel & SendableMetatype {
                     """
                 }
             }
+            #if true
             if !dedupedImplicitReferences.isEmpty {
                 ForEach(dedupedImplicitReferences) {
                     Join.left(
@@ -215,6 +216,18 @@ where T: PersistentModel & SendableMetatype {
                     )
                 }
             }
+            #else
+            if !implicitReferences.isEmpty {
+                ForEach(implicitReferences) {
+                    Join.left(
+                        $0.rhsTable,
+                        as: $0.rhsAlias!,
+                        on: ($0.lhsAlias, $0.lhsTable, $0.lhsColumn),
+                        equals: ($0.rhsAlias, $0.rhsTable, $0.rhsColumn)
+                    )
+                }
+            }
+            #endif
             if let clause, !clause.isEmpty {
                 Where(clause, bindings: bindings.compactMap(sendable(cast:)))
             }
@@ -866,7 +879,13 @@ extension SQLPredicateTranslator {
         assert(lhsKeyPath is PartialKeyPath<Base>, "\(lhsKeyPath) LHS key path root type is not \(Base.self).")
         let description = "\(Base.self)-\(Root.self).\(Value.self).self \(lhsKeyPath) -> \(rhsKeyPath)"
         log(.trace, "Bridging relationship: \(description)")
-        guard let fullKeyPath = appendKeyPath(from: lhsKeyPath, to: rhsKeyPath) else {
+        let fullKeyPath: AnyKeyPath & Sendable
+        if let appended = appendKeyPath(from: lhsKeyPath, to: rhsKeyPath) {
+            fullKeyPath = appended
+        } else if let fallback: AnyKeyPath & Sendable = sendable(cast: rhsKeyPath as AnyKeyPath) {
+            fullKeyPath = fallback
+            log(.debug, "Using rhs key path as fallback for optional relationship: \(description)")
+        } else {
             log(.warning, "Key path could not be appended: \(description)")
             return nil
         }
@@ -1109,13 +1128,24 @@ extension SQLPredicateTranslator {
                 loadSchemaMetadata(for: superclass, key: key)
                 return try Variable.schemaMetadata(for: keyPath)
                 ?? lookupPropertyMetadata(superclass: superclass, subclass: Variable.self, keyPath: keyPath)
+                ?? Variable.compositeSchemaMetadata(for: keyPath).map { cacheCompositeProperty($0, at: keyPath) }
                 ?? parseKeyPathForProperty(keyPath)
             } else {
                 loadSchemaMetadata(for: Variable.self, key: key)
                 return try Variable.schemaMetadata(for: keyPath)
+                ?? Variable.compositeSchemaMetadata(for: keyPath).map { cacheCompositeProperty($0, at: keyPath) }
                 ?? parseKeyPathForProperty(keyPath)
             }
         }
+        return property
+    }
+    
+    nonisolated private mutating func cacheCompositeProperty(
+        _ property: PropertyMetadata,
+        at keyPath: AnyKeyPath & Sendable
+    ) -> PropertyMetadata {
+        self.keyPaths[keyPath] = property
+        log(.trace, "Resolved composite sub key path from precomputed cache: \(keyPath) -> \(property)")
         return property
     }
     

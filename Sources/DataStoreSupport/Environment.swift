@@ -1,5 +1,5 @@
 //
-//  SQLFragment.swift
+//  Environment.swift
 //  DataStoreKit
 //
 //  Copyright 2025 Asymbas and Anferne Pineda.
@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
+private import Foundation
 
 nonisolated package func getEnvironmentValue(for key: String) -> String? {
     if let value = ProcessInfo.processInfo.environment[key] {

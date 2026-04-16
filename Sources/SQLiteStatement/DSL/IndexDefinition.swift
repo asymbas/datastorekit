@@ -7,10 +7,10 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSQL
-import DataStoreSupport
-import Foundation
-import SQLSupport
+private import DataStoreSQL
+private import DataStoreSupport
+public import Foundation
+public import SQLSupport
 
 public protocol IndexDefinition: SQLFragment {
     nonisolated var schema: String? { get }

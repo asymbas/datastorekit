@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import SQLiteStatement
+package import SQLiteStatement
 
 package struct DatabaseSchema: Sendable {
     nonisolated package let indexes: [any IndexDefinition]

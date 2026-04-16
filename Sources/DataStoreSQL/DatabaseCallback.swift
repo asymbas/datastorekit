@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreCore
+public import DataStoreCore
 
 public typealias DataChangeNotificationCallback = (
     _ operation: DataStoreOperation,

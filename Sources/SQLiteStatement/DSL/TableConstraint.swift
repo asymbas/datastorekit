@@ -7,9 +7,9 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSQL
-import DataStoreSupport
-import SQLSupport
+private import DataStoreSQL
+private import DataStoreSupport
+internal import SQLSupport
 
 package struct TableConstraint: SQLFragment {
     nonisolated internal var order: Int

@@ -7,20 +7,20 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Collections
-import DataStoreCore
-import DataStoreSQL
-import DataStoreSupport
-import Foundation
-import Logging
-import SQLiteStatement
-import SQLSupport
-import Synchronization
+private import Collections
+private import DataStoreCore
+private import DataStoreSQL
+private import DataStoreSupport
+private import Logging
+private import SQLiteStatement
+private import SQLSupport
+private import Synchronization
+internal import Foundation
 
 #if swift(>=6.2)
-import SwiftData
+private import SwiftData
 #else
-@preconcurrency import SwiftData
+@preconcurrency private import SwiftData
 #endif
 
 private typealias ForEach = SQLForEach

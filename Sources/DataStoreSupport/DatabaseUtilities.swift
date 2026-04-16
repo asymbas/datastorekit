@@ -7,8 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
-import Logging
+private import Logging
+package import Foundation
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
@@ -53,9 +53,9 @@ nonisolated(nonsending) package func measureAsync<T>(
 }
 
 nonisolated package func delay(by timeInterval: TimeInterval = 0.1) {
-#if RELEASE
-#error("This should not be called in release builds.")
-#endif
+    #if RELEASE
+    #error("This should not be called in release builds.")
+    #endif
     Thread.sleep(forTimeInterval: timeInterval)
     fflush(stdout)
 }

@@ -7,10 +7,10 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Collections
-import DataStoreSQL
-import DataStoreSupport
-import SQLSupport
+private import Collections
+private import DataStoreSupport
+package import DataStoreSQL
+package import SQLSupport
 
 package protocol ColumnDefinition: SQLFragment {
     nonisolated var name: String { get }

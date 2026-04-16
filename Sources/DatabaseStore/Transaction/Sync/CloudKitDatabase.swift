@@ -7,12 +7,12 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreCore
-import DataStoreRuntime
+private import DataStoreRuntime
+public import DataStoreCore
 
 #if canImport(CloudKit)
 
-import CloudKit
+internal import CloudKit
 
 extension DatabaseConfiguration {
     public struct CloudKitDatabase: DataStoreSynchronizerConfiguration {

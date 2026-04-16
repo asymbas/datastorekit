@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import SQLite3
+private import SQLite3
 
 extension SQLite {
     public struct Flags: Equatable, Hashable, OptionSet, Sendable {

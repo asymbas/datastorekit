@@ -7,8 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import SQLiteStatement
-import SwiftData
+package import SQLiteStatement
+package import SwiftData
 
 extension Schema.Relationship.DeleteRule {
     nonisolated package var referentialAction: ReferentialAction {

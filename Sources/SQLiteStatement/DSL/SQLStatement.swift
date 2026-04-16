@@ -7,10 +7,10 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSQL
-import DataStoreSupport
-import Foundation
-import SQLSupport
+private import DataStoreSupport
+package import DataStoreSQL
+package import Foundation
+public import SQLSupport
 
 // TODO: Dismantle DSL usage from the package.
 

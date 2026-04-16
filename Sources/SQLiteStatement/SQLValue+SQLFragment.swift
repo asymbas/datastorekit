@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import SQLSupport
+public import SQLSupport
 
 extension SQLValue: SQLFragment {
     nonisolated public var sql: String {

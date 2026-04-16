@@ -7,15 +7,15 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreCore
-import DataStoreSQL
-import Foundation
-import Logging
-import SQLite3
-import SQLiteStatement
-import SQLSupport
-import Synchronization
-import System
+private import DataStoreCore
+private import Logging
+private import SQLite3
+private import SQLiteStatement
+private import SQLSupport
+private import Synchronization
+private import System
+public import DataStoreSQL
+public import Foundation
 
 extension PreparedStatement {
     nonisolated public init<T: DatabaseProtocol>(

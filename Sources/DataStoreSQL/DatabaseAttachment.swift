@@ -7,9 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreCore
-import Logging
-import SwiftData
+public import DataStoreCore
+public import SwiftData
 
 public protocol DataStoreSnapshotProvider: AnyObject, Sendable {
     associatedtype Snapshot: DataStoreSnapshot

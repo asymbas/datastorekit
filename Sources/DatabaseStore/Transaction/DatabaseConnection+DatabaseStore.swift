@@ -7,15 +7,15 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreCore
-import DataStoreRuntime
-import DataStoreSQL
-import DataStoreSupport
-import Foundation
-import Logging
-import SQLiteHandle
-import SwiftData
-import Synchronization
+private import DataStoreCore
+private import DataStoreRuntime
+private import DataStoreSupport
+private import Foundation
+private import Logging
+private import SQLiteHandle
+private import Synchronization
+public import DataStoreSQL
+public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
@@ -33,7 +33,7 @@ extension DatabaseConnection where Store == DatabaseStore {
         attachment?.store?.identifier
     }
     
-    nonisolated package func resolveEntity(
+    nonisolated internal func resolveEntity(
         _ entity: Schema.Entity? = nil,
         for persistentIdentifier: PersistentIdentifier
     ) throws -> Schema.Entity {

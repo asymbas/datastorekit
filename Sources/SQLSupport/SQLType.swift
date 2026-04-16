@@ -7,11 +7,10 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSupport
-import Foundation
-import SQLite3
-import System
-import Synchronization
+private import DataStoreSupport
+private import Foundation
+private import SQLite3
+private import System
 
 public enum SQLType: String, CaseIterable, Equatable, Hashable, Sendable {
     case null = "NULL"

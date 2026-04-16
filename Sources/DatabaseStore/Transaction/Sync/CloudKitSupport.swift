@@ -7,27 +7,27 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreCore
-import DataStoreRuntime
-import DataStoreSQL
-import DataStoreSupport
-import Foundation
-import Logging
-import SQLiteHandle
-import SQLSupport
-import Synchronization
+private import DataStoreCore
+private import DataStoreRuntime
+private import DataStoreSQL
+private import DataStoreSupport
+private import Logging
+private import SQLiteHandle
+private import SQLSupport
+private import Synchronization
+internal import Foundation
 
 #if swift(>=6.2)
-import SwiftData
+internal import SwiftData
 #else
-@preconcurrency import SwiftData
+@preconcurrency internal import SwiftData
 #endif
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
 #if canImport(CloudKit)
 
-import CloudKit
+internal import CloudKit
 
 internal extension CKRecord {
     nonisolated func systemFieldsData() -> Data {

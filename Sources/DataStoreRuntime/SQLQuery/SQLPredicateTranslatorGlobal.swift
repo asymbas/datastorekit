@@ -7,8 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
-import Synchronization
+private import Synchronization
 
 nonisolated private let _tags: AtomicLazyReference<Storage> = .init()
 

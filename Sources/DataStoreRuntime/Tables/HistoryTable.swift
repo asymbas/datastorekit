@@ -7,8 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreCore
-import Foundation
+package import DataStoreCore
+package import Foundation
 
 /// A type that defines the history table definition for tracking model changes.
 package enum HistoryTable: String {

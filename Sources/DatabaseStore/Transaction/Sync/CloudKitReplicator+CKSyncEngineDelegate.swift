@@ -7,27 +7,27 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreCore
-import DataStoreRuntime
-import DataStoreSQL
-import DataStoreSupport
-import Foundation
-import Logging
-import SQLiteHandle
-import SQLSupport
-import Synchronization
+private import DataStoreCore
+private import DataStoreRuntime
+private import DataStoreSQL
+private import DataStoreSupport
+private import Foundation
+private import Logging
+private import SQLiteHandle
+private import SQLSupport
+private import Synchronization
 
 #if swift(>=6.2)
-import SwiftData
+private import SwiftData
 #else
-@preconcurrency import SwiftData
+@preconcurrency private import SwiftData
 #endif
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.cloudkit")
 
 #if canImport(CloudKit)
 
-import CloudKit
+public import CloudKit
 
 extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegate {
     /// Inherited from `CKSyncEngineDelegate.handleEvent(_:syncEngine:)`.

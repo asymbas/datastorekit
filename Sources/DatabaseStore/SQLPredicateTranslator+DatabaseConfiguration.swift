@@ -7,8 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreCore
-import DataStoreRuntime
+private import DataStoreCore
+public import DataStoreRuntime
 
 extension SQLPredicateTranslator {
     nonisolated public init(configuration: DatabaseConfiguration) {
@@ -25,6 +25,7 @@ extension SQLPredicateTranslator {
         if !configuration.options.contains(.disableKeyPathVariants) {
             options.insert(.allowKeyPathVariantsForPropertyLookup)
         }
+        #if DEBUG
         let translator = SQLPredicateTranslator(
             schema: configuration.schema ?? .init(),
             attachment: configuration.attachment as? DataStoreObservable,
@@ -32,6 +33,15 @@ extension SQLPredicateTranslator {
             minimumLogLevel: DataStoreDebugging.mode == .trace ? .trace : .notice,
             tags: nil
         )
+        #else
+        let translator = SQLPredicateTranslator(
+            schema: configuration.schema ?? .init(),
+            attachment: nil,
+            options: options,
+            minimumLogLevel: .warning,
+            tags: []
+        )
+        #endif
         self = translator
         self.evaluateEphemeralProperty = { evaluate in
             guard let registry = configuration.store?.manager.registry(for: evaluate.editingState) else {

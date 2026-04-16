@@ -7,9 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSQL
-import SQLiteHandle
-import SQLiteStatement
+private import SQLiteHandle
+public import SQLiteStatement
 
 @available(*, deprecated, renamed: "SQLPassthrough")
 public typealias SQLQueryPassthrough = SQLPassthrough

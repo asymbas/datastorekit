@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import SwiftData
+public import SwiftData
 
 public protocol DatabaseProtocol: DataStore, Sendable where Self.Configuration: Sendable {
     associatedtype Handle: DatabaseHandle

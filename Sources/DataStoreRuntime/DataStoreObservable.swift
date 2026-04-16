@@ -7,8 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
-import Observation
+package import Foundation
+public import Observation
 
 public protocol DataStoreObservable: AnyObject, Observable, Sendable {
     nonisolated var onTransactionFailure: @Sendable ([ConstraintViolation]) -> Void { get }

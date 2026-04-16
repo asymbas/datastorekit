@@ -7,8 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import SQLite3
-import SQLSupport
+private import SQLite3
+public import SQLSupport
 
 extension SQLType {
     nonisolated public init(sqlite rawValue: Int32) {

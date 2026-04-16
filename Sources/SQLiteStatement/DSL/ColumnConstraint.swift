@@ -7,9 +7,9 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSupport
-import Foundation
-import SQLSupport
+private import DataStoreSupport
+private import SQLSupport
+package import Foundation
 
 package struct ColumnConstraint: SQLFragment {
     nonisolated internal var order: Int

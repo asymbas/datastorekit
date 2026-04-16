@@ -7,8 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreCore
-import Foundation
+public import Foundation
 
 public struct SQLError: CustomStringConvertible, Error, LocalizedError {
     nonisolated public var code: Code?

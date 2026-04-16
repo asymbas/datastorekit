@@ -7,9 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
-import SQLiteHandle
-import SwiftData
+public import SwiftData
 
 extension Schema {
     nonisolated public func isManyToManyRelationship(

@@ -7,12 +7,12 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreRuntime
-import DataStoreSQL
-import Foundation
-import Logging
-import SQLiteHandle
-import SQLSupport
+private import DataStoreRuntime
+private import Logging
+private import SQLiteHandle
+private import SQLSupport
+package import DataStoreSQL
+package import Foundation
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.transaction")
 
@@ -42,11 +42,11 @@ extension HistoryTable {
 }
 
 extension HistoryTable {
-    nonisolated static func archiveDatabaseName(year: Int) -> String {
+    nonisolated internal static func archiveDatabaseName(year: Int) -> String {
         "archive_\(year)"
     }
 
-    nonisolated static func archiveYear(from archiveURL: URL) throws -> Int {
+    nonisolated internal static func archiveYear(from archiveURL: URL) throws -> Int {
         let fileName = archiveURL.deletingPathExtension().lastPathComponent
         guard let yearText = fileName.split(separator: "-").last,
               let year = Int(yearText) else {
@@ -55,11 +55,11 @@ extension HistoryTable {
         return year
     }
 
-    nonisolated static func archiveDatabaseName(for archiveURL: URL) throws -> String {
+    nonisolated internal static func archiveDatabaseName(for archiveURL: URL) throws -> String {
         try archiveDatabaseName(year: archiveYear(from: archiveURL))
     }
     
-    private func withAttachedHistoryArchive<Result>(
+    nonisolated private func withAttachedHistoryArchive<Result>(
         at archiveURL: URL,
         connection: borrowing DatabaseConnection<DatabaseStore>,
         _ body: (String) throws -> Result

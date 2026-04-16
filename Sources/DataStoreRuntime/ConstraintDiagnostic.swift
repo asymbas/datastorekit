@@ -7,10 +7,10 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSQL
-import DataStoreSupport
-import Logging
-import SQLiteHandle
+private import DataStoreSupport
+private import Logging
+public import SQLiteHandle
+public import DataStoreSQL
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 

@@ -7,8 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
-import SwiftData
+private import Foundation
+public import SwiftData
 
 #if DEBUG
 extension PersistentIdentifier: @retroactive CustomStringConvertible {

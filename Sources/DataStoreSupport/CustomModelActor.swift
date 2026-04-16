@@ -7,8 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Dispatch
-import SwiftData
+internal import Dispatch
+public import SwiftData
 
 public final class CustomModelSerialExecutor: SerialModelExecutor {
     nonisolated(unsafe) public final let modelContext: ModelContext

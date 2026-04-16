@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Foundation
+private import Foundation
 
 nonisolated private func extractTableName(from sql: String) -> String? {
     let normalized = sql

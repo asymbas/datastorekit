@@ -7,11 +7,11 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSQL
-import Foundation
-import Logging
-import SQLite3
-import Synchronization
+private import Logging
+private import SQLite3
+private import Synchronization
+public import DataStoreSQL
+public import Foundation
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.sqlite")
 

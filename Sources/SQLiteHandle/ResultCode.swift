@@ -7,8 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSQL
-import SQLite3
+private import DataStoreSQL
+private import SQLite3
 
 extension SQLError {
     nonisolated package init(pointer: OpaquePointer) {

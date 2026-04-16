@@ -7,12 +7,11 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Logging
-import SwiftData
+private import SwiftData
 
 extension ModelContainer {
     @available(*, unavailable, message: "")
-    nonisolated public convenience init(
+    nonisolated private convenience init(
         for schema: consuming Schema,
         migrationPlan: (any SchemaMigrationPlan.Type)?,
         configurations: [DatabaseConfiguration]
@@ -28,7 +27,7 @@ extension ModelContainer {
 
 extension ModelContainer {
     @available(*, unavailable, message: "")
-    nonisolated public convenience init(
+    nonisolated private convenience init(
         for schema: consuming Schema,
         migrationPlan: (any SchemaMigrationPlan.Type)?,
         configurations: DatabaseConfiguration...

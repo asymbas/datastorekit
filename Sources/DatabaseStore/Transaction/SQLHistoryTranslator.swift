@@ -7,25 +7,14 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import Collections
-import DataStoreCore
-import DataStoreRuntime
-import DataStoreSQL
-import DataStoreSupport
-import Foundation
-import Logging
-import SQLiteHandle
-import SwiftUI
-import Synchronization
-
 #if swift(>=6.2)
-import SwiftData
+internal import SwiftData
 #else
-@preconcurrency import SwiftData
+@preconcurrency internal import SwiftData
 #endif
 
-public struct SQLHistoryTranslator<T: HistoryTransaction>: ~Copyable, Sendable {
-    nonisolated public func translate(_ descriptor: HistoryDescriptor<T>) throws -> String {
+internal struct SQLHistoryTranslator<T: HistoryTransaction>: ~Copyable, Sendable {
+    nonisolated internal func translate(_ descriptor: HistoryDescriptor<T>) throws -> String {
         return ""
     }
 }

@@ -7,4 +7,4 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-@_exported import SQLSupport
+@_exported public import SQLSupport

@@ -7,11 +7,11 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreCore
-import DataStoreSupport
-import Foundation
-import SwiftData
-import Synchronization
+private import DataStoreSupport
+private import Foundation
+private import Synchronization
+public import DataStoreCore
+public import SwiftData
 
 extension ModelContext {
     package var store: DatabaseStore {

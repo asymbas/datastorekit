@@ -7,9 +7,9 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreSupport
-import Foundation
-import SwiftData
+internal import DataStoreSupport
+internal import Foundation
+internal import SwiftData
 
 @inline(__always)
 nonisolated internal func createAlias(_ key: PredicateExpressions.VariableID?, _ table: String) -> String {

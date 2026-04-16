@@ -7,8 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-import DataStoreCore
-import Foundation
+public import Foundation
 
 extension DatabaseStore {
     public enum Error: Swift.Error, LocalizedError {
