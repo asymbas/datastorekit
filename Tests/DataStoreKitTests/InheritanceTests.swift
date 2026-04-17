@@ -75,7 +75,6 @@ struct InheritanceTests {
             .logAllPredicateExpressions
         ])
         self.configuration = configuration
-
         self.modelContainer = try ModelContainer(for: schema, configurations: [configuration])
         self.modelContext = ModelContext(modelContainer)
     }

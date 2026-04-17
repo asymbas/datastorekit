@@ -604,6 +604,8 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                 pending.append(.deleteRecord(recordID))
             }
             return pending
+        case .insert(_), .update(_), .delete(_):
+            fallthrough
         @unknown default:
             fatalError()
         }

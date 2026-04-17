@@ -37,7 +37,6 @@ extension DatabaseSnapshot {
             type: nil,
             entityName: makeEntityName(fromRecordType: record.recordType)
         )
-        let storeIdentifier = store.identifier
         let externalStorageURL = store.configuration.externalStorageURL
         let allKeys = Set(record.allKeys())
         for property in self.properties {

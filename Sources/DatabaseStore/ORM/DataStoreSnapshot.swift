@@ -18,8 +18,6 @@ public import DataStoreSQL
 public import DataStoreSupport
 public import DataStoreRuntime
 
-
-
 #if swift(>=6.2)
 public import SwiftData
 #else
@@ -34,7 +32,6 @@ extension DatabaseSnapshot: StoreBound {
 
 /// A data transfer object that represents a `PersistentModel` in `DatabaseStore`.
 public struct DatabaseSnapshot: DataStoreSnapshot {
-    /// Cache for `RandomAccessCollection`.
     nonisolated private var cache: Cache = .init()
     /// Any state or conditional flags.
     nonisolated internal var flags: Flags = .init()
@@ -43,9 +40,9 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
     /// The creation date of the snapshot.
     nonisolated package var timestamp: DispatchTime = .now()
     /// The properties that will describe how to map its value.
-    nonisolated package(set) public var properties: ContiguousArray<PropertyMetadata>
+    nonisolated public package(set) var properties: ContiguousArray<PropertyMetadata>
     /// The values associated with each property.
-    nonisolated package(set) public var values: ContiguousArray<any DataStoreSnapshotValue>
+    nonisolated public package(set) var values: ContiguousArray<any DataStoreSnapshotValue>
     /// The internal stable identity derived from its `PersistentIdentifier`.
     nonisolated public let primaryKey: String
     /// Inherited from `DataStoreSnapshot.persistentIdentifier`.
@@ -480,11 +477,12 @@ extension DatabaseSnapshot {
                     preconditionFailure("All relationships must carry over from BackingData: \(description)")
                 }
             default:
-                fatalError("Unhandled property type: \(property)")
+                preconditionFailure("Unhandled property type: \(property)")
             }
         }
     }
     
+    @available(*, unavailable, message: "")
     nonisolated private mutating func _extractBackingData(
         _ backingData: any BackingData,
         from properties: ContiguousArray<PropertyMetadata>
@@ -814,12 +812,9 @@ extension DatabaseSnapshot {
     ) -> Self {
         precondition(
             self.persistentIdentifier.entityName == persistentIdentifier.entityName,
-            """
-            The entity must be stable during remapping:
-            \(self.persistentIdentifier) -> \(persistentIdentifier)
-            """
+            "The entity must be stable during remapping: \(self.persistentIdentifier) -> \(persistentIdentifier)"
         )
-        #if DEBUG
+#if DEBUG
         let useDetailedLogging = DataStoreDebugging.mode == .trace
         var count = 0
         var mappings = [MappingLog]()
@@ -830,7 +825,7 @@ extension DatabaseSnapshot {
         if useDetailedLogging, self.persistentIdentifier != persistentIdentifier {
             logger.debug("Snapshot remapped: \(self.persistentIdentifier) -> \(persistentIdentifier)")
         }
-        #endif
+#endif
         let values = ContiguousArray(zip(properties, values).map { property, value in
             guard property.metadata is Schema.Relationship else { return value }
             switch value {
@@ -840,7 +835,7 @@ extension DatabaseSnapshot {
             }
             func append(_ oldIdentifier: PersistentIdentifier) -> PersistentIdentifier {
                 if let newIdentifier = remappedIdentifiers?[oldIdentifier] {
-                    #if DEBUG
+#if DEBUG
                     count += 1
                     if useDetailedLogging {
                         mappings.append(.init(
@@ -849,14 +844,14 @@ extension DatabaseSnapshot {
                             newIdentifier: newIdentifier
                         ))
                     }
-                    #endif
+#endif
                     return newIdentifier
                 } else {
                     return oldIdentifier
                 }
             }
         })
-        #if DEBUG
+#if DEBUG
         if useDetailedLogging {
             logger.debug("\nRemapped \(count) identifiers: \(persistentIdentifier)")
             for mapping in mappings {
@@ -868,7 +863,7 @@ extension DatabaseSnapshot {
                 )
             }
         }
-        #endif
+#endif
         return .init(
             persistentIdentifier: persistentIdentifier,
             primaryKey: persistentIdentifier.primaryKey(),
@@ -888,7 +883,7 @@ extension DatabaseSnapshot {
             values: values,
             flags: flags
         )
-     }
+    }
     
     nonisolated public func update(
         from other: Self,
@@ -930,6 +925,9 @@ extension DatabaseSnapshot {
         }
         return result
     }
+}
+
+extension DatabaseSnapshot {
     
     nonisolated package mutating func recursiveExportChain(
         on entity: Schema.Entity,
@@ -1368,9 +1366,9 @@ extension DatabaseSnapshot {
         in property: PropertyMetadata,
         connection: borrowing DatabaseConnection<Store>
     ) throws {
-        guard let relationship = property.metadata as? Schema.Relationship else {
-            preconditionFailure("The property must be a relationship: \(property)")
-        }
+//        guard let relationship = property.metadata as? Schema.Relationship else {
+//            preconditionFailure("The property must be a relationship: \(property)")
+//        }
         guard let reference = property.reference else {
             preconditionFailure("The relationship must have a reference: \(property)")
         }
@@ -1412,9 +1410,9 @@ extension DatabaseSnapshot {
         in property: PropertyMetadata,
         connection: borrowing DatabaseConnection<Store>
     ) throws {
-        guard let relationship = property.metadata as? Schema.Relationship else {
-            preconditionFailure("The property must be a relationship: \(property)")
-        }
+//        guard let relationship = property.metadata as? Schema.Relationship else {
+//            preconditionFailure("The property must be a relationship: \(property)")
+//        }
         guard let reference = property.reference else {
             preconditionFailure("The relationship must have a reference: \(property)")
         }

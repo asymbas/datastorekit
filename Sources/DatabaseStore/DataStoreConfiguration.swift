@@ -25,6 +25,14 @@ public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
+nonisolated private let shouldDisableLogging: Bool = {
+    if let value = ProcessInfo.processInfo.environment["DATASTOREKIT_DISABLE_LOGGING"] {
+        Set(["1", "TRUE"]).contains(value)
+    } else {
+        false
+    }
+}()
+
 /// A type that describes the configuration of an app's schema or specific group of models.
 public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     /// Inherited from `DataStoreConfiguration.Store`.
@@ -108,12 +116,38 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     /// The options that configure additional flags related to the data store runtime.
     nonisolated public var options: DataStoreOptions {
         get { storage.options.withLock(\.self) }
-        set { ensureUniqueStorage(); storage.options.withLock { $0 = newValue } }
+        set {
+            ensureUniqueStorage()
+            storage.options.withLock {
+                $0 = newValue
+                if shouldDisableLogging {
+                    $0.subtract([.useDetailedLogging, .useVerboseLogging])
+                }
+            }
+        }
     }
     
     nonisolated public var configurations: [Key: any OptionSet & Sendable] {
         get { storage.configurations.withLock(\.self) }
-        set { ensureUniqueStorage(); storage.configurations.withLock { $0 = newValue } }
+        set {
+            ensureUniqueStorage()
+            storage.configurations.withLock {
+                var configurations = newValue
+                #if DEBUG
+                if shouldDisableLogging,
+                   var predicateOptions = configurations[.predicate] as? SQLPredicateTranslatorOptions {
+                    predicateOptions.subtract([
+                        .logAllPredicateExpressions,
+                        .useDetailedLogging,
+                        .useVerboseLogging,
+                        .explainQueryPlan,
+                    ])
+                    configurations[.predicate] = predicateOptions
+                }
+                #endif
+                $0 = configurations
+            }
+        }
     }
     
     /// The cache policy used by the data store for managing in-memory object lifetimes.
@@ -203,7 +237,9 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                     .appending(path: externalStorageName, directoryHint: .isDirectory)
             )
         }()
-        if mode == .trace || options.contains(._internal) { DataStoreDebugging.mode = .trace }
+        if !shouldDisableLogging, mode == .trace || options.contains(._internal) {
+            DataStoreDebugging.mode = .trace
+        }
         let schema = schema ?? (!types.isEmpty ? Schema(types) : nil)
         #if true
         if let schema {
@@ -235,7 +271,10 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             options.insert(.useVerboseLogging)
             options.insert(.useDetailedLogging)
         }
-        let options = options
+        if shouldDisableLogging {
+            options.subtract([.useDetailedLogging, .useVerboseLogging])
+        }
+        let options = consume options
         let makeDatabaseQueue:
         @Sendable (Store.Attachment?) throws -> DatabaseQueue<Store> = { attachment in
             try DatabaseQueue(
@@ -317,6 +356,12 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             container: nil,
             makeDatabaseQueue: makeDatabaseQueue
         )
+        if configurations[.predicate] == nil {
+            self.configurations[.predicate] = SQLPredicateTranslatorOptions([
+                .allowKeyPathVariantsForPropertyLookup,
+                .isCachingPredicates
+            ])
+        }
     }
     
     /// Creates a persistent storage data store configuration.
