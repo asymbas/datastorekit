@@ -1128,12 +1128,12 @@ extension SQLPredicateTranslator {
                 loadSchemaMetadata(for: superclass, key: key)
                 return try Variable.schemaMetadata(for: keyPath)
                 ?? lookupPropertyMetadata(superclass: superclass, subclass: Variable.self, keyPath: keyPath)
-                ?? Variable.compositeSchemaMetadata(for: keyPath).map { cacheCompositeProperty($0, at: keyPath) }
+//                ?? Variable.compositeSchemaMetadata(for: keyPath).map { cacheCompositeProperty($0, at: keyPath) }
                 ?? parseKeyPathForProperty(keyPath)
             } else {
                 loadSchemaMetadata(for: Variable.self, key: key)
                 return try Variable.schemaMetadata(for: keyPath)
-                ?? Variable.compositeSchemaMetadata(for: keyPath).map { cacheCompositeProperty($0, at: keyPath) }
+//                ?? Variable.compositeSchemaMetadata(for: keyPath).map { cacheCompositeProperty($0, at: keyPath) }
                 ?? parseKeyPathForProperty(keyPath)
             }
         }
