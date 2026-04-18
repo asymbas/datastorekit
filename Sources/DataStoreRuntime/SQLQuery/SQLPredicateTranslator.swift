@@ -467,29 +467,15 @@ extension SQLPredicateTranslator {
                 } else {
                     columnAlias = entityAlias
                 }
-                #if true
                 if !resolvedFetchNames.isEmpty && !resolvedFetchNames.contains(property.name) {
                     property.isSelected = false
                 } else {
                     columns.append(clause(columnAlias, property.name))
                 }
-                #else
-                if !propertiesToFetch.isEmpty && !propertiesToFetch.contains(property.keyPath) {
-                    property.isSelected = false
-                } else {
-                    columns.append(clause(columnAlias, property.name))
-                }
-                #endif
             case let relationship as Schema.Relationship:
-                #if true
                 if resolvedPrefetchNames.contains(property.name) {
                     property.flags.insert(.prefetch)
                 }
-                #else
-                if relationshipKeyPathsForPrefetching.contains(property.keyPath) {
-                    property.flags.insert(.prefetch)
-                }
-                #endif
                 if relationship.isToOneRelationship {
                     let columnAlias: String
                     if property.flags.contains(.isInherited),
@@ -544,7 +530,6 @@ extension SQLPredicateTranslator {
         }
         for keyPath in relationshipKeyPathsForPrefetching {
             log(.debug, "Processing key path for prefetching: \(keyPath)")
-            #if true
             let property: PropertyMetadata?
             if let resolved = self.keyPaths[keyPath] {
                 property = resolved
@@ -557,12 +542,6 @@ extension SQLPredicateTranslator {
                 log(.warning, "KeyPath for prefetching not found: \(keyPath)")
                 continue
             }
-            #else
-            guard let property = self.keyPaths[keyPath] else {
-                log(.warning, "KeyPath for prefetching not found: \(keyPath)")
-                continue
-            }
-            #endif
             guard let relationship = property.metadata as? Schema.Relationship else {
                 preconditionFailure("Expected property metadata to reference a Schema.Relationship.")
             }

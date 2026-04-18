@@ -17,6 +17,8 @@ public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
+// TODO: Skip materializing snapshots and provide the translated SQL to the database directly.
+
 extension DatabaseStore: DataStoreBatching {
     /// Inherited from `DataStoreBatching.delete(_:)`.
     nonisolated public final func delete<T>(_ request: DataStoreBatchDeleteRequest<T>)

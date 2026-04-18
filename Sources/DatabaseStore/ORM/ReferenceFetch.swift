@@ -330,7 +330,6 @@ nonisolated package func fetchExternalReferenceKeysBatched(
     guard let relationship = property.metadata as? Schema.Relationship else {
         preconditionFailure("Property should have been a relationship: \(property)")
     }
-    // TODO: Use store identifier from `DatabaseQueue`.
     guard let storeIdentifier = ownerPersistentIdentifiers.first?.storeIdentifier else {
         preconditionFailure()
     }
