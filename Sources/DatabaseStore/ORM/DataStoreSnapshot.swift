@@ -851,7 +851,7 @@ extension DatabaseSnapshot {
                 }
             }
         })
-#if DEBUG
+        #if DEBUG
         if useDetailedLogging {
             logger.debug("\nRemapped \(count) identifiers: \(persistentIdentifier)")
             for mapping in mappings {
@@ -863,7 +863,7 @@ extension DatabaseSnapshot {
                 )
             }
         }
-#endif
+        #endif
         return .init(
             persistentIdentifier: persistentIdentifier,
             primaryKey: persistentIdentifier.primaryKey(),
@@ -1381,7 +1381,7 @@ extension DatabaseSnapshot {
 //            relationship.destination == reference[1].destinationTable,
 //            "Destination mismatch: \(relationship.destination) != \(reference[1].destinationTable)"
 //        )
-        let foreignKey = relatedIdentifier.primaryKey()
+        let foreignKey = connection.primaryKey(for: relatedIdentifier)
         _ = try connection.query(
             """
             INSERT OR IGNORE INTO "\(reference[0].destinationTable)" (
@@ -1394,7 +1394,7 @@ extension DatabaseSnapshot {
         #if DEBUG
         let rows = try fetchManyToManyReference(
             self.primaryKey,
-            relatedIdentifier.primaryKey(),
+            connection.primaryKey(for: relatedIdentifier),
             for: property,
             into: [String: any Sendable](),
             connection: connection
@@ -1425,7 +1425,7 @@ extension DatabaseSnapshot {
 //            relationship.destination == reference[1].destinationTable,
 //            "Destination mismatch: \(relationship.destination) != \(reference[1].destinationTable)"
 //        )
-        let foreignKey = relatedIdentifier.primaryKey()
+        let foreignKey = connection.primaryKey(for: relatedIdentifier)
         _ = try connection.query(
             """
             DELETE FROM "\(reference[0].destinationTable)"
@@ -1436,7 +1436,7 @@ extension DatabaseSnapshot {
         #if DEBUG
         let rows = try fetchManyToManyReference(
             self.primaryKey,
-            relatedIdentifier.primaryKey(),
+            connection.primaryKey(for: relatedIdentifier),
             for: property,
             into: [String: any Sendable](),
             connection: connection
@@ -1459,7 +1459,7 @@ extension DatabaseSnapshot {
         guard let reference = property.reference else {
             preconditionFailure("The relationship must have a reference: \(property)")
         }
-        let primaryKey = relatedIdentifier.primaryKey()
+        let primaryKey = connection.primaryKey(for: relatedIdentifier)
         let foreignKey = self.primaryKey
         // FIXME: The precondition check is too strict for inheritance.
 //        precondition(
@@ -1480,7 +1480,7 @@ extension DatabaseSnapshot {
         )
         #if DEBUG
         let rows = try fetchToManyReference(
-            relatedIdentifier.primaryKey(),
+            connection.primaryKey(for: relatedIdentifier),
             for: property,
             into: [String: any Sendable](),
             connection: connection
@@ -1512,7 +1512,7 @@ extension DatabaseSnapshot {
 //            relationship.destination == reference[0].destinationTable,
 //            "Destination mismatch: \(relationship.destination) != \(reference[0].destinationTable)"
 //        )
-        let primaryKey = relatedIdentifier.primaryKey()
+        let primaryKey = connection.primaryKey(for: relatedIdentifier)
         switch relationship.deleteRule {
         case .cascade:
             _ = try connection.query(
@@ -1540,7 +1540,7 @@ extension DatabaseSnapshot {
         }
         #if DEBUG
         let rows = try fetchToManyReference(
-            relatedIdentifier.primaryKey(),
+            connection.primaryKey(for: relatedIdentifier),
             for: property,
             into: [String: any Sendable](),
             connection: connection
@@ -1567,7 +1567,7 @@ extension DatabaseSnapshot {
         let orientation = reference[0].isOwningReference()
         let foreignKeyTable = orientation ? reference[0].rhsTable : reference[0].lhsTable
         let foreignKeyColumn = orientation ? reference[0].rhsColumn : reference[0].lhsColumn
-        let parentForeignKey = relatedIdentifier.primaryKey()
+        let parentForeignKey = connection.primaryKey(for: relatedIdentifier)
         _ = try connection.query(
              """
              UPDATE "\(foreignKeyTable)" SET "\(foreignKeyColumn)" = ?
@@ -1577,7 +1577,7 @@ extension DatabaseSnapshot {
         )
         #if DEBUG
         let rows = try fetchToOneReference(
-            relatedIdentifier.primaryKey(),
+            connection.primaryKey(for: relatedIdentifier),
             for: property,
             into: [String: any Sendable](),
             connection: connection
@@ -1603,7 +1603,7 @@ extension DatabaseSnapshot {
         let orientation = reference[0].isOwningReference()
         let foreignKeyTable = orientation ? reference[0].lhsTable : reference[0].rhsTable
         let foreignKeyColumn = orientation ? reference[0].lhsColumn : reference[0].rhsColumn
-        let oldParentForeignKey = relatedIdentifier.primaryKey()
+        let oldParentForeignKey = connection.primaryKey(for: relatedIdentifier)
         if relationship.isOptional {
             _ = try connection.query(
                 """
@@ -1637,7 +1637,7 @@ extension DatabaseSnapshot {
         }
         #if DEBUG
         let rows = try fetchToOneReference(
-            relatedIdentifier.primaryKey(),
+            connection.primaryKey(for: relatedIdentifier),
             for: property,
             into: [String: any Sendable](),
             connection: connection
@@ -1748,7 +1748,7 @@ extension DatabaseSnapshot {
             WHERE "\(pk)" = ?
             LIMIT 1
             """,
-            bindings: [identifier.primaryKey()]
+            bindings: [connection.primaryKey(for: identifier)]
         )
         if !rows.isEmpty {
             guard let storeIdentifier = identifier.storeIdentifier else {
@@ -1757,7 +1757,7 @@ extension DatabaseSnapshot {
             let superentityIdentifier = try PersistentIdentifier.identifier(
                 for: storeIdentifier,
                 entityName: superentityName,
-                primaryKey: identifier.primaryKey()
+                primaryKey: connection.primaryKey(for: identifier)
             )
             try Self.fetchSuperentities(
                 for: superentityIdentifier,
@@ -1787,7 +1787,7 @@ extension DatabaseSnapshot {
             WHERE "\(pk)" = ?
             LIMIT 1
             """,
-            bindings: identifier.primaryKey()
+            bindings: connection.primaryKey(for: identifier)
         ).first else {
             return (entity, identifier)
         }
@@ -1797,7 +1797,7 @@ extension DatabaseSnapshot {
         let superentityIdentifier = try PersistentIdentifier.identifier(
             for: storeIdentifier,
             entityName: superentityName,
-            primaryKey: identifier.primaryKey()
+            primaryKey: connection.primaryKey(for: identifier)
         )
         let schemaMetadata = superType.databaseSchemaMetadata
         var properties = ContiguousArray<PropertyMetadata>()
@@ -1851,7 +1851,7 @@ extension DatabaseSnapshot {
                 "WHERE \(quote(root.name)).\(quote(pk)) = ?"
                 Limit(1)
             }.sql,
-            bindings: [persistentIdentifier.primaryKey()],
+            bindings: [connection.primaryKey(for: persistentIdentifier)],
             into: [String: any DataStoreSnapshotValue]()
         ) { collection, row in
             for column in row.columns {
@@ -1916,7 +1916,7 @@ extension DatabaseSnapshot {
                 "WHERE \(quote(root.name)).\(quote(pk)) = ?"
                 Limit(1)
             }.sql,
-            bindings: [persistentIdentifier.primaryKey()],
+            bindings: [connection.primaryKey(for: persistentIdentifier)],
             into: [(property: PropertyMetadata, value: any Sendable)]()
         ) { collection, row in
             for column in row.columns where column.name != pk {
@@ -2411,8 +2411,9 @@ extension DatabaseSnapshot {
         default: identifiers = []
         }
         for identifier in identifiers {
-            try assertRowExists(for: identifier.primaryKey(), table: relationship.destination, connection: connection)
-            logger.notice("Pass: \(relationship.destination).\(pk) = \(identifier.primaryKey())")
+            let primaryKey = connection.primaryKey(for: identifier)
+            try assertRowExists(for: primaryKey, table: relationship.destination, connection: connection)
+            logger.notice("Pass: \(relationship.destination).\(pk) = \(primaryKey)")
         }
         if identifiers.isEmpty {
             logger.warning("No identifiers to validate: \(description)")
