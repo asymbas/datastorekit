@@ -100,7 +100,7 @@ extension DataStoreMigration {
             for table in tables { try connection.execute.create(table: table) }
             for index in indexes { try connection.execute.create(index: index) }
         }
-        if true || store.configuration.options.contains(.useVerboseLogging) {
+        if store.configuration.options.contains(.useVerboseLogging) {
             logger.debug(
                 {
                     let description = tables.map(\.sql).joined(separator: ",\n")
@@ -350,9 +350,7 @@ internal final class DataStoreMigration: StoreBound {
             try self.apply(custom: custom)
         } catch {
             logger.error("Migration error: \(error)")
-            #if RELEASE
             throw error
-            #endif
         }
     }
     

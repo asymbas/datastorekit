@@ -9,8 +9,8 @@
 
 private import DataStoreSupport
 private import Logging
-public import SQLiteHandle
 public import DataStoreSQL
+public import SQLiteHandle
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
