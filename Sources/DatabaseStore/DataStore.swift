@@ -507,7 +507,6 @@ public final class DatabaseStore: DataStore, Sendable {
         )
         let allowImplicitCachedRelatedSnapshots =
         !self.configuration.options.contains(.disableImplicitPrefetchingUsingCaches)
-        let references = self.manager.graph
         var prefetchedRelatedSnapshots = [PersistentIdentifier: Snapshot]()
         for property in properties where property.metadata is Schema.Relationship {
             let relationship = property.metadata as! Schema.Relationship
@@ -517,8 +516,6 @@ public final class DatabaseStore: DataStore, Sendable {
                     ownerPersistentIdentifiers: ownerPersistentIdentifiers,
                     ownerIndexByPrimaryKey: ownerIndexByPrimaryKey,
                     in: property,
-                    schema: schema,
-                    graph: references,
                     connection: connection,
                     chunkSize: 400
                 )

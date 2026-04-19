@@ -109,7 +109,6 @@ nonisolated package func fetchToOneReference<Result>(
 nonisolated package func fetchExternalReferences(
     for persistentIdentifier: PersistentIdentifier,
     in property: PropertyMetadata,
-    schema: Schema? = nil,
     connection: borrowing DatabaseConnection<DatabaseStore>
 ) throws -> any DataStoreSnapshotValue {
     guard let relationship = property.metadata as? Schema.Relationship else {
@@ -321,8 +320,6 @@ nonisolated package func fetchExternalReferenceKeysBatched(
     ownerPersistentIdentifiers: [PersistentIdentifier],
     ownerIndexByPrimaryKey: [String: Int],
     in property: PropertyMetadata,
-    schema: Schema? = nil,
-    graph: ReferenceGraph? = nil,
     connection: borrowing DatabaseConnection<DatabaseStore>,
     chunkSize: Int = 400
 ) throws -> [PersistentIdentifier: [PersistentIdentifier]] {
@@ -337,7 +334,7 @@ nonisolated package func fetchExternalReferenceKeysBatched(
     result.reserveCapacity(ownerPersistentIdentifiers.count)
     var missingOwnerPrimaryKeys = [String]()
     missingOwnerPrimaryKeys.reserveCapacity(ownerPrimaryKeys.count)
-    if let graph {
+    if let graph = connection.graph {
         for (index, ownerIdentifier) in ownerPersistentIdentifiers.enumerated() {
             let primaryKey = ownerPrimaryKeys[index]
             if let cachedIdentifiers = graph.cachedReferencesIfPresent(for: ownerIdentifier, at: property.name) {
@@ -426,7 +423,7 @@ nonisolated package func fetchExternalReferenceKeysBatched(
             )
         }
     }
-    if let graph {
+    if let graph = connection.graph {
         for primaryKey in missingOwnerPrimaryKeys {
             guard let ownerIndex = ownerIndexByPrimaryKey[primaryKey] else {
                 continue

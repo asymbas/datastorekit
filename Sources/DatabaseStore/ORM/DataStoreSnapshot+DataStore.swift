@@ -361,12 +361,7 @@ extension DatabaseSnapshot {
                 logger.debug("Assigned column to attribute from unordered row: \(description) = \(value)")
             case nil where property.metadata is Schema.Relationship:
                 let connection = try store.queue.connection(.reader)
-                let value = try fetchExternalReferences(
-                    for: persistentIdentifier,
-                    in: property,
-                    schema: store.schema,
-                    connection: connection
-                )
+                let value = try fetchExternalReferences(for: persistentIdentifier, in: property, connection: connection)
                 try setValue(value, at: property, store: store)
             default:
                 logger.warning("Unknown attribute value found in unordered row: \(description)")
