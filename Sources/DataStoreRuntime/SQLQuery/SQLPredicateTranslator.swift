@@ -27,6 +27,7 @@ private typealias ForEach = SQLForEach
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.query")
 
+// TODO: Use cached `TableReference` in `PropertyMetadata` for inheritance.
 // FIXME: Unable to match to key paths due to generic and protocol constraints.
 // FIXME: Unable to match to key paths related to inheritance.
 // FIXME: Unable to access a relationship's attribute to sort without a predicate.
@@ -96,17 +97,17 @@ where T: PersistentModel & SendableMetatype {
     /// A last-in-first-out stack that appends when a fragment is being evaluated (diverges). The LHS shifts to the next on append.
     nonisolated internal var path: [PredicateExpressions.VariableID] = []
     
+    nonisolated package var evaluatedSnapshots: [PersistentIdentifier: any DataStoreSnapshot]?
+    
+    nonisolated package var evaluateEphemeralProperty:
+    @Sendable (EphemeralPropertyEvaluate) throws -> [PersistentIdentifier: any DataStoreSnapshot]? = { _ in nil }
+    
+    nonisolated package var editingState: (any EditingStateProviding)?
+    
     /// Total number of `PersistentIdentifier` bindings.
     internal lazy var bindingsCount: Int? = {
         requestedIdentifiers?.count
     }()
-    
-    package var evaluatedSnapshots: [PersistentIdentifier: any DataStoreSnapshot]?
-    
-    package var evaluateEphemeralProperty:
-    @Sendable (EphemeralPropertyEvaluate) throws -> [PersistentIdentifier: any DataStoreSnapshot]? = { _ in nil }
-    
-    package var editingState: (any EditingStateProviding)?
     
     nonisolated public init(
         schema: Schema,
