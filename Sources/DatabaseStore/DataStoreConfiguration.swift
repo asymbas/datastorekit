@@ -26,8 +26,8 @@ public import SwiftData
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
 nonisolated private let shouldDisableLogging: Bool = {
-    if let value = ProcessInfo.processInfo.environment["DATASTOREKIT_DISABLE_LOGGING"] {
-        Set(["1", "TRUE"]).contains(value)
+    if let value = ProcessInfo.processInfo.environment["DATASTOREKIT_DISABLE_LOGGING"]?.lowercased() {
+        Set(["1", "true", "yes"]).contains(value)
     } else {
         false
     }

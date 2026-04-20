@@ -214,7 +214,7 @@ public final class TransactionObject: DatabaseTransaction {
         propertyNames: String?,
         preservedValues: Data?
     ) throws {
-        _ = try handle.unsafelyUnwrapped.fetch(
+        _ = try handle?.fetch(
             """
             INSERT INTO "\(HistoryTable.tableName)" (
                 "\(HistoryTable.event.rawValue)",

@@ -22,7 +22,7 @@ package final class InheritanceResolver: Sendable {
     nonisolated private var manager: ModelManager {
         #if DEBUG
         guard let manager = self._manager.load() else {
-            preconditionFailure()
+            preconditionFailure("No ModelManager has been set.")
         }
         return manager
         #else
