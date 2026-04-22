@@ -228,7 +228,7 @@ extension ModelManager {
         for (index, identifier) in missingIdentifiers {
             output[index] = identifier.primaryKey(as: type)
         }
-        return output.map(\.unsafelyUnwrapped)
+        return output.compactMap(\.self)
     }
     
     nonisolated internal func primaryKeys<PrimaryKey: LosslessStringConvertible & Sendable>(
