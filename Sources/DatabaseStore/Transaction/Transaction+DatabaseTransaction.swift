@@ -144,7 +144,10 @@ public final class TransactionObject: DatabaseTransaction {
                         let column = columns[index]
                         let resolvedPropertyName = column.hasSuffix("_pk") ? String(column.dropLast(3)) : column
                         if let property = entity.storedPropertiesByName[resolvedPropertyName] {
-                            affectedColumns.append(property.name)
+                            // TODO: `HistoryUpdate.updatedAttributes` implies that it should only track attributes only.
+                            if property.isAttribute {
+                                affectedColumns.append(property.name)
+                            }
                         }
                     }
                 }
