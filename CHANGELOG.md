@@ -5,6 +5,9 @@
 ### Added
 
 - Initial CloudKit implementation.
+- Properties with `Schema.Attribute.Option.ephemeral` can be evaluated in `#Predicate` when caching is enabled.
+- Filter `PersistentModel` objects in `#Predicate`.
+- Added configurations for `SQLPredicateTranslator`.
 
 ### Changed
 
