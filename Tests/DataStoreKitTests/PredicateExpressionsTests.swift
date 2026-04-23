@@ -14,7 +14,7 @@ import Testing
 import SQLiteStatement
 import SwiftData
 
-@Suite("PredicateExpressions")
+@Suite
 struct PredicateExpressionsTests {
     private let schema: Schema
     private let configuration: DatabaseConfiguration

@@ -11,7 +11,7 @@ import DataStoreKit
 import Testing
 import SwiftData
 
-@Suite("Schema")
+@Suite
 struct SchemaTests {
     @Model class ImplicitEntity {
         var id: String

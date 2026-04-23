@@ -13,7 +13,7 @@ import Logging
 import SwiftData
 import Testing
 
-@Suite("DatabaseConfiguration Lifecycle", .disabled())
+@Suite(.disabled())
 struct DatabaseConfigurationLifecycleTests {
     init() {
         _ = logging

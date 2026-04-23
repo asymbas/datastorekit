@@ -7,6 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
+import DataStoreKit
 import Foundation
 import Logging
 import Testing
@@ -24,6 +25,10 @@ let level: Logger.Level = {
     case "critical": .critical
     default: .info
     }
+}()
+
+let options: DataStoreOptions = {
+    []
 }()
 
 internal let logging: Void = {
