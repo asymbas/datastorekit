@@ -49,7 +49,7 @@ extension DataStoreMigration {
         DataStoreRuntime.makeTableDefinitions(schema: selection) { entity in
             let registeredType = Schema.type(for: entity.name)
             guard let type = registeredType ?? entity.type else {
-                fatalError("The associated type for \(entity.name) entity was not registered.")
+                preconditionFailure("The associated type for \(entity.name) entity was not registered.")
             }
             if registeredType == nil {
                 TypeRegistry.register(type, typeName: entity.name, metadata: entity)
@@ -761,20 +761,16 @@ internal final class DataStoreMigration: StoreBound {
         case createEntity(name: String)
         case dropEntity(name: String)
         case renameEntity(from: String, to: String)
-        
         case addAttribute(entity: String, name: String, defaultValue: SQLValue?, isOptional: Bool)
         case dropAttribute(entity: String, name: String)
         case renameAttribute(entity: String, from: String, to: String)
         case alterAttributeNullability(entity: String, name: String, isOptional: Bool)
         case alterAttributeType(entity: String, name: String)
         case alterAttributeTransformable(entity: String, name: String)
-        
         case addUniqueConstraint(entity: String, columns: [String])
         case dropUniqueConstraint(entity: String, columns: [String])
-        
         case addIndex(entity: String, index: SQLIndex)
         case dropIndex(entity: String, index: SQLIndex)
-        
         case addRelationship(entity: String, name: String)
         case dropRelationship(entity: String, name: String)
         case renameRelationship(entity: String, from: String, to: String)
@@ -869,12 +865,9 @@ internal final class DataStoreMigration: StoreBound {
                     if let definition = new.tablesByName[name] {
                         sql.append("CREATE TABLE \(definition.sql)")
                         sql.append(contentsOf: new.auxiliaryObjectsByTable[name, default: []].map(\.sql))
-                        logger.debug(
-                            "Plan: Creating table \(name)",
-                            metadata: [
-                                "sql": "\(definition.sql)"
-                            ]
-                        )
+                        logger.debug("Plan: Creating table \(name)", metadata: [
+                            "sql": "\(definition.sql)"
+                        ])
                     } else {
                         logger.warning("Plan: No schema definition for \(name)")
                     }
@@ -936,17 +929,11 @@ internal final class DataStoreMigration: StoreBound {
             }
             if !sql.isEmpty {
                 steps.append(.sql(sql))
-                logger.debug(
-                    "Plan: Adding steps for SQL",
-                    metadata: ["sql": "\(sql)"]
-                )
+                logger.debug("Plan: Adding steps for SQL", metadata: ["sql": "\(sql)"])
             }
             for rebuild in rebuilds {
                 steps.append(.rebuildTable(rebuild))
-                logger.debug(
-                    "Plan: Adding steps to rebuild",
-                    metadata: ["rebuild": "\(rebuild.table)"]
-                )
+                logger.debug("Plan: Adding steps to rebuild", metadata: ["rebuild": "\(rebuild.table)"])
             }
             if !customOperations.isEmpty {
                 steps.append(.custom(.init(operations: customOperations)))
@@ -956,22 +943,22 @@ internal final class DataStoreMigration: StoreBound {
                 )
             }
             steps.append(.persistSchemaMetadata)
-            logger.debug(
-                "Plan: Planner has completed",
-                metadata: [
-                    "validations": "\(validations.count)",
-                    "sql": "\(sql.count)",
-                    "rebuilds": "\(rebuilds.count)",
-                    "customOperations": "\(customOperations.count)"
-                ]
-            )
+            logger.debug("Plan: Planner has completed", metadata: [
+                "validations": "\(validations.count)",
+                "sql": "\(sql.count)",
+                "rebuilds": "\(rebuilds.count)",
+                "customOperations": "\(customOperations.count)"
+            ])
             return .init(
                 steps: steps,
                 requiresCustomHandler: customOperations.isEmpty == false
             )
         }
         
-        private static func plannedValidations(for operations: [Operation], old: SchemaSet) -> [Validation] {
+        private static func plannedValidations(
+            for operations: [Operation],
+            old: SchemaSet
+        ) -> [Validation] {
             var validations = [Validation]()
             var renamedColumns = [String: String]()
             for operation in operations {
