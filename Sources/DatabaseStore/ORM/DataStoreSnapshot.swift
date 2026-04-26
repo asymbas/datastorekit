@@ -814,7 +814,7 @@ extension DatabaseSnapshot {
             self.persistentIdentifier.entityName == persistentIdentifier.entityName,
             "The entity must be stable during remapping: \(self.persistentIdentifier) -> \(persistentIdentifier)"
         )
-#if DEBUG
+        #if DEBUG
         let useDetailedLogging = DataStoreDebugging.mode == .trace
         var count = 0
         var mappings = [MappingLog]()
@@ -825,7 +825,7 @@ extension DatabaseSnapshot {
         if useDetailedLogging, self.persistentIdentifier != persistentIdentifier {
             logger.debug("Snapshot remapped: \(self.persistentIdentifier) -> \(persistentIdentifier)")
         }
-#endif
+        #endif
         let values = ContiguousArray(zip(properties, values).map { property, value in
             guard property.metadata is Schema.Relationship else { return value }
             switch value {
@@ -835,7 +835,7 @@ extension DatabaseSnapshot {
             }
             func append(_ oldIdentifier: PersistentIdentifier) -> PersistentIdentifier {
                 if let newIdentifier = remappedIdentifiers?[oldIdentifier] {
-#if DEBUG
+                    #if DEBUG
                     count += 1
                     if useDetailedLogging {
                         mappings.append(.init(
@@ -844,7 +844,7 @@ extension DatabaseSnapshot {
                             newIdentifier: newIdentifier
                         ))
                     }
-#endif
+                    #endif
                     return newIdentifier
                 } else {
                     return oldIdentifier
@@ -928,7 +928,6 @@ extension DatabaseSnapshot {
 }
 
 extension DatabaseSnapshot {
-    
     nonisolated package mutating func recursiveExportChain(
         on entity: Schema.Entity,
         indices: [Int],

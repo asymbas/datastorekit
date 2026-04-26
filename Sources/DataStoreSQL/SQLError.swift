@@ -9,7 +9,7 @@
 
 public import Foundation
 
-public struct SQLError: CustomStringConvertible, Error, LocalizedError {
+public struct SQLError: CustomStringConvertible, LocalizedError {
     nonisolated public var code: Code?
     nonisolated public var message: String
     

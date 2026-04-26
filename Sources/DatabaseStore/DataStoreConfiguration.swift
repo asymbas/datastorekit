@@ -241,20 +241,9 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             DataStoreDebugging.mode = .trace
         }
         let schema = schema ?? (!types.isEmpty ? Schema(types) : nil)
-        #if true
         if let schema {
             TypeRegistry.bootstrap(schema: schema, types: types)
         }
-        #else
-        for entity in schema?.entities ?? [] {
-            switch types.first(where: { String(describing: $0) == entity.name }) ?? entity.type {
-            case let type as any (PersistentModel & AnyObject).Type:
-                TypeRegistry.register(type, typeName: entity.name, metadata: entity)
-            default:
-                preconditionFailure("Entity has an unknown type: \(entity.name)")
-            }
-        }
-        #endif
         let constraints = (schema?.entities ?? []).reduce(into: [String: [[String]]]()) { result, entity in
             result[entity.name] = entity.uniquenessConstraints.reduce(into: [[String]]()) { result, group in
                 result.append(group.reduce(into: [String]()) { result, propertyName in
@@ -321,15 +310,12 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                     if let observable = attachment as? any DataStoreObservable {
                         observable.onTransactionFailure(violations)
                     } else {
-                        logger.debug(
-                            "No observable model found.",
-                            metadata: [
-                                "name": .string(name),
-                                "url": "\(location.description)",
-                                "error": "\(error)",
-                                "violations": "\(violations)"
-                            ]
-                        )
+                        logger.debug("No observable model found.", metadata: [
+                            "name": .string(name),
+                            "url": "\(location.description)",
+                            "error": "\(error)",
+                            "violations": "\(violations)"
+                        ])
                     }
                 },
                 onUpdate: { operation, database, table, rowID in

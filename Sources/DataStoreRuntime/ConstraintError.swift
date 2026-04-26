@@ -11,7 +11,7 @@ public import Foundation
 
 @preconcurrency public import SwiftData
 
-public struct ConstraintError: Error, LocalizedError {
+public struct ConstraintError: LocalizedError {
     nonisolated public let code: Code
     nonisolated public let message: String?
     nonisolated public let persistentIdentifier: PersistentIdentifier?
