@@ -33,15 +33,11 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
     /// Inherited from `CKSyncEngineDelegate.handleEvent(_:syncEngine:)`.
     public func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
         do {
-            logger.trace("Received sync engine event.", metadata: ["event": "\(event)"])
             switch event {
             case .stateUpdate(let event):
                 try saveState(stateSerialization: event.stateSerialization, clearErrorCode: true)
-                logger.debug("Saved sync state update: \(event.stateSerialization)")
             case .accountChange(let event):
-                logger.trace("Received CloudKit account change.", metadata: ["change_type": "\(event.changeType)"])
                 guard isHandlingAccountChange == false else {
-                    logger.trace("Skipped CloudKit account change handling because another change is already being processed.")
                     return
                 }
                 self.isHandlingAccountChange = true
@@ -49,32 +45,20 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                 switch event.changeType {
                 case .signIn: try scheduleInitialUploadIfNeeded()
                 case .switchAccounts, .signOut: try resetForAccountChange()
-                @unknown default: logger.trace("Encountered unknown CloudKit account change type.")
+                @unknown default:
+                    assertionFailure("Encountered unknown CloudKit account change type: \(event.changeType)")
                 }
             case .willFetchChanges:
                 break
             case .willFetchRecordZoneChanges:
                 break
             case .fetchedRecordZoneChanges(let event):
-                let changed = event.modifications.map(\.record)
-                let deleted = event.deletions.map(\.recordID)
                 logger.trace("Received fetched record zone changes.", metadata: [
-                    "changed_count": "\(changed.count)",
-                    "deleted_count": "\(deleted.count)"
+                    "event_modifications_count": "\(event.modifications.count)",
+                    "event_deletions_count": "\(event.deletions.count)"
                 ])
-                if changed.isEmpty == false {
-                    logger.trace("Loaded changed record names from fetched record zone changes.", metadata: [
-                        "record_names": "\(changed.map { $0.recordID.recordName })"
-                    ])
-                }
-                if deleted.isEmpty == false {
-                    logger.trace("Loaded deleted record names from fetched record zone changes.", metadata: [
-                        "record_names": "\(deleted.map { $0.recordName })"
-                    ])
-                }
                 try applyRemoteChanges(changed: event.modifications, deleted: event.deletions)
                 try saveState(clearErrorCode: true)
-                logger.trace("Completed fetched record zone change handling.")
             case .didFetchRecordZoneChanges:
                 break
             case .didFetchChanges:
@@ -89,10 +73,10 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                 try saveState(clearErrorCode: true)
             case .sentRecordZoneChanges(let event):
                 logger.trace("Processed sent record zone changes.", metadata: [
-                    "saved_record_count": "\(event.savedRecords.count)",
-                    "deleted_record_id_count": "\(event.deletedRecordIDs.count)",
-                    "failed_record_save_count": "\(event.failedRecordSaves.count)",
-                    "failed_record_delete_count": "\(event.failedRecordDeletes.count)"
+                    "event_savedRecords_count": "\(event.savedRecords.count)",
+                    "event_deletedRecordIDs_count": "\(event.deletedRecordIDs.count)",
+                    "event_failedRecordSaves_count": "\(event.failedRecordSaves.count)",
+                    "event_failedRecordDeletes_count": "\(event.failedRecordDeletes.count)"
                 ])
                 for savedRecord in event.savedRecords {
                     enqueuedChangesByRecordID[savedRecord.recordID] = nil
@@ -152,16 +136,10 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                             ])
                             break
                         }
-                        let entityName: String
-                        let primaryKey: String
                         let persistentIdentifier: PersistentIdentifier
                         if let enqueued = enqueuedChangesByRecordID[recordID] {
-                            entityName = enqueued.entityName
-                            primaryKey = enqueued.primaryKey()
                             persistentIdentifier = enqueued
                         } else if let conflictMetadata, conflictMetadata.targetPrimaryKey == nil {
-                            entityName = conflictMetadata.entityName
-                            primaryKey = conflictMetadata.primaryKey
                             persistentIdentifier = try .identifier(for: store.identifier, entityName: conflictMetadata.entityName, primaryKey: conflictMetadata.primaryKey)
                         } else {
                             logger.trace("Skipped conflict resolution because root ownership could not be resolved.", metadata: [
@@ -171,14 +149,12 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                         }
                         logger.trace("Resolved root conflict target.", metadata: [
                             "record_name": "\(recordID.recordName)",
-                            "entity_name": "\(entityName)",
-                            "primary_key": "\(primaryKey)"
+                            "persistent_identifier": "\(persistentIdentifier)"
                         ])
                         guard let _ = try snapshot(for: persistentIdentifier) else {
                             logger.trace("Skipped conflict resolution because the local snapshot was missing.", metadata: [
                                 "record_name": "\(recordID.recordName)",
-                                "entity_name": "\(entityName)",
-                                "primary_key": "\(primaryKey)"
+                                "persistent_identifier": "\(persistentIdentifier)"
                             ])
                             break
                         }
@@ -196,8 +172,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                         }
                         logger.trace("Loaded conflict snapshots for merge.", metadata: [
                             "record_name": "\(recordID.recordName)",
-                            "entity_name": "\(entityName)",
-                            "primary_key": "\(primaryKey)"
+                            "persistent_identifier": "\(persistentIdentifier)"
                         ])
                         newPendingRecordZoneChanges.append(.saveRecord(recordID))
                         logger.trace("Re-enqueued root record after conflict merge.", metadata: [
@@ -233,7 +208,6 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                             "record_name": "\(recordID.recordName)",
                             "error_code": "\(error.code.rawValue)"
                         ])
-                        break
                     default:
                         logger.trace("Encountered unhandled CloudKit save failure.", metadata: [
                             "record_name": "\(recordID.recordName)",
@@ -288,8 +262,10 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
         }
     }
     
-    public func nextRecordZoneChangeBatch(_ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine)
-    async -> CKSyncEngine.RecordZoneChangeBatch? {
+    public func nextRecordZoneChangeBatch(
+        _ context: CKSyncEngine.SendChangesContext,
+        syncEngine: CKSyncEngine
+    ) async -> CKSyncEngine.RecordZoneChangeBatch? {
         let scope = context.options.scope
         let changes = syncEngine.state.pendingRecordZoneChanges.filter { scope.contains($0) }
         logger.debug("Creating record zone change batch.", metadata: [

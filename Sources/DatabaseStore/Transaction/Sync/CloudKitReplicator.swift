@@ -63,21 +63,17 @@ extension DatabaseConfiguration.CloudKitDatabase {
         nonisolated public var lastProcessedToken: Store.HistoryType.TokenType? {
             guard let row = try? store.queue.connection(.reader).query(
                 """
-                SELECT \(DatabaseConfiguration.CloudKitDatabase.StateTable.lastEnqueuedHistoryPrimaryKey.rawValue) AS history_pk
-                FROM \(DatabaseConfiguration.CloudKitDatabase.StateTable.tableName)
-                WHERE \(DatabaseConfiguration.CloudKitDatabase.StateTable.storeIdentifier.rawValue) = ?
+                SELECT \(StateTable.lastEnqueuedHistoryPrimaryKey.rawValue) AS history_pk
+                FROM \(StateTable.tableName)
+                WHERE \(StateTable.storeIdentifier.rawValue) = ?
                 LIMIT 1
                 """,
                 bindings: [store.identifier]
             ).first,
-                  let watermark = row["history_pk"] as? Int64,
-                  watermark > 0 else {
+                  let watermark = row["history_pk"] as? Int64, watermark > 0 else {
                 return nil
             }
-            return DatabaseHistoryToken(
-                id: Int(watermark),
-                tokenValue: [store.identifier: watermark]
-            )
+            return .init(id: Int(watermark), tokenValue: [store.identifier: watermark])
         }
         
         internal init(store: Store, configuration: SyncConfiguration) {
@@ -101,7 +97,7 @@ extension DatabaseConfiguration.CloudKitDatabase {
             self.container = container
             self.database = database
             self.zoneID = .init(zoneName: configuration.zoneName, ownerName: CKCurrentUserDefaultName)
-            logger.debug("Initialized CloudKit replicator.", metadata: [
+            logger.trace("Initialized CloudKit replicator.", metadata: [
                 "id": "\(configuration.id)",
                 "store_identifier": "\(store.identifier)",
                 "container_identifier": "\(configuration.containerIdentifier ?? "<default>")",
@@ -144,48 +140,23 @@ extension DatabaseConfiguration.CloudKitDatabase {
         }
         
         public func prepare() async throws {
-            logger.trace("Preparing CloudKit replicator.", metadata: [
-                "did_prepare": "\(didPrepare)",
-                "sync_engine_exists": "\(syncEngine != nil)"
-            ])
             if didPrepare {
                 logger.trace("Skipped preparation because the replicator is already prepared.")
                 return
             }
-            logger.trace("Validating CloudKit configuration.", metadata: [
-                "database_scope": "\(configuration.databaseScope.rawValue)"
-            ])
+            logger.trace("Validating CloudKit configuration.")
             guard configuration.databaseScope == .private else {
-                logger.trace("Rejected unsupported CloudKit database scope.", metadata: [
-                    "database_scope": "\(configuration.databaseScope.rawValue)"
-                ])
                 throw Self.Error.unsupportedDatabaseScope(configuration.databaseScope)
             }
-            logger.trace("Validated CloudKit configuration.")
             let accountStatus = try await container.accountStatus()
-            logger.trace("Loaded CloudKit account status.", metadata: [
-                "account_status": "\(String(describing: accountStatus))"
-            ])
             try createCloudKitTables()
             try initializeSyncEngineIfNeeded()
             let state = try loadState()
-            logger.trace("Loaded sync state during preparation.", metadata: [
-                "last_enqueued_history_primary_key": "\(state.lastEnqueuedHistoryPrimaryKey)",
-                "did_bootstrap_zone": "\(state.didBootstrapZone)",
-                "has_state_serialization": "\(state.stateSerialization != nil)",
-                "last_error_code": "\(String(describing: state.lastErrorCode))"
-            ])
             if state.didBootstrapZone == false {
-                logger.trace("Bootstrapping CloudKit zone.", metadata: [
-                    "zone_name": "\(zoneID.zoneName)",
-                    "owner_name": "\(zoneID.ownerName)"
-                ])
                 syncEngine?.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
                 try saveState(clearErrorCode: true, didBootstrapZone: true)
-                logger.trace("Saved bootstrap state.")
             }
             self.didPrepare = true
-            logger.trace("Completed preparation.", metadata: ["did_prepare": "\(didPrepare)"])
         }
         
         private func extractChangeIdentifier(_ change: HistoryChange) -> Int64? {
@@ -193,15 +164,37 @@ extension DatabaseConfiguration.CloudKitDatabase {
             case .insert(let insert): insert.changeIdentifier as? Int64
             case .update(let update): update.changeIdentifier as? Int64
             case .delete(let delete): delete.changeIdentifier as? Int64
-            @unknown default:
-                fatalError()
+            @unknown default: fatalError()
             }
         }
         
+        private func coalesceTransactions(_ transactions: [Store.HistoryType]) -> [HistoryChange] {
+            var changes = [PersistentIdentifier: HistoryChange]()
+            for transaction in transactions {
+                for change in transaction.changes {
+                    let changedPersistentIdentifier = change.changedPersistentIdentifier
+                    guard configuration.delegate.shouldSyncEntity(changedPersistentIdentifier.entityName) else {
+                        continue
+                    }
+                    switch change {
+                    case .delete(let delete):
+                        changes[changedPersistentIdentifier] = .delete(delete)
+                    case .insert(let insert):
+                        changes[changedPersistentIdentifier] = .insert(insert)
+                    case .update(let update):
+                        changes[changedPersistentIdentifier] = changes[changedPersistentIdentifier] ?? .update(update)
+                    @unknown default:
+                        fatalError()
+                    }
+                }
+            }
+            return Array(changes.values)
+        }
+        
         /// Inherited from `DataStoreSynchronizer.sync(transactions:)`.
+        ///
         /// - Parameter transactions: The transaction delta.
         public func sync(transactions: [Store.HistoryType]) async throws {
-            logger.trace("Starting CloudKit sync: \(transactions.count) transactions")
             try initializeSyncEngineIfNeeded()
             for change in coalesceTransactions(transactions) {
                 guard let type = Schema.type(for: change.changedPersistentIdentifier.entityName) else {
@@ -225,7 +218,7 @@ extension DatabaseConfiguration.CloudKitDatabase {
             var remainingAttempts = 10
             while syncEngine.state.pendingRecordZoneChanges.isEmpty == false, remainingAttempts > 0 {
                 remainingAttempts -= 1
-                logger.trace("Pending record zone changes remain after send. Retrying.", metadata: [
+                logger.trace("Pending record zone changes remain after send. Retrying...", metadata: [
                     "pending_count": "\(syncEngine.state.pendingRecordZoneChanges.count)",
                     "remaining_attempts": "\(remainingAttempts)"
                 ])
@@ -238,7 +231,7 @@ extension DatabaseConfiguration.CloudKitDatabase {
         
         public func sync() async throws {
             let watermark = self.lastProcessedToken?.watermark(for: store.identifier) ?? 0
-            let descriptor = HistoryDescriptor<DatabaseHistoryTransaction>()
+            let descriptor = HistoryDescriptor<Store.HistoryType>()
             let transactions = try store.fetchHistory(descriptor)
                 .filter { transaction in
                     transaction.author != remoteAuthor &&
@@ -249,14 +242,14 @@ extension DatabaseConfiguration.CloudKitDatabase {
         }
         
         public func fetchChanges() async throws {
-            logger.trace("Fetching CloudKit changes.")
+            logger.trace("Fetching CloudKit changes...")
             try await syncEngine?.fetchChanges(.init())
             logger.trace("Completed fetching CloudKit changes.")
         }
         
         public func sendChanges() async throws {
-            logger.trace("Sending CloudKit changes.")
-            guard let syncEngine else {
+            logger.trace("Sending CloudKit changes...")
+            guard let syncEngine = self.syncEngine else {
                 throw Self.Error.noSyncEngine
             }
             logPendingCloudKitCounts(syncEngine)
@@ -313,8 +306,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         logger.notice("Completed CloudKit data erase: \(zoneID.zoneName)")
     }
     
-    internal func initializeSyncEngineIfNeeded() throws {
-        logger.trace("Initializing sync engine if needed.", metadata: ["sync_engine": "\(syncEngine != nil)"])
+    private func initializeSyncEngineIfNeeded() throws {
         guard syncEngine == nil else { return }
         let state = try loadState()
         var configuration = CKSyncEngine.Configuration(
@@ -324,7 +316,6 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         )
         configuration.automaticallySync = true
         self.syncEngine = CKSyncEngine(configuration)
-        logger.trace("Created sync engine.", metadata: ["automatically_sync": "\(configuration.automaticallySync)"])
     }
     
     private func createCloudKitTables() throws {
@@ -369,7 +360,6 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
             ])
             try connection.execute("ALTER TABLE \(table) ADD COLUMN \(column) \(definition)")
         }
-        logger.trace("Completed table column validation.", metadata: ["table_name": "\(table)"])
     }
     
     private func ensureStateRowExists(connection: borrowing DatabaseConnection<Store>) throws {
@@ -391,7 +381,6 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
             StateTable.lastEnqueuedHistoryPrimaryKey.rawValue: NSNull(),
             StateTable.stateSerialization.rawValue: NSNull()
         ])
-        logger.trace("Inserted initial local sync state row.")
     }
     
     private func loadState() throws -> State {
@@ -415,19 +404,12 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
             }
             return try? JSONDecoder().decode(CKSyncEngine.State.Serialization.self, from: data)
         }()
-        let state = State(
+        return .init(
             lastEnqueuedHistoryPrimaryKey: row?["history_pk"] as? Int64 ?? 0,
             stateSerialization: stateSerialization,
             didBootstrapZone: (row?["did_bootstrap_zone"] as? Int64 ?? 0) != 0,
             lastErrorCode: row?["last_error_code"] as? String
         )
-        logger.trace("Loaded local sync state.", metadata: [
-            "last_enqueued_history_primary_key": "\(state.lastEnqueuedHistoryPrimaryKey)",
-            "did_bootstrap_zone": "\(state.didBootstrapZone)",
-            "has_state_serialization": "\(state.stateSerialization != nil)",
-            "last_error_code": "\(String(describing: state.lastErrorCode))"
-        ])
-        return state
     }
     
     internal func saveState(
@@ -439,10 +421,9 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     ) throws {
         let connection = try store.queue.connection(.writer)
         let current = try loadState()
-        let resolvedStateSerialization = stateSerialization ?? current.stateSerialization
         let encodedStateSerialization: any Sendable = {
-            guard let resolvedStateSerialization,
-                  let data = try? JSONEncoder().encode(resolvedStateSerialization) else {
+            guard let stateSerialization = stateSerialization ?? current.stateSerialization,
+                  let data = try? JSONEncoder().encode(stateSerialization) else {
                 return NSNull()
             }
             return data
@@ -473,16 +454,9 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
             ],
             handle: connection.handle
         ).run()
-        logger.trace("Saved local sync state.", metadata: [
-            "resolved_last_enqueued_history_primary_key": "\(lastEnqueuedHistoryPrimaryKey ?? current.lastEnqueuedHistoryPrimaryKey)",
-            "has_encoded_state_serialization": "\(resolvedStateSerialization != nil)",
-            "resolved_did_bootstrap_zone": "\(didBootstrapZone ?? current.didBootstrapZone)",
-            "last_sync_at_microseconds": "\(now)"
-        ])
     }
     
     private func resetLocalState(deleteRecordMetadata: Bool = true) throws {
-        logger.trace("Resetting local sync state.", metadata: ["delete_record_metadata": "\(deleteRecordMetadata)"])
         let connection = try store.queue.connection(.writer)
         try PreparedStatement(
             sql: """
@@ -508,39 +482,15 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                 bindings: [store.identifier],
                 handle: connection.handle
             ).run()
-            logger.trace("Deleted record metadata rows for the store.")
         }
-        logger.trace("Completed local sync state reset.")
     }
 }
 
 // MARK: Outgoing to CloudKit
 
 extension DatabaseConfiguration.CloudKitDatabase.Replicator {
-    private func coalesceTransactions(_ transactions: [Store.HistoryType]) -> [HistoryChange] {
-        var changes = [PersistentIdentifier: HistoryChange]()
-        for transaction in transactions {
-            for change in transaction.changes {
-                let changedPersistentIdentifier = change.changedPersistentIdentifier
-                guard configuration.delegate.shouldSyncEntity(changedPersistentIdentifier.entityName) else {
-                    continue
-                }
-                switch change {
-                case .delete(let delete):
-                    changes[changedPersistentIdentifier] = .delete(delete)
-                case .insert(let insert):
-                    changes[changedPersistentIdentifier] = .insert(insert)
-                case .update(let update):
-                    changes[changedPersistentIdentifier] = changes[changedPersistentIdentifier] ?? .update(update)
-                @unknown default:
-                    fatalError()
-                }
-            }
-        }
-        return Array(changes.values)
-    }
-    
     /// Prepares the snapshot payload to send out to CloudKit.
+    ///
     /// - Parameter change: A single event operation.
     internal func makePendingRecordZoneChanges<T: PersistentModel>(for change: HistoryChange, as type: T.Type)
     throws -> [CKSyncEngine.PendingRecordZoneChange] {
@@ -593,7 +543,8 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                 )
                 return CKSyncEngine.PendingRecordZoneChange.deleteRecord(recordID)
             }
-            let relatedMetadata = try loadRelatedRecordMetadata(targetPrimaryKey: delete.changedPersistentIdentifier.primaryKey())
+            let primaryKey = self.store.manager.primaryKey(for: delete.changedPersistentIdentifier)
+            let relatedMetadata = try loadRelatedRecordMetadata(targetPrimaryKey: primaryKey)
             for metadata in relatedMetadata {
                 let recordID = makeRecordID(recordName: metadata.recordName)
                 enqueuedChangesByRecordID[recordID] = try .identifier(
@@ -621,8 +572,6 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         var pending = [CKSyncEngine.PendingRecordZoneChange]()
         for record in projected {
             cachedRecordsForBatch[record.recordID] = record
-        }
-        for record in projected {
             enqueuedChangesByRecordID[record.recordID] = identifier
             pending.append(.saveRecord(record.recordID))
         }
@@ -649,7 +598,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         changed: [CKDatabase.RecordZoneChange.Modification],
         deleted: [CKDatabase.RecordZoneChange.Deletion]
     ) throws {
-        guard changed.isEmpty == false || deleted.isEmpty == false else {
+        guard !changed.isEmpty || !deleted.isEmpty else {
             return
         }
         struct JoinTable {
@@ -688,13 +637,12 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                 ) { recordName, destinationEntityName in
                     if let primaryKey = recordNameToPrimaryKey[recordName] {
                         return primaryKey
+                    } else {
+                        return try self.loadRecordMetadata(recordName: recordName)?.primaryKey
                     }
-                    return try self.loadRecordMetadata(recordName: recordName)?.primaryKey
                 }
                 operations[existingSnapshot == nil ? .insert : .update, default: []].append(incomingSnapshot)
-                let _ = incomingSnapshot.persistentIdentifier
                 changedRecordsToPersist.append(event.record)
-                logger.debug("Changed event for root record: \(event.record.recordType)")
             } else {
                 if let descriptor = intermediaryRecordDescriptor(for: event.record.recordType) {
                     let sourceFieldName = descriptor.sourceFieldName
@@ -725,9 +673,6 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                                 destinationPrimaryKey: destinationPrimaryKey
                             ))
                             changedRecordsToPersist.append(event.record)
-                            logger.debug("Persisted intermediary record metadata: \(event.record.recordType)")
-                        } else {
-                            logger.debug("Deferred intermediary record — dependencies not yet available: \(event.record.recordType)")
                         }
                     }
                 }
@@ -773,7 +718,6 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                     bindings: [insert.sourcePrimaryKey, insert.destinationPrimaryKey]
                 )
             }
-            logger.debug("Inserted \(deferredJoinTableInserts.count) deferred join table rows.")
         }
         for record in changedRecordsToPersist {
             try persistSavedRecordMetadata(record)
@@ -904,52 +848,32 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     }
     
     internal func scheduleInitialUploadIfNeeded() throws {
-        logger.trace("Scheduling initial CloudKit upload if needed.")
         try initializeSyncEngineIfNeeded()
         let state = try loadState()
-        logger.trace("Loaded bootstrap state before scheduling initial upload.", metadata: [
-            "did_bootstrap_zone": "\(state.didBootstrapZone)"
-        ])
         guard !state.didBootstrapZone else {
-            logger.trace("Skipped initial upload scheduling because the zone is already bootstrapped.")
             return
         }
         syncEngine?.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
         try saveState(clearErrorCode: true, didBootstrapZone: true)
-        logger.trace("Completed initial upload scheduling.")
     }
     
     internal func resetForAccountChange() throws {
-        logger.trace("Resetting state for CloudKit account change.", metadata: [
-            "enqueued_changes_count": "\(enqueuedChangesByRecordID.count)"
-        ])
         enqueuedChangesByRecordID.removeAll()
         try resetLocalState(deleteRecordMetadata: true)
         self.syncEngine = nil
         self.didPrepare = false
-        logger.trace("Completed CloudKit account reset.")
     }
     
     private func resetForAccountChange(reuploadLocalData: Bool) throws {
-        logger.trace("Resetting state for CloudKit account change.", metadata: [
-            "reupload_local_data": "\(reuploadLocalData)",
-            "enqueued_changes_count": "\(enqueuedChangesByRecordID.count)"
-        ])
         enqueuedChangesByRecordID.removeAll()
         try resetLocalState(deleteRecordMetadata: true)
         self.syncEngine = nil
         self.didPrepare = false
-        logger.trace("Reset local sync state and cleared the sync engine.")
         try initializeSyncEngineIfNeeded()
         syncEngine?.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
-        logger.trace("Re-enqueued CloudKit zone save after account reset.", metadata: [
-            "zone_name": "\(zoneID.zoneName)"
-        ])
         if reuploadLocalData {
             try saveState(clearErrorCode: true, didBootstrapZone: true)
-            logger.trace("Saved bootstrap state after account reset reupload setup.")
         }
-        logger.trace("Completed CloudKit account reset.")
     }
 }
 
