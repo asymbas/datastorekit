@@ -140,11 +140,9 @@ extension DatabaseConfiguration.CloudKitDatabase {
         }
         
         public func prepare() async throws {
-            if didPrepare {
-                logger.trace("Skipped preparation because the replicator is already prepared.")
+            guard !didPrepare else {
                 return
             }
-            logger.trace("Validating CloudKit configuration.")
             guard configuration.databaseScope == .private else {
                 throw Self.Error.unsupportedDatabaseScope(configuration.databaseScope)
             }
@@ -157,6 +155,7 @@ extension DatabaseConfiguration.CloudKitDatabase {
                 try saveState(clearErrorCode: true, didBootstrapZone: true)
             }
             self.didPrepare = true
+            logger.trace("CloudKit replicator is prepared.", metadata: ["account_status": "\(accountStatus)"])
         }
         
         private func extractChangeIdentifier(_ change: HistoryChange) -> Int64? {

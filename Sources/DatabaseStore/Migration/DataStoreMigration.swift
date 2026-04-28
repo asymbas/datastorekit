@@ -148,6 +148,7 @@ internal final class DataStoreMigration: StoreBound {
         }
         self.shouldAutomaticallyMigrateOnSchemaChange =
         store.configuration.options.contains(.disableLightweightSchemaMigrations) == false
+        // FIXME: Decoding schema will cause a crash when type cannot be found.
         guard let oldSchema = try store.getValue(forKey: "schema", as: Schema.self) else {
             logger.info("No SwiftData.Schema was ever stored. Saving current schema: \(newSchema.version)")
             try store.setValue(newSchema, forKey: "schema")

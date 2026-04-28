@@ -43,7 +43,10 @@ extension DatabaseStore: HistoryProviding {
         let translator = SQLHistoryTranslator<HistoryType>()
         _ = try translator.translate(descriptor)
         let start = Date()
-        let logThisCall = shouldLogHistoryFetch(limit: descriptor.fetchLimit, hasPredicate: descriptor.predicate != nil)
+        let logThisCall = shouldLogHistoryFetch(
+            limit: descriptor.fetchLimit,
+            hasPredicate: descriptor.predicate != nil
+        )
         if logThisCall {
             let counts = HistoryTable.counts(in: self.identifier, connection: connection)
             logger.debug("History fetch (start).", metadata: [
