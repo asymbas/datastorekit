@@ -89,9 +89,17 @@ extension DataStoreMigration {
     nonisolated fileprivate static func setup(schema: DatabaseSchema, store: DatabaseStore) throws {
         let tables = schema.tables
         let indexes = schema.indexes
+        // Exclude transaction from history.
         try store.queue.withConnection(.writer) { connection in
-            for table in tables { try connection.execute.create(table: table) }
-            for index in indexes { try connection.execute.create(index: index) }
+            try connection.execute("BEGIN TRANSACTION")
+            do {
+                for table in tables { try connection.execute.create(table: table) }
+                for index in indexes { try connection.execute.create(index: index) }
+                try connection.execute("COMMIT TRANSACTION")
+            } catch {
+                _ = try? connection.execute("ROLLBACK TRANSACTION")
+                throw error
+            }
         }
         if store.configuration.options.contains(.useVerboseLogging) {
             logger.debug(
@@ -112,7 +120,8 @@ extension DataStoreMigration {
     }
 }
 
-// elevate some inferred to lightweight
+// TODO: Use enum associated values for classifying types.
+// TODO: Elevate some inferred to lightweight.
 
 internal final class DataStoreMigration: StoreBound {
     internal typealias Store = DatabaseStore
@@ -123,9 +132,34 @@ internal final class DataStoreMigration: StoreBound {
     internal let newSchemaSet: SchemaSet
     private let shouldAutomaticallyMigrateOnSchemaChange: Bool
     
-    internal enum Error: Swift.Error {
+    internal enum Error: Swift.Error, CustomStringConvertible {
         case malformedSQLResult
         case requiresCustomMigration
+        case schemaMetadataDecodingFailed(underlying: any Swift.Error)
+        case foreignKeyConstraintFailure(violations: [[String: (any Sendable)?]])
+        case validationFailed(Validation, detail: String?)
+        case missingTableDefinition(entity: String)
+        case unsupportedAlteration(detail: String)
+        
+        internal var description: String {
+            switch self {
+            case .malformedSQLResult:
+                return "Encountered a malformed result while reading SQLite metadata."
+            case .requiresCustomMigration:
+                return "The migration requires a custom handler that was not provided."
+            case .schemaMetadataDecodingFailed(let underlyingError):
+                return "Failed to decode the persisted SwiftData.Schema: \(underlyingError)"
+            case .foreignKeyConstraintFailure(let violations):
+                return "Foreign key check reported \(violations.count) violation(s): \(violations)"
+            case .validationFailed(let validation, let detail):
+                if let detail { return "Validation failed (\(validation)): \(detail)" }
+                return "Validation failed: \(validation)"
+            case .missingTableDefinition(let entity):
+                return "No table definition was generated for entity: \(entity)"
+            case .unsupportedAlteration(let detail):
+                return "Unsupported schema alteration: \(detail)"
+            }
+        }
     }
     
     @discardableResult internal init?(
@@ -138,25 +172,28 @@ internal final class DataStoreMigration: StoreBound {
         self.store = store
         let newSchema = self.store.schema
         let newSQLSchema = Self.load(schema: store.schema, shouldRegister: true)
-        defer {
-            if store.configuration.options.contains(.forceSchemaOverwrite) {
-                try? store.setValue(newSchema, forKey: "schema")
-            }
-        }
         if store.configuration.options.contains(.disableSchemaMigrations) {
             return nil
         }
         self.shouldAutomaticallyMigrateOnSchemaChange =
         store.configuration.options.contains(.disableLightweightSchemaMigrations) == false
-        // FIXME: Decoding schema will cause a crash when type cannot be found.
-        guard let oldSchema = try store.getValue(forKey: "schema", as: Schema.self) else {
-            logger.info("No SwiftData.Schema was ever stored. Saving current schema: \(newSchema.version)")
-            try store.setValue(newSchema, forKey: "schema")
+        let oldSchema: Schema?
+        do {
+            oldSchema = try store.getValue(forKey: "schema", as: Schema.self)
+        } catch {
+            logger.warning(
+                "Failed to decode persisted SwiftData.Schema. Treating store as fresh.",
+                metadata: ["error": "\(error)"]
+            )
+            oldSchema = nil
+        }
+        guard let oldSchema else {
+            logger.info("No SwiftData.Schema was ever stored. Initializing schema: \(newSchema.version)")
             try Self.setup(schema: newSQLSchema, store: store)
+            try store.setValue(newSchema, forKey: "schema")
             return nil
         }
         let (oldDatabaseSchema, storedStatements, oldAuxiliaryObjectsByTable) = try store.queue.reader { connection in
-            // Fetch SQLite's schema metadata.
             let tableRows = try connection.fetch(
                 """
                 SELECT "name", "sql" FROM sqlite_schema 
@@ -187,10 +224,7 @@ internal final class DataStoreMigration: StoreBound {
                           let _ = columnRow["type"].take() as? String else {
                         logger.error(
                             "Unable to parse column metadata.",
-                            metadata: [
-                                "table": .string(tableName),
-                                "column_row": "\(columnRow)"
-                            ]
+                            metadata: ["table": "\(tableName)", "column_row": "\(columnRow)"]
                         )
                         continue
                     }
@@ -199,18 +233,12 @@ internal final class DataStoreMigration: StoreBound {
                     var columnConstraints = [ColumnConstraint]()
                     if let primaryKeyPosition = columnRow["pk"].take() as? Int64, primaryKeyPosition > 0 {
                         primaryKeyColumnNames.append((primaryKeyPosition, columnName))
-                        logger.trace("Applied PRIMARY KEY constraint: \(tableName).\(columnName)")
                     }
                     if let isNotNull = (columnRow["notnull"].take() as? Int64), isNotNull != 0 {
                         columnConstraints.append(.notNull)
-                        logger.trace("Applied NOT NULL constraint: \(tableName).\(columnName)")
                     }
                     if let defaultValue = columnRow["dflt_value"].take() as? String {
                         columnConstraints.append(.defaultValue(defaultValue))
-                        logger.trace("Applied DEFAULT VALUE: \(tableName).\(columnName)")
-                    }
-                    if !columnRow.isEmpty {
-                        logger.trace("Remaining column metadata: \(columnRow)")
                     }
                     columns.append(SQLColumn(
                         name: columnName,
@@ -235,10 +263,7 @@ internal final class DataStoreMigration: StoreBound {
                 } else if sortedPrimaryKeyColumns.count > 1 {
                     tableConstraints.append(.primaryKey(sortedPrimaryKeyColumns))
                 }
-                let groupedForeignKeys = Dictionary(
-                    grouping: foreignKeyRows,
-                    by: { $0["id"] as? Int ?? 0 }
-                )
+                let groupedForeignKeys = Dictionary(grouping: foreignKeyRows, by: { $0["id"] as? Int ?? 0 })
                 for (_, group) in groupedForeignKeys.sorted(by: { $0.key < $1.key }) {
                     let sortedGroup = group.sorted { ($0["seq"] as? Int ?? 0) < ($1["seq"] as? Int ?? 0) }
                     guard let referencedTable = sortedGroup.first?["table"] as? String else {
@@ -261,8 +286,7 @@ internal final class DataStoreMigration: StoreBound {
                     ))
                 }
                 for indexRow in indexRows {
-                    guard indexRow["origin"] as? String == "u",
-                          let indexName = indexRow["name"] as? String else {
+                    guard indexRow["origin"] as? String == "u", let indexName = indexRow["name"] as? String else {
                         continue
                     }
                     let indexInfoRows = try connection.query("PRAGMA index_info(\(quote(indexName)));")
@@ -271,13 +295,9 @@ internal final class DataStoreMigration: StoreBound {
                         .compactMap { $0["name"] as? String }
                     if !uniqueColumns.isEmpty {
                         tableConstraints.append(.unique(uniqueColumns))
-                        logger.trace("Applied UNIQUE table constraint: \(tableName).\(uniqueColumns)")
                     }
                 }
-                definitions.append(SQLTable(
-                    name: tableName,
-                    constraints: tableConstraints, columns: { columns }
-                ))
+                definitions.append(SQLTable(name: tableName, constraints: tableConstraints, columns: { columns }))
             }
             let auxiliaryRows = try connection.fetch(
                 """
@@ -289,7 +309,7 @@ internal final class DataStoreMigration: StoreBound {
                 ORDER BY "tbl_name", "type", "name"
                 """
             )
-            var auxiliaryObjectsByTable = [String: [AuxiliaryObject]]()
+            var byTable = [String: [AuxiliaryObject]]()
             for auxiliaryRow in auxiliaryRows {
                 guard let tableName = auxiliaryRow[0] as? String,
                       let rawKind = auxiliaryRow[1] as? String,
@@ -298,47 +318,30 @@ internal final class DataStoreMigration: StoreBound {
                       let kind = AuxiliaryObject.Kind(rawValue: rawKind) else {
                     throw Error.malformedSQLResult
                 }
-                auxiliaryObjectsByTable[tableName, default: []].append(.init(
-                    table: tableName,
-                    name: name,
-                    kind: kind,
-                    sql: sql
-                ))
+                byTable[tableName, default: []].append(.init(table: tableName, name: name, kind: kind, sql: sql))
             }
-            return (DatabaseSchema(indexes: oldIndexDefinitions, tables: definitions), storedStatements, auxiliaryObjectsByTable)
+            let oldSchema = DatabaseSchema(indexes: oldIndexDefinitions, tables: definitions)
+            return (oldSchema, storedStatements, byTable)
         }
-        logger.debug(
-            "Reconstructed old schema and statements.",
-            metadata: [
-                "definitions.count": "\(oldDatabaseSchema.tables.count)",
-                "statements.count": "\(storedStatements.count)"
-            ]
-        )
+        logger.debug("Reconstructed old schema and statements.", metadata: [
+            "definitions.count": "\(oldDatabaseSchema.tables.count)",
+            "statements.count": "\(storedStatements.count)"
+        ])
         self.oldSchemaSet = .init(
             ormSchema: oldSchema,
             sqlSchema: oldDatabaseSchema,
             sql: storedStatements,
-            constraints: oldSchema.entities.reduce(into: .init(), { partialResult, entity in
-                partialResult[entity.name] = createUniqueColumnGroups(for: entity)
-            }),
+            constraints: oldSchema.entities.reduce(into: .init(), { $0[$1.name] = createUniqueColumnGroups(for: $1) }),
             auxiliaryObjectsByTable: oldAuxiliaryObjectsByTable
         )
         self.newSchemaSet = .init(
             ormSchema: newSchema,
             sqlSchema: newSQLSchema,
-            sql: newSQLSchema.tables.reduce(into: [String: String](), { partialResult, table in
-                partialResult[table.name] = table.sql
-            }),
-            constraints: newSchema.entities.reduce(into: .init(), { partialResult, entity in
-                partialResult[entity.name] = createUniqueColumnGroups(for: entity)
-            }),
+            sql: newSQLSchema.tables.reduce(into: [String: String](), { $0[$1.name] = $1.sql }),
+            constraints: newSchema.entities.reduce(into: .init(), { $0[$1.name] = createUniqueColumnGroups(for: $1) }),
             auxiliaryObjectsByTable: Self.makeAuxiliaryObjects(from: newSQLSchema.indexes)
         )
-        self.analysis = try .init(
-            old: oldSchemaSet,
-            new: newSchemaSet,
-            diff: SchemaDiff(old: oldSchemaSet, new: newSchemaSet)
-        )
+        self.analysis = try .init(old: oldSchemaSet, new: newSchemaSet, diff: .init(old: oldSchemaSet, new: newSchemaSet))
         self.plan = try .init(old: oldSchemaSet, new: newSchemaSet, analysis: self.analysis)
         do {
             try self.apply(custom: custom)
@@ -346,25 +349,20 @@ internal final class DataStoreMigration: StoreBound {
             logger.error("Migration error: \(error)")
             throw error
         }
+        if store.configuration.options.contains(.forceSchemaOverwrite) {
+            try store.setValue(newSchema, forKey: "schema")
+        }
     }
     
-    internal func apply(
-        custom: ((
-            CustomMigrationContext,
-            borrowing DatabaseConnection<Store>
-        ) throws -> Void)? = nil
-    ) throws {
-        logger.debug(
-            "Applying plan",
-            metadata: [
-                "analysis.issues.count": "\(analysis.issues.count)",
-                "analysis.operations.count": "\(analysis.operations.count)",
-                "analysis.style": "\(analysis.style)",
-                "analysis.warnings.count": "\(analysis.warnings.count)",
-                "plan.steps.count": "\(plan.steps.count)",
-                "plan.style": "\(plan.style)"
-            ]
-        )
+    internal func apply(custom: ((CustomMigrationContext, borrowing DatabaseConnection<Store>) throws -> Void)? = nil) throws {
+        logger.debug("Applying plan", metadata: [
+            "analysis.issues.count": "\(analysis.issues.count)",
+            "analysis.operations.count": "\(analysis.operations.count)",
+            "analysis.style": "\(analysis.style)",
+            "analysis.warnings.count": "\(analysis.warnings.count)",
+            "plan.steps.count": "\(plan.steps.count)",
+            "plan.style": "\(plan.style)"
+        ])
         if store.configuration.options.contains(.disableLightweightSchemaMigrations), plan.style == .inferred {
             logger.notice("Skipping lightweight schema migration.")
             return
@@ -375,55 +373,24 @@ internal final class DataStoreMigration: StoreBound {
         switch plan.style {
         case .inferred, .custom:
             try store.queue.writer { connection in
+                try connection.execute("PRAGMA foreign_keys = OFF;")
+                defer { _ = try? connection.execute("PRAGMA foreign_keys = ON;") }
+                try connection.execute("BEGIN TRANSACTION")
                 do {
-                    try connection.execute("PRAGMA foreign_keys = OFF;")
-                    defer { _ = try? connection.execute("PRAGMA foreign_keys = ON;") }
-                    do {
-                        try connection.execute("BEGIN TRANSACTION")
-                        for step in self.plan.steps {
-                            switch step {
-                            case .validate(let validations):
-                                try validate(validations, connection: connection)
-                            case .sql(let statements):
-                                for statement in statements {
-                                    try connection.execute(statement)
-                                }
-                            case .rebuildTable(let rebuild):
-                                try connection.execute(rebuild.createSQL)
-                                if !rebuild.copySQL.isEmpty {
-                                    try connection.execute(rebuild.copySQL)
-                                }
-                                try connection.execute(rebuild.dropSQL)
-                                try connection.execute(rebuild.renameSQL)
-                                for statement in rebuild.auxiliarySQL {
-                                    try connection.execute(statement)
-                                }
-                            case .custom(let customStep):
-                                let context = CustomMigrationContext(
-                                    oldSchema: oldSchemaSet,
-                                    newSchema: newSchemaSet,
-                                    operations: customStep.operations
-                                )
-                                guard let custom else {
-                                    preconditionFailure("Custom migration handler was not provided.")
-                                }
-                                try custom(context, connection)
-                            case .persistSchemaMetadata:
-                                if !store.configuration.options.contains(.disableSchemaMigrations) {
-                                    try store.setValue(newSchemaSet.ormSchema, forKey: "schema", connection: connection)
-                                }
-                            }
-                        }
-                        let foreignKeyRows = try connection.query("PRAGMA foreign_key_check;")
-                        if foreignKeyRows.isEmpty == false {
-                            throw DataStoreError.unsupportedFeature
-                        }
-                        try connection.execute("COMMIT TRANSACTION")
-                    } catch {
-                        logger.error("Applying schema migration failed: \(error)")
-                        try connection.execute("ROLLBACK TRANSACTION")
-                        throw error
+                    for step in self.plan.steps {
+                        try self.execute(step, connection: connection, custom: custom)
                     }
+                    let foreignKeyRows = try connection.query("PRAGMA foreign_key_check;")
+                    if !foreignKeyRows.isEmpty {
+                        throw Error.foreignKeyConstraintFailure(violations: foreignKeyRows.map { row in
+                            row.reduce(into: [String: (any Sendable)?]()) { $0[$1.key] = $1.value }
+                        })
+                    }
+                    try connection.execute("COMMIT TRANSACTION")
+                } catch {
+                    logger.error("Applying schema migration failed: \(error)")
+                    _ = try? connection.execute("ROLLBACK TRANSACTION")
+                    throw error
                 }
             }
         case .compatible:
@@ -431,11 +398,51 @@ internal final class DataStoreMigration: StoreBound {
                 try store.setValue(newSchemaSet.ormSchema, forKey: "schema")
             }
         case .unsupported:
-            throw DataStoreError.unsupportedFeature
+            throw Error.unsupportedAlteration(detail: "Plan classified as unsupported.")
         }
     }
     
-    private func validate(_ validations: [Validation], connection: borrowing DatabaseConnection<Store>) throws {
+    private func execute(
+        _ step: Step,
+        connection: borrowing DatabaseConnection<Store>,
+        custom: ((CustomMigrationContext, borrowing DatabaseConnection<Store>) throws -> Void)?
+    ) throws {
+        switch step {
+        case .validate(let validations):
+            try validate(validations, connection: connection)
+        case .sql(let statements):
+            for statement in statements {
+                try connection.execute(statement)
+            }
+        case .rebuildTable(let rebuild):
+            try connection.execute(rebuild.createSQL)
+            if !rebuild.copySQL.isEmpty {
+                try connection.execute(rebuild.copySQL)
+            }
+            try connection.execute(rebuild.dropSQL)
+            try connection.execute(rebuild.renameSQL)
+            for statement in rebuild.auxiliarySQL {
+                try connection.execute(statement)
+            }
+        case .custom(let customStep):
+            guard let custom else {
+                throw Error.requiresCustomMigration
+            }
+            let context = CustomMigrationContext(
+                oldSchema: oldSchemaSet,
+                newSchema: newSchemaSet,
+                operations: customStep.operations
+            )
+            try custom(context, connection)
+        case .persistSchemaMetadata:
+            try store.setValue(newSchemaSet.ormSchema, forKey: "schema", connection: connection)
+        }
+    }
+    
+    private func validate(
+        _ validations: [Validation],
+        connection: borrowing DatabaseConnection<Store>
+    ) throws {
         for validation in validations {
             switch validation {
             case .uniqueness(let entity, let sourceColumns, let destinationColumns):
@@ -448,19 +455,14 @@ internal final class DataStoreMigration: StoreBound {
                     }
                     partialResult.append(column)
                 }
-                guard existingSourceColumns.isEmpty == false else {
-                    continue
-                }
+                guard !existingSourceColumns.isEmpty else { continue }
                 guard existingSourceColumns.count == sourceColumns.count else {
-                    logger.debug(
-                        "Skipping uniqueness validation because some source columns do not exist yet.",
-                        metadata: [
-                            "entity": "\(entity)",
-                            "source_columns": "\(sourceColumns)",
-                            "destination_columns": "\(destinationColumns)",
-                            "resolved_source_columns": "\(existingSourceColumns)"
-                        ]
-                    )
+                    logger.debug("Skipping uniqueness validation: some source columns do not exist yet.", metadata: [
+                        "entity": "\(entity)",
+                        "source_columns": "\(sourceColumns)",
+                        "destination_columns": "\(destinationColumns)",
+                        "resolved": "\(existingSourceColumns)"
+                    ])
                     continue
                 }
                 let selectColumns = existingSourceColumns.map(quote).joined(separator: ", ")
@@ -473,31 +475,21 @@ internal final class DataStoreMigration: StoreBound {
                     LIMIT 1
                     """
                 )
-                if rows.isEmpty == false {
-                    logger.error(
-                        "Uniqueness validation failed.",
-                        metadata: [
-                            "entity": "\(entity)",
-                            "sourceColumns": "\(existingSourceColumns)",
-                            "destinationColumns": "\(destinationColumns)"
-                        ]
+                if !rows.isEmpty {
+                    throw Error.validationFailed(
+                        validation,
+                        detail: "Duplicate values exist in \(entity).\(existingSourceColumns)."
                     )
-                    throw DataStoreError.unsupportedFeature
                 }
-            case .nonNull(let entity, let sourceColumn, let destinationColumn):
+            case .nonNull(let entity, let sourceColumn, _):
                 guard try tableExists(entity, connection: connection) else {
                     continue
                 }
                 guard try columnExists(sourceColumn, in: entity, connection: connection) else {
-                    logger.error(
-                        "Non-null validation could not resolve source column.",
-                        metadata: [
-                            "entity": "\(entity)",
-                            "sourceColumn": "\(sourceColumn)",
-                            "destinationColumn": "\(destinationColumn)"
-                        ]
+                    throw Error.validationFailed(
+                        validation,
+                        detail: "Source column \(entity).\(sourceColumn) does not exist."
                     )
-                    throw DataStoreError.unsupportedFeature
                 }
                 let rows = try connection.fetch(
                     """
@@ -506,46 +498,32 @@ internal final class DataStoreMigration: StoreBound {
                     LIMIT 1
                     """
                 )
-                if rows.isEmpty == false {
-                    logger.error(
-                        "Non-null validation failed.",
-                        metadata: [
-                            "entity": "\(entity)",
-                            "sourceColumn": "\(sourceColumn)",
-                            "destinationColumn": "\(destinationColumn)"
-                        ]
+                if !rows.isEmpty {
+                    throw Error.validationFailed(
+                        validation,
+                        detail: "Null values exist in \(entity).\(sourceColumn)."
                     )
-                    throw DataStoreError.unsupportedFeature
                 }
             case .foreignKey(let entity, _, _, _):
                 let rows = try connection.fetch("PRAGMA foreign_key_check(\(quote(entity)));")
-                if rows.isEmpty == false {
-                    throw DataStoreError.unsupportedFeature
+                if !rows.isEmpty {
+                    throw Error.validationFailed(
+                        validation,
+                        detail: "Foreign key check on \(entity) reported \(rows.count) row(s)."
+                    )
                 }
             case .tableEmpty(let entity):
-                guard try tableExists(entity, connection: connection) else {
-                    continue
-                }
-                let rows = try connection.fetch(
-                    """
-                    SELECT 1 FROM \(quote(entity))
-                    LIMIT 1
-                    """
-                )
-                if rows.isEmpty == false {
-                    logger.error(
-                        "Table-empty validation failed.",
-                        metadata: ["entity": "\(entity)"]
+                guard try tableExists(entity, connection: connection) else { continue }
+                let rows = try connection.fetch("SELECT 1 FROM \(quote(entity)) LIMIT 1")
+                if !rows.isEmpty {
+                    throw Error.validationFailed(
+                        validation,
+                        detail: "\(entity) contains rows but is required to be empty."
                     )
-                    throw DataStoreError.unsupportedFeature
                 }
             case .columnAllNull(let entity, let column):
-                guard try tableExists(entity, connection: connection) else {
-                    continue
-                }
-                guard try columnExists(column, in: entity, connection: connection) else {
-                    continue
-                }
+                guard try tableExists(entity, connection: connection) else { continue }
+                guard try columnExists(column, in: entity, connection: connection) else { continue }
                 let rows = try connection.fetch(
                     """
                     SELECT 1 FROM \(quote(entity))
@@ -553,23 +531,15 @@ internal final class DataStoreMigration: StoreBound {
                     LIMIT 1
                     """
                 )
-                if rows.isEmpty == false {
-                    logger.error(
-                        "Column-all-null validation failed.",
-                        metadata: [
-                            "entity": "\(entity)",
-                            "column": "\(column)"
-                        ]
+                if !rows.isEmpty {
+                    throw Error.validationFailed(
+                        validation,
+                        detail: "\(entity).\(column) has non-null values."
                     )
-                    throw DataStoreError.unsupportedFeature
                 }
             case .columnUnused(let entity, let column, let isOptional):
-                guard try tableExists(entity, connection: connection) else {
-                    continue
-                }
-                guard try columnExists(column, in: entity, connection: connection) else {
-                    continue
-                }
+                guard try tableExists(entity, connection: connection) else { continue }
+                guard try columnExists(column, in: entity, connection: connection) else { continue }
                 let rows: [[Any?]]
                 if isOptional {
                     rows = try connection.fetch(
@@ -580,26 +550,19 @@ internal final class DataStoreMigration: StoreBound {
                         """
                     )
                 } else {
-                    rows = try connection.fetch(
-                        """
-                        SELECT 1 FROM \(quote(entity))
-                        LIMIT 1
-                        """
+                    rows = try connection.fetch("SELECT 1 FROM \(quote(entity)) LIMIT 1")
+                }
+                if !rows.isEmpty {
+                    throw Error.validationFailed(
+                        validation,
+                        detail: "\(entity).\(column) is in use and cannot be dropped without data loss."
                     )
                 }
-                if rows.isEmpty == false {
-                    logger.error(
-                        "Column-unused validation failed.",
-                        metadata: [
-                            "entity": "\(entity)",
-                            "column": "\(column)",
-                            "optional": "\(isOptional)"
-                        ]
-                    )
-                    throw DataStoreError.unsupportedFeature
-                }
-            case .typeConvertible:
-                throw DataStoreError.unsupportedFeature
+            case .typeConvertible(let entity, let column):
+                throw Error.validationFailed(
+                    validation,
+                    detail: "Type conversion for \(entity).\(column) is not supported."
+                )
             }
         }
     }
@@ -628,19 +591,12 @@ internal final class DataStoreMigration: StoreBound {
         return rows.contains { $0["name"] as? String == columnName }
     }
     
-    private static func makeAuxiliaryObjects(
-        from indexDefinitions: [any IndexDefinition]
-    ) -> [String: [AuxiliaryObject]] {
+    private static func makeAuxiliaryObjects(from indexDefinitions: [any IndexDefinition]) -> [String: [AuxiliaryObject]] {
         var result = [String: [AuxiliaryObject]]()
         for index in indexDefinitions {
             let prefix = index.isUnique ? "CREATE UNIQUE INDEX " : "CREATE INDEX "
             let sql = "\(prefix)\(index.sql);"
-            result[index.table, default: []].append(.init(
-                table: index.table,
-                name: index.name,
-                kind: .index,
-                sql: sql
-            ))
+            result[index.table, default: []].append(.init(table: index.table, name: index.name, kind: .index, sql: sql))
         }
         return result
     }
@@ -866,9 +822,7 @@ internal final class DataStoreMigration: StoreBound {
                     if let definition = new.tablesByName[name] {
                         sql.append("CREATE TABLE \(definition.sql)")
                         sql.append(contentsOf: new.auxiliaryObjectsByTable[name, default: []].map(\.sql))
-                        logger.debug("Plan: Creating table \(name)", metadata: [
-                            "sql": "\(definition.sql)"
-                        ])
+                        logger.debug("Plan: Creating table \(name)", metadata: ["sql": "\(definition.sql)"])
                     } else {
                         logger.warning("Plan: No schema definition for \(name)")
                     }
@@ -886,11 +840,13 @@ internal final class DataStoreMigration: StoreBound {
             }
             validations.append(contentsOf: entityValidations)
             for (entityName, entityOperations) in grouped {
-                validations.append(contentsOf: plannedValidations(
-                    for: entityOperations,
-                    old: old
-                ))
-                if requiresCustom(entityOperations) {
+                validations.append(contentsOf: plannedValidations(for: entityOperations, old: old))
+                if entityOperations.contains(where: {
+                    switch $0 {
+                    case .addRelationship, .dropRelationship, .renameRelationship, .alterRelationship: true
+                    default: false
+                    }
+                }) {
                     customOperations.append(contentsOf: entityOperations)
                     logger.debug(
                         "Plan: Manual intervention required for \(entityName)",
@@ -898,13 +854,36 @@ internal final class DataStoreMigration: StoreBound {
                     )
                     continue
                 }
-                if needsRebuild(entityOperations) {
-                    if let rebuild = try rebuild(
-                        for: entityName,
-                        old: old,
-                        new: new,
-                        operations: entityOperations
-                    ) {
+                if entityOperations.contains(where: {
+                        switch $0 {
+                        case .addAttribute(_, _, let defaultValue, let isOptional):
+                            if isOptional == false, defaultValue == nil { return true }
+                        case .dropAttribute:
+                            return true
+                        case .alterAttributeNullability:
+                            return true
+                        case .alterAttributeType:
+                            return true
+                        case .alterAttributeTransformable:
+                            return true
+                        case .addUniqueConstraint:
+                            return true
+                        case .dropUniqueConstraint:
+                            return true
+                        case .addRelationship:
+                            return true
+                        case .dropRelationship:
+                            return true
+                        case .renameRelationship:
+                            return true
+                        case .alterRelationship:
+                            return true
+                        default:
+                            break
+                        }
+                    return false
+                }) {
+                    if let rebuild = try Self.rebuild(for: entityName, old: old, new: new, operations: entityOperations) {
                         rebuilds.append(rebuild)
                         logger.debug(
                             "Plan: Rebuild needed for \(entityName)",
@@ -919,7 +898,7 @@ internal final class DataStoreMigration: StoreBound {
                     }
                     continue
                 }
-                sql.append(contentsOf: directSQL(for: entityOperations, old: old, new: new))
+                sql.append(contentsOf: Self.directSQL(for: entityOperations, old: old, new: new))
             }
             if !validations.isEmpty {
                 steps.append(.validate(validations))
@@ -930,11 +909,17 @@ internal final class DataStoreMigration: StoreBound {
             }
             if !sql.isEmpty {
                 steps.append(.sql(sql))
-                logger.debug("Plan: Adding steps for SQL", metadata: ["sql": "\(sql)"])
+                logger.debug(
+                    "Plan: Adding steps for SQL",
+                    metadata: ["sql": "\(sql)"]
+                )
             }
             for rebuild in rebuilds {
                 steps.append(.rebuildTable(rebuild))
-                logger.debug("Plan: Adding steps to rebuild", metadata: ["rebuild": "\(rebuild.table)"])
+                logger.debug(
+                    "Plan: Adding steps to rebuild",
+                    metadata: ["rebuild": "\(rebuild.table)"]
+                )
             }
             if !customOperations.isEmpty {
                 steps.append(.custom(.init(operations: customOperations)))
@@ -950,10 +935,7 @@ internal final class DataStoreMigration: StoreBound {
                 "rebuilds": "\(rebuilds.count)",
                 "customOperations": "\(customOperations.count)"
             ])
-            return .init(
-                steps: steps,
-                requiresCustomHandler: customOperations.isEmpty == false
-            )
+            return .init(steps: steps, requiresCustomHandler: customOperations.isEmpty == false)
         }
         
         private static func plannedValidations(
@@ -974,31 +956,25 @@ internal final class DataStoreMigration: StoreBound {
                 switch operation {
                 case .addUniqueConstraint(let entity, let columns):
                     let sourceColumns = columns.map { renamedColumns[$0] ?? $0 }
-                    validations.append(.uniqueness(
-                        entity: entity,
-                        sourceColumns: sourceColumns,
-                        destinationColumns: columns
-                    ))
+                    validations.append(.uniqueness(entity: entity, sourceColumns: sourceColumns, destinationColumns: columns))
                 case .alterAttributeNullability(let entity, let name, let isOptional):
-                    if isOptional == false {
+                    if !isOptional {
                         let sourceColumn = renamedColumns[name] ?? name
-                        validations.append(.nonNull(
-                            entity: entity,
-                            sourceColumn: sourceColumn,
-                            destinationColumn: name
-                        ))
+                        validations.append(.nonNull(entity: entity, sourceColumn: sourceColumn, destinationColumn: name))
                     }
                 case .addAttribute(let entity, _, let defaultValue, let isOptional):
-                    if isOptional == false, defaultValue == nil {
+                    if !isOptional, defaultValue == nil {
                         validations.append(.tableEmpty(entity: entity))
                     }
                 case .dropAttribute(let entity, let name):
-                    let isOptional = oldColumnIsOptional(in: old, entity: entity, column: name)
-                    validations.append(.columnUnused(
-                        entity: entity,
-                        column: name,
-                        isOptional: isOptional
-                    ))
+                    let isOptional = {
+                        guard let table = old.tablesByName[entity],
+                              let existingColumn = table.columns.first(where: { $0.name == name }) else {
+                            return true
+                        }
+                        return existingColumn.isOptional
+                    }()
+                    validations.append(.columnUnused(entity: entity, column: name, isOptional: isOptional))
                 case .alterAttributeType(let entity, let name):
                     let sourceColumn = renamedColumns[name] ?? name
                     validations.append(.columnAllNull(entity: entity, column: sourceColumn))
@@ -1006,12 +982,7 @@ internal final class DataStoreMigration: StoreBound {
                     let sourceColumn = renamedColumns[name] ?? name
                     validations.append(.columnAllNull(entity: entity, column: sourceColumn))
                 case .alterRelationship(let entity, let name):
-                    validations.append(.foreignKey(
-                        entity: entity,
-                        columns: [name],
-                        referencedTable: "",
-                        referencedColumns: []
-                    ))
+                    validations.append(.foreignKey(entity: entity, columns: [name], referencedTable: "", referencedColumns: []))
                 default:
                     break
                 }
@@ -1019,67 +990,12 @@ internal final class DataStoreMigration: StoreBound {
             return validations
         }
         
-        private static func oldColumnIsOptional(in schema: SchemaSet, entity: String, column: String) -> Bool {
-            guard let table = schema.tablesByName[entity],
-                  let existingColumn = table.columns.first(where: { $0.name == column }) else {
-                return true
-            }
-            return existingColumn.isOptional
-        }
-        
-        private static func requiresCustom(_ operations: [Operation]) -> Bool {
-            for operation in operations {
-                switch operation {
-                case .addRelationship: return true
-                case .dropRelationship: return true
-                case .renameRelationship: return true
-                case .alterRelationship: return true
-                default: break
-                }
-            }
-            return false
-        }
-        
-        private static func needsRebuild(_ operations: [Operation]) -> Bool {
-            for operation in operations {
-                switch operation {
-                case .addAttribute(_, _, let defaultValue, let isOptional):
-                    if isOptional == false, defaultValue == nil {
-                        return true
-                    }
-                case .dropAttribute:
-                    return true
-                case .alterAttributeNullability:
-                    return true
-                case .alterAttributeType:
-                    return true
-                case .alterAttributeTransformable:
-                    return true
-                case .addUniqueConstraint:
-                    return true
-                case .dropUniqueConstraint:
-                    return true
-                case .addRelationship:
-                    return true
-                case .dropRelationship:
-                    return true
-                case .renameRelationship:
-                    return true
-                case .alterRelationship:
-                    return true
-                default:
-                    break
-                }
-            }
-            return false
-        }
-        
         private static func directSQL(for operations: [Operation], old: SchemaSet, new: SchemaSet) -> [String] {
             var sql = [String]()
             for operation in operations {
                 switch operation {
                 case .addAttribute(let entity, let name, let defaultValue, let isOptional):
-                    let type = sqlType(for: new, entity: entity, property: name)
+                    let type = new.tablesByName[entity]?.columns.first(where: { $0.name == name })?.type.description ?? "BLOB"
                     if isOptional {
                         sql.append(
                             """
@@ -1102,9 +1018,6 @@ internal final class DataStoreMigration: StoreBound {
                         RENAME COLUMN \(quote(from)) TO \(quote(to))
                         """
                     )
-                case .addUniqueConstraint(_, _):
-                    logger.notice("Adding unique constraint is not supported yet.")
-                    break
                 case .addIndex(_, let index):
                     let prefix = index.isUnique ? "CREATE UNIQUE INDEX IF NOT EXISTS " : "CREATE INDEX IF NOT EXISTS "
                     sql.append("\(prefix)\(index.sql)")
@@ -1117,57 +1030,28 @@ internal final class DataStoreMigration: StoreBound {
             return sql
         }
         
-        private static func resolveIndex(
-            in indexes: [any IndexDefinition],
-            columns: [String],
-            isUnique: Bool
-        ) -> SQLIndex? {
-            indexes.first(where: { index in
-                index.isUnique == isUnique &&
-                index.columns.compactMap(\.name) == columns
-            }) as? SQLIndex
-        }
-        
-        private static func makeUniqueIndex(
-            in schema: SchemaSet,
-            table: String,
-            columns: [String]
-        ) -> SQLIndex {
-            .init(
-                name: uniqueIndexName(in: schema, table: table, columns: columns),
-                table: table,
-                isUnique: true
-            ) {
-                for column in columns {
-                    SQLIndexedColumn(name: column)
-                }
-            }
-        }
-        
-        private static func rebuild(
-            for entityName: String,
-            old: SchemaSet,
-            new: SchemaSet,
-            operations: [Operation]
-        ) throws -> Rebuild? {
+        private static func rebuild(for entityName: String, old: SchemaSet, new: SchemaSet, operations: [Operation]) throws -> Rebuild? {
             guard let newDefinition = new.tablesByName[entityName] else {
                 return nil
             }
             let oldAuxiliaryObjects = old.auxiliaryObjectsByTable[entityName, default: []]
-            if oldAuxiliaryObjects.isEmpty == false,
-               requiresCustomAuxiliaryRewrite(operations) {
+            let requiresCustomAuxiliaryRewrite = oldAuxiliaryObjects.contains(where: { $0.kind == .trigger })
+            && operations.contains(where: {
+                switch $0 {
+                case .renameAttribute, .dropAttribute: true
+                default: false
+                }
+            })
+            if requiresCustomAuxiliaryRewrite {
                 return nil
             }
             let temp = "_migration_\(entityName)"
-            let oldColumns = Self.columnNames(from: old.tablesByName[entityName])
-            let newColumns = Self.columnNames(from: newDefinition)
+            let oldColumns = old.tablesByName[entityName]?.columns.map(\.name) ?? []
+            let newColumns = newDefinition.columns.map(\.name)
             var renamedColumns = [String: String]()
             for operation in operations {
-                switch operation {
-                case .renameAttribute(let entity, let from, let to) where entity == entityName:
+                if case .renameAttribute(let entity, let from, let to) = operation, entity == entityName {
                     renamedColumns[to] = from
-                default:
-                    break
                 }
             }
             var insertColumns = [String]()
@@ -1198,16 +1082,15 @@ internal final class DataStoreMigration: StoreBound {
                 copySQL =
                     """
                     INSERT INTO \(quote(temp)) (\(insertColumns.joined(separator: ", ")))
-                    SELECT \(selectColumns.joined(separator: ", ")) FROM \(quote(entityName))
+                    SELECT \(selectColumns.joined(separator: ", ")) 
+                    FROM \(quote(entityName))
                     """
             }
             let dropSQL = "DROP TABLE \(quote(entityName))"
             let renameSQL = "ALTER TABLE \(quote(temp)) RENAME TO \(quote(entityName))"
-            let auxiliarySQL = Self.rebuiltAuxiliarySQL(
-                table: entityName,
-                new: new,
-                oldAuxiliaryObjects: oldAuxiliaryObjects
-            )
+            let preservedTriggers = oldAuxiliaryObjects.filter { $0.kind == .trigger }.map(\.sql)
+            let newIndexes = new.auxiliaryObjectsByTable[entityName, default: []].filter { $0.kind == .index }.map(\.sql)
+            let auxiliarySQL = preservedTriggers + newIndexes
             return .init(
                 table: entityName,
                 temporaryTable: temp,
@@ -1217,68 +1100,6 @@ internal final class DataStoreMigration: StoreBound {
                 renameSQL: renameSQL,
                 auxiliarySQL: auxiliarySQL
             )
-        }
-        
-        private static func requiresCustomAuxiliaryRewrite(_ operations: [Operation]) -> Bool {
-            for operation in operations {
-                switch operation {
-                case .renameAttribute:
-                    return true
-                case .dropAttribute:
-                    return true
-                default:
-                    break
-                }
-            }
-            return false
-        }
-        
-        private static func rebuiltAuxiliarySQL(
-            table entityName: String,
-            new: SchemaSet,
-            oldAuxiliaryObjects: [AuxiliaryObject]
-        ) -> [String] {
-            let preservedTriggers = oldAuxiliaryObjects
-                .filter { $0.kind == .trigger }
-                .map(\.sql)
-            let newIndexes = new.auxiliaryObjectsByTable[entityName, default: []]
-                .filter { $0.kind == .index }
-                .map(\.sql)
-            return preservedTriggers + newIndexes
-        }
-        
-        private static func uniqueIndexName(
-            in schema: SchemaSet,
-            table: String,
-            columns: [String]
-        ) -> String {
-            if let match = schema.indexesByName[table]?.first(where: { index in
-                index.isUnique &&
-                index.columns.map { $0.expression.sql.trimmingCharacters(in: .whitespacesAndNewlines) } ==
-                columns.map(quote)
-            }) {
-                return match.name
-            }
-            return "\(table)_\(columns.joined(separator: "_"))_Unique"
-        }
-        
-        private static func columnNames(from definition: (any TableDefinition)?) -> [String] {
-            guard let definition else {
-                return []
-            }
-            return definition.columns.map(\.name)
-        }
-        
-        private static func sqlType(
-            for schema: SchemaSet,
-            entity: String,
-            property: String
-        ) -> String {
-            guard let table = schema.tablesByName[entity],
-                  let column = table.columns.first(where: { $0.name == property }) else {
-                return "BLOB"
-            }
-            return column.type.description
         }
     }
 }
@@ -1308,13 +1129,10 @@ extension DataStoreMigration {
             let oldIndexesByTable = old.indexesByName
             let newIndexesByTable = new.indexesByName
             let indexTableNames = Set(oldIndexesByTable.keys).union(newIndexesByTable.keys)
-            logger.info(
-                "Starting schema diff on indexes.",
-                metadata: [
-                    "old_indexes_count": "\(old.sqlSchema.indexes.count)",
-                    "new_indexes_count": "\(new.sqlSchema.indexes.count)"
-                ]
-            )
+            logger.info("Starting schema diff on indexes.", metadata: [
+                "old_indexes_count": "\(old.sqlSchema.indexes.count)",
+                "new_indexes_count": "\(new.sqlSchema.indexes.count)"
+            ])
             // FIXME: Distinguish `INDEX` and `UNIQUE INDEX`.
             for tableName in indexTableNames.sorted() {
                 let oldIndexes = oldIndexesByTable[tableName] ?? []
@@ -1332,9 +1150,7 @@ extension DataStoreMigration {
                     }
                 )
                 for columns in newColumnGroups where !oldColumnGroups.contains(columns) {
-                    guard let index = newIndexes.first(where: { index in
-                        index.columns.compactMap(\.name) == columns
-                    }) as? SQLIndex else {
+                    guard let index = newIndexes.first(where: { $0.columns.compactMap(\.name) == columns }) as? SQLIndex else {
                         logger.error(
                             "Unable to resolve SQL index for added indexed columns.",
                             metadata: ["table": "\(tableName)", "columns": "\(columns)"]
@@ -1345,15 +1161,10 @@ extension DataStoreMigration {
                     logger.info("Found indexed columns to add: \(tableName).\(columns)")
                 }
                 for columns in oldColumnGroups where !newColumnGroups.contains(columns) {
-                    guard let index = oldIndexes.first(where: { index in
-                        index.columns.compactMap(\.name) == columns
-                    }) as? SQLIndex else {
+                    guard let index = oldIndexes.first(where: { $0.columns.compactMap(\.name) == columns }) as? SQLIndex else {
                         logger.error(
                             "Unable to resolve SQL index for removed indexed columns.",
-                            metadata: [
-                                "table": "\(tableName)",
-                                "columns": "\(columns)"
-                            ]
+                            metadata: ["table": "\(tableName)", "columns": "\(columns)"]
                         )
                         continue
                     }
@@ -1361,24 +1172,18 @@ extension DataStoreMigration {
                     logger.info("Found indexed columns to remove: \(tableName).\(columns)")
                 }
             }
-
             let addedTableNames = Set(diff.added.map(\.name))
             let removedTableNames = Set(diff.removed.map(\.name))
             let uniqueTableNames = Set(old.constraints.keys)
                 .union(new.constraints.keys)
                 .subtracting(addedTableNames)
                 .subtracting(removedTableNames)
-
             for tableName in uniqueTableNames.sorted() {
                 let oldUniqueColumnGroups = Set(old.constraints[tableName] ?? [])
                 let newUniqueColumnGroups = Set(new.constraints[tableName] ?? [])
                 for columns in newUniqueColumnGroups where !oldUniqueColumnGroups.contains(columns) {
                     operations.append(.addUniqueConstraint(entity: tableName, columns: columns))
-                    warnings.append(.init(
-                        kind: .dataValidationRequired,
-                        entityName: tableName,
-                        propertyName: nil
-                    ))
+                    warnings.append(.init(kind: .dataValidationRequired, entityName: tableName, propertyName: nil))
                     logger.info("Found UNIQUE columns to add: \(tableName).\(columns)")
                 }
                 for columns in oldUniqueColumnGroups where !newUniqueColumnGroups.contains(columns) {
@@ -1465,24 +1270,18 @@ extension DataStoreMigration {
             let oldProperties = oldEntity.storedProperties
             let newProperties = newEntity.storedProperties
             var consumedOldPropertyNames = Set<String>()
-            logger.info(
-                "Starting entity diff: \(newEntity.name)",
-                metadata: [
-                    "oldProperties.count": "\(oldProperties.count)",
-                    "newProperties.count": "\(newProperties.count)"
-                ]
-            )
+            logger.info("Starting entity diff: \(newEntity.name)", metadata: [
+                "oldProperties.count": "\(oldProperties.count)",
+                "newProperties.count": "\(newProperties.count)"
+            ])
             for newProperty in newProperties {
                 let oldProperty: (any SchemaProperty)?
                 if !newProperty.originalName.isEmpty,
                    let originalProperty = oldEntity.storedPropertiesByName[newProperty.originalName] {
-                    logger.info(
-                        "Found an original property renamed.",
-                        metadata: [
-                            "old": "\(oldEntity.name).\(originalProperty.name)",
-                            "new": "\(newEntity.name).\(newProperty.name)"
-                        ]
-                    )
+                    logger.info("Found an original property renamed.", metadata: [
+                        "old": "\(oldEntity.name).\(originalProperty.name)",
+                        "new": "\(newEntity.name).\(newProperty.name)"
+                    ])
                     oldProperty = originalProperty
                     consumedOldPropertyNames.insert(originalProperty.name)
                 } else if let sameNameProperty = oldEntity.storedPropertiesByName[newProperty.name] {
@@ -1613,13 +1412,10 @@ extension DataStoreMigration {
                     name: newAttribute.name,
                     isOptional: newAttribute.isOptional
                 ))
-                logger.debug(
-                    "Property diff changed optionality/nullability.",
-                    metadata: [
-                        "old": "\(oldAttribute.name) = \(oldAttribute.isOptional)",
-                        "new": "\(newAttribute.name) = \(newAttribute.isOptional)"
-                    ]
-                )
+                logger.debug("Property diff changed optionality/nullability.", metadata: [
+                    "old": "\(oldAttribute.name) = \(oldAttribute.isOptional)",
+                    "new": "\(newAttribute.name) = \(newAttribute.isOptional)"
+                ])
             }
             if oldAttribute.isUnique != newAttribute.isUnique {
                 if newAttribute.isUnique {
@@ -1648,21 +1444,15 @@ extension DataStoreMigration {
                     entityName: entityName,
                     propertyName: newAttribute.name
                 ))
-                logger.debug(
-                    "Property diff changed value type.",
-                    metadata: [
-                        "old": "\(oldAttribute.name) = \(String(reflecting: oldAttribute.valueType)).self",
-                        "new": "\(newAttribute.name) = \(String(reflecting: newAttribute.valueType)).self",
-                        "old_object_identifier": "\(ObjectIdentifier(oldAttribute.valueType))",
-                        "new_object_identifier": "\(ObjectIdentifier(newAttribute.valueType))"
-                    ]
-                )
+                logger.debug("Property diff changed value type.", metadata: [
+                    "old": "\(oldAttribute.name) = \(String(reflecting: oldAttribute.valueType)).self",
+                    "new": "\(newAttribute.name) = \(String(reflecting: newAttribute.valueType)).self",
+                    "old_object_identifier": "\(ObjectIdentifier(oldAttribute.valueType))",
+                    "new_object_identifier": "\(ObjectIdentifier(newAttribute.valueType))"
+                ])
             }
             if oldAttribute.isTransformable != newAttribute.isTransformable {
-                operations.append(.alterAttributeTransformable(
-                    entity: entityName,
-                    name: newAttribute.name
-                ))
+                operations.append(.alterAttributeTransformable(entity: entityName, name: newAttribute.name))
                 issues.append(.init(
                     severity: .custom,
                     kind: .transformableRepresentationChanged,
@@ -1694,8 +1484,7 @@ extension DataStoreMigration {
                 case .ephemeral:
                     break
                 case .externalStorage:
-                    if oldAttribute.options.contains(.externalStorage) !=
-                        newAttribute.options.contains(.externalStorage) {
+                    if oldAttribute.options.contains(.externalStorage) != newAttribute.options.contains(.externalStorage) {
                         issues.append(.init(
                             severity: .custom,
                             kind: .externalStorageSemanticsChanged,
@@ -1787,10 +1576,8 @@ extension DataStoreMigration {
             let allOptions = Set(oldRelationship.options).union(newRelationship.options)
             for option in allOptions {
                 switch option {
-                case .unique:
-                    break
-                default:
-                    break
+                case .unique: break
+                default: break
                 }
             }
         }
@@ -1810,13 +1597,10 @@ extension DataStoreMigration {
                         "Expected old property name to match original name."
                     )
                 }
-                logger.debug(
-                    "Property diff found mismatch in name.",
-                    metadata: [
-                        "oldProperty.name": "\(entityName).\(oldProperty.name)",
-                        "newProperty.name": "\(entityName).\(newProperty.name)"
-                    ]
-                )
+                logger.debug("Property diff found mismatch in name.", metadata: [
+                    "oldProperty.name": "\(entityName).\(oldProperty.name)",
+                    "newProperty.name": "\(entityName).\(newProperty.name)"
+                ])
             }
         }
     }
