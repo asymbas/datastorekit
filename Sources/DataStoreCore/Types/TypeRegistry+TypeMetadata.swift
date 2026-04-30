@@ -82,6 +82,8 @@ extension TypeRegistry {
     }
 }
 
+nonisolated private let _lock: Mutex<Void> = .init(())
+
 extension TypeRegistry {
     /// Registers a new metatype in the registry.
     nonisolated public static func register<T>(_ metatype: T.Type) {
@@ -97,23 +99,25 @@ extension TypeRegistry {
         mangledTypeName: String,
         metadata: (any Sendable)? = nil
     ) {
-        let currentEntries = _getOrInitializeSnapshot().entries
-        var nextEntries = [TypeMetadata]()
-        nextEntries.reserveCapacity(max(currentEntries.count, 1))
-        let targetType = ObjectIdentifier(type)
-        for currentEntry in currentEntries {
-            if ObjectIdentifier(currentEntry.type) == targetType { continue }
-            if currentEntry.typeName == typeName { continue }
-            if currentEntry.mangledTypeName == mangledTypeName { continue }
-            nextEntries.append(currentEntry)
+        _lock.withLock { _ in
+            let currentEntries = _getOrInitializeSnapshot().entries
+            var nextEntries = [TypeMetadata]()
+            nextEntries.reserveCapacity(max(currentEntries.count, 1))
+            let targetType = ObjectIdentifier(type)
+            for currentEntry in currentEntries {
+                if ObjectIdentifier(currentEntry.type) == targetType { continue }
+                if currentEntry.typeName == typeName { continue }
+                if currentEntry.mangledTypeName == mangledTypeName { continue }
+                nextEntries.append(currentEntry)
+            }
+            nextEntries.append(TypeMetadata(
+                type: type,
+                typeName: typeName,
+                mangledTypeName: mangledTypeName,
+                metadata: metadata
+            ))
+            _overwriteSnapshot(consume nextEntries)
         }
-        nextEntries.append(TypeMetadata(
-            type: type,
-            typeName: typeName,
-            mangledTypeName: mangledTypeName,
-            metadata: metadata
-        ))
-        _overwriteSnapshot(consume nextEntries)
     }
     
     /// Registers a type with optional name overrides.
