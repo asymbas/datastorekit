@@ -460,7 +460,6 @@ where Root: SQLPredicateExpression {
                         context.createTableAlias(root.key, reference[0].destinationTable),
                         reference[0].destinationTable
                     )
-                    #if true
                     let sourceTuple = (
                         context.createTableAlias(root.key, reference[0].sourceTable),
                         reference[0].sourceTable,
@@ -471,18 +470,6 @@ where Root: SQLPredicateExpression {
                         reference[1].destinationTable,
                         reference[1].sourceColumn
                     )
-                    #else
-                    let sourceTuple = (
-                        context.createTableAlias(root.key, reference[0].sourceTable),
-                        reference[0].sourceTable,
-                        reference[0].sourceColumn
-                    )
-                    let destinationTuple = (
-                        context.createTableAlias(root.key, reference[1].destinationTable),
-                        reference[1].destinationTable,
-                        reference[1].destinationColumn
-                    )
-                    #endif
                     let sql = intermediaryHandler(joinTuple, sourceTuple, destinationTuple)
                     return root.copy(clause: "(\(sql))", kind: .functionCall)
                 default:

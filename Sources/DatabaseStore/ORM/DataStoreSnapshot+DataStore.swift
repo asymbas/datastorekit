@@ -441,7 +441,8 @@ extension DatabaseSnapshot {
             let relativePath = "\(entityName)/\(attribute.name)/\(primaryKey)"
             let url = externalStorageURL.appending(path: relativePath)
             guard FileManager.default.fileExists(atPath: url.path) else {
-                logger.notice("External storage data could not be found: \(description) = \(url.path)")
+                logger.trace("External storage data could not be found: \(description) = \(url.path)")
+                // TODO: Consider whether nullifying is approriate based on schema.
                 self.values[index] = SQLNull()
                 return
             }

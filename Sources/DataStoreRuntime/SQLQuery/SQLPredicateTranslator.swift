@@ -28,6 +28,7 @@ private typealias ForEach = SQLForEach
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.query")
 
 // TODO: Use cached `TableReference` in `PropertyMetadata` for inheritance.
+// TODO: Use `UNION ALL` to improve inheritance performance.
 // FIXME: Unable to match to key paths due to generic and protocol constraints.
 // FIXME: Unable to match to key paths related to inheritance.
 // FIXME: Unable to access a relationship's attribute to sort without a predicate.

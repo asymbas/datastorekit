@@ -26,13 +26,15 @@ A SwiftData custom data store implementation that supports SQLite as its primary
 
 - SwiftData integration.
 - Provides `DatabaseStore` as SwiftData's SQLite storage backend, configured through `DatabaseConfiguration` in `ModelContainer`.
+- Supports SwiftData inheritance for `PersistentModel` type hierarchies using class table inheritance.
+- Includes `SQLPredicateTranslator` for translating supported SwiftData `#Predicate` expressions into SQL, including key-path resolution, relationship traversal, automatic `JOIN` generation, correlated closure aliases, collection predicates, composite attributes, sort descriptor translation, inheritance-aware type checks and casts, etc.
 - View all supported predicate expressions in `/Sources/DataStoreRuntime/SQLQuery/PredicateExpressions+SQLPredicateExpression.swift`.
 - Extended SwiftData features and conveniences:
   - Use `#Predicate` to query attributes that are Swift collection types, such as `Dictionary`, `Set`, and `Array`.
   - Automatic persistence handling for custom value types that conform to `RawRepresentable` and `OptionSet`.
     - Conforming types will be stored as raw values.
     - Allows you to use typed cases and constants in `#Predicate` (you are still required to capture their value as expected by the macro).
-    - Provide a URL to specify a custom directory for external storage.
+  - Provide a URL to specify a custom directory for external storage.
 - Caches references, snapshots, and queries:
   - References between entities are managed by the `ReferenceGraph` to reduce fetching overhead from the database.
   - Snapshots for the model's backing data are cached by one or more associated `ModelContext` instances.
@@ -65,7 +67,7 @@ Add to a Swift package in `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/asymbas/datastorekit.git", from: "0.0.1")
+    .package(url: "https://github.com/asymbas/datastorekit.git", from: "0.1.0")
 ],
 targets: [
     .target(
@@ -162,6 +164,9 @@ In order to save changes manually while ensuring completeness, you can use the s
   Sort descriptors that traverse a relationship path, such as `\Model.relationship.name`, require a predicate that also references the relationship. DataStoreKit derives relationship traversal information for SQL generation from `#Predicate`. Without a predicate touching that relationship, no `JOIN` is generated, and the sort clause references a table that isn't in the `FROM` clause. The sort is silently omitted.
 - **`SchemaMigrationPlan` cannot be officially supported**<br>
   `ModelContainer` does not allow a `DataStoreConfiguration` to be provided with a `SchemaMigrationPlan`. `DataStore.init(_:migrationPlan:)` still exposes a migration plan parameter, but this cannot be passed through `ModelContainer`.
+- **Unable to add as a dependency in Swift Playground**<br>
+  Swift Playground now supports Swift 6.2 and OS 26, but `package` access control can still cause a compiler error.
+  - **Workaround:** Add `swift-log` as a dependency using the exact `1.7.0` tag.
 
 ## Roadmap
 
@@ -170,8 +175,6 @@ Expect significant changes to the API and documentation.
 Planned:
 - [ ] Comparable feature parity with SwiftData's `DefaultStore`.
 - [ ] Migration for SwiftData and SQLite schema.
-- [ ] CloudKit support.
-- [ ] Inheritance support.
 
 ## FAQ
 
@@ -193,13 +196,8 @@ A: Yes, they should be "plug-and-play".
 **Q: When should `DatabaseQueue` and `DatabaseConnection` be used instead of `ModelContext`?**<br>
 A: You use it if you want to customize the SQL engine's behavior or perform maintenance. You can simply use it to get specific values without having to rebuild a model snapshot. You can have more dynamism when you need it.
 
-**Q: Is inheritance supported and how is it implemented?**<br>
-A: No. It's not fully implemented yet. But the current implementation uses Class Table Inheritance.
-
 ## Changelog
 See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 This project is licensed under the **Apache 2.0** License. See [LICENSE](LICENSE).
-
-2026-03-12

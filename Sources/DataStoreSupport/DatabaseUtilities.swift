@@ -99,13 +99,13 @@ nonisolated package func liftKeyPath<Super, Sub, Value>(
     to _: Sub.Type
 ) -> KeyPath<Sub, Value>? {
     guard Sub.self is Super.Type else { return nil }
-#if false
+    #if false
     return unsafeBitCast(keyPath, to: KeyPath<Sub, Value>.self)
-#else
+    #else
     let raw = Unmanaged.passUnretained(keyPath as AnyObject).toOpaque()
     let test = Unmanaged<KeyPath<Sub, Value>>.fromOpaque(raw).takeUnretainedValue()
     return test
-#endif
+    #endif
 }
 
 nonisolated package func liftKeyPath<Super, Sub, Value>(
@@ -113,13 +113,13 @@ nonisolated package func liftKeyPath<Super, Sub, Value>(
     to _: Sub.Type
 ) -> KeyPath<Sub, Value?>? {
     guard Sub.self is Super.Type else { return nil }
-#if false
+    #if false
     return unsafeBitCast(keyPath, to: KeyPath<Sub, Value?>.self)
-#else
+    #else
     let raw = Unmanaged.passUnretained(keyPath as AnyObject).toOpaque()
     let test = Unmanaged<KeyPath<Sub, Value?>>.fromOpaque(raw).takeUnretainedValue()
     return test
-#endif
+    #endif
 }
 
 nonisolated package func subclasses<T>(of root: T.Type) -> [T.Type] {
