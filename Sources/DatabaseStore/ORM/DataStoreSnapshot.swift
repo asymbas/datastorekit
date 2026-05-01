@@ -948,30 +948,28 @@ extension DatabaseSnapshot {
                 }
             }
         }
-        if !superProperties.isEmpty {
-            guard let storeIdentifier = self.persistentIdentifier.storeIdentifier else {
-                throw Self.Error.identifierNotAssociatedToStore
-            }
-            var newSnapshot = Self(
-                persistentIdentifier: try PersistentIdentifier.identifier(
-                    for: storeIdentifier,
-                    entityName: entity.name,
-                    primaryKey: primaryKey
-                ),
-                type: superType,
-                properties: superProperties,
-                values: superValues
-            )
-            newSnapshot.flags.insert(.isPartial)
-            inheritedTraversalSnapshots.append(newSnapshot)
-            logger.debug(
-                """
-                Created superentity snapshot: \(entity.name):
-                \(newSnapshot.persistentIdentifier)
-                \(newSnapshot.properties) \(newSnapshot.values)
-                """
-            )
+        guard let storeIdentifier = self.persistentIdentifier.storeIdentifier else {
+            throw Self.Error.identifierNotAssociatedToStore
         }
+        var newSnapshot = Self(
+            persistentIdentifier: try PersistentIdentifier.identifier(
+                for: storeIdentifier,
+                entityName: entity.name,
+                primaryKey: primaryKey
+            ),
+            type: superType,
+            properties: superProperties,
+            values: superValues
+        )
+        newSnapshot.flags.insert(.isPartial)
+        inheritedTraversalSnapshots.append(newSnapshot)
+        logger.debug(
+              """
+              Created superentity snapshot: \(entity.name):
+              \(newSnapshot.persistentIdentifier)
+              \(newSnapshot.properties) \(newSnapshot.values)
+              """
+        )
         if let superentity = entity.superentity {
             try recursiveExportChain(
                 on: superentity,
