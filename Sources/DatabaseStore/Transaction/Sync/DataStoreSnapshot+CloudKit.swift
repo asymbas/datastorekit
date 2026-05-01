@@ -202,6 +202,9 @@ extension DatabaseSnapshot {
                         logger.trace("CKRecord attribute value set: \(property) = \(recordValue)")
                     }
                 } else {
+                    if attribute.options.contains(.allowsCloudEncryption) {
+                        record.encryptedValues[property.name] = nil
+                    }
                     record.setObject(nil, forKey: property.name)
                     logger.trace("CKRecord attribute value set: \(property) = nil")
                 }
