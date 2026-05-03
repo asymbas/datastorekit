@@ -13,6 +13,8 @@ internal import SwiftData
 @preconcurrency internal import SwiftData
 #endif
 
+// TODO: Use `SQLPredicateTranslator` as a template.
+// TODO: Accessing date-related key paths should prepare to `ATTACH`/`DETACH` archived transactions.
 internal struct SQLHistoryTranslator<T: HistoryTransaction>: ~Copyable, Sendable {
     nonisolated internal func translate(_ descriptor: HistoryDescriptor<T>) throws -> String {
         return ""
