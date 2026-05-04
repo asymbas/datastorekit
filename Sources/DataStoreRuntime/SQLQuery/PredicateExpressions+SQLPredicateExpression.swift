@@ -139,6 +139,7 @@ where Root: SQLPredicateExpression {
             context.log(.trace, "Key path resolved top-level property: \(property.name) \(description)")
             return resolveStoredProperty(&context, root.copy(property: property))
         case .columnReference:
+            // Recursively received another key path when the root property's inner property is accessed.
             assert(root.entity != nil, "No entity associated to fragment when accessing a property.")
             guard let keyPath = root.keyPath else {
                 return root.invalid("Root did not provide the root key path", description)
@@ -158,7 +159,6 @@ where Root: SQLPredicateExpression {
                 guard let result = context.bridgeAsRelationship(type, from: keyPath, to: self.keyPath) else {
                     return root.invalid("Missing relationship", description)
                 }
-                context.log(.debug, "Resolved bridging relationship: \(description)")
                 let destinationAlias = context.createTableAlias(root.key, relationship.destination)
                 let reference = TableReference(
                     sourceAlias: root.alias,
@@ -744,12 +744,14 @@ where LHS: SQLPredicateExpression,
         let sequence = self.sequence.query(&context)
         let element = self.element.query(&context)
         guard sequence.kind == .columnReference && sequence.property?.metadata != nil else {
+            // Evaluating relationships.
             return sequence.copy(
                 clause: "(\(element.clause) IN \(sequence.clause))",
                 bindings: element.bindings + sequence.bindings,
                 kind: .setMembership
             )
         }
+        // Fall back to evaluating an attribute.
         switch LHS.Output.self {
         case is Array<LHS.Output.Element>.Type:
             break
@@ -796,10 +798,8 @@ where LHS: SQLPredicateExpression,
         defer { context.key = context.path.popLast() }
         let element = self.variable.query(&context)
         context.log(.trace, "Element fragment: \(element.description)")
-        #if DEBUG
         assert(element.type is Element.Type, "Element fragment expected to return \(Element.self).self: \(element.description)")
         assert(element.key == self.variable.key, "Element fragment variable closure is misaligned: \(element.description)")
-        #endif
         let conditional = self.test.query(&context)
         context.log(.trace, "Conditional fragment: \(conditional.description)")
         switch element.type {
@@ -1477,9 +1477,8 @@ where LHS: SQLPredicateExpression, RHS: SQLPredicateExpression {
                 break
             }
             do {
-                // TODO: Apply to `PredicateExpressions.NotEqual`.
                 if let rhsValue: any Sendable = sendable(cast: rhsValue),
-                   let fragment = try context.translateEphemeralEquality(lhs: lhs.copy(), rhsValue: rhsValue) {
+                   let fragment = try translateEphemeralEquality(&context, lhs: lhs.copy(), rhsValue: rhsValue) {
                     _ = rhs.bindings.popLast()
                     return fragment
                 }
@@ -1524,13 +1523,210 @@ where LHS: SQLPredicateExpression, RHS: SQLPredicateExpression {
         default:
             clause = "(\(lhs.clause) = \(rhs.clause))"
         }
+        #if DEBUG
         if let removedValue {
             clause += " /* (removed: \(removedValue)) */"
         }
+        #endif
+        return lhs.copy(clause: clause, bindings: lhs.bindings + rhs.bindings, kind: .binaryOperation)
+    }
+    
+    internal func translateEphemeralEquality<T>(
+        _ context: inout Context<T>,
+        lhs: consuming SQLPredicateFragment,
+        rhsValue: any Sendable
+    ) throws -> SQLPredicateFragment? {
+        guard let editingState = context.editingState,
+              let entity = lhs.entity,
+              let alias = lhs.alias,
+              let property = lhs.property,
+              let attribute = property.metadata as? Schema.Attribute,
+              attribute.options.contains(.ephemeral) else {
+            return nil
+        }
+        let comparisonValue: any Sendable = (rhsValue as? SQLValue)?.base ?? rhsValue
+        assert(comparisonValue is SQLValue == false, "Ephemeral equality should not compare to SQLValue")
+        guard let matchingSnapshots = try context.evaluateEphemeralProperty(.init(
+            editingState: editingState,
+            entityName: entity.name,
+            propertyIndex: property.index,
+            value: comparisonValue
+        )) else {
+            return nil
+        }
+        if matchingSnapshots.isEmpty {
+            return lhs.copy(clause: "FALSE", bindings: [], kind: .setMembership)
+        }
+        let primaryKeys = matchingSnapshots.map { matchingSnapshot in
+            SQLValue.text(matchingSnapshot.key.primaryKey(as: String.self))
+        }
+        let placeholders = Array(repeating: "?", count: primaryKeys.count).joined(separator: ", ")
+        context.hasher.combine(entity.name)
+        context.hasher.combine(property.index)
+        context.hasher.combine(primaryKeys.count)
+        if context.evaluatedSnapshots == nil {
+            context.evaluatedSnapshots = matchingSnapshots
+        } else {
+            context.evaluatedSnapshots?.merge(matchingSnapshots) { _, new in new }
+        }
         return lhs.copy(
-            clause: clause,
-            bindings: lhs.bindings + rhs.bindings,
-            kind: .binaryOperation
+            clause: "(\(quote(alias)).\(quote(pk)) IN (\(placeholders)))",
+            bindings: primaryKeys,
+            kind: .setMembership
+        )
+    }
+}
+
+/// `$0.property != "label"`
+extension PredicateExpressions.NotEqual: SQLPredicateExpression
+where LHS: SQLPredicateExpression, RHS: SQLPredicateExpression {
+    func evaluate<T>(_ context: inout Context<T>) -> SQLPredicateFragment {
+        var lhs = self.lhs.query(&context)
+        var rhs = self.rhs.query(&context)
+        var clause = ""
+        var removedValue: Any?
+        switch (lhs.clause, rhs.clause) {
+        case ("?", "?") where lhs.bindings.count == 1 && rhs.bindings.count == 1:
+            if lhs.type == rhs.type,
+               let lhsValue = lhs.bindings.last as? SQLValue,
+               let rhsValue = rhs.bindings.last as? SQLValue {
+                _ = lhs.bindings.popLast()
+                _ = rhs.bindings.popLast()
+                clause = lhsValue == rhsValue ? "FALSE" : "TRUE"
+            } else {
+                clause = "(? != ?)"
+            }
+        case ("?", let rhsClause) where lhs.bindings.count == 1:
+            guard let lhsValue = lhs.bindings.last else {
+                clause = (rhsClause == "NULL") ? "FALSE" : "TRUE"
+                break
+            }
+            if rhsClause == "NULL" {
+                if let lhsValue = lhsValue as? SQLValue, lhsValue == .null {
+                    clause = "FALSE"
+                    removedValue = lhs.bindings.popLast()
+                } else {
+                    clause = "TRUE"
+                    removedValue = lhs.bindings.popLast()
+                }
+                break
+            }
+            if let lhsValue = lhsValue as? SQLValue, lhs.type is Bool.Type {
+                if lhsValue == SQLValue(any: true) {
+                    clause = "(NOT \(rhsClause))"
+                    removedValue = lhs.bindings.popLast()
+                    break
+                }
+                if lhsValue == SQLValue(any: false) {
+                    clause = "(\(rhsClause))"
+                    removedValue = lhs.bindings.popLast()
+                    break
+                }
+            }
+            clause = "(? != \(rhsClause))"
+        case (let lhsClause, "?") where rhs.bindings.count == 1:
+            guard let rhsValue = rhs.bindings.last else {
+                clause = (lhsClause == "NULL") ? "FALSE" : "TRUE"
+                break
+            }
+            do {
+                if let rhsValue: any Sendable = sendable(cast: rhsValue),
+                   let fragment = try translateEphemeralInequality(&context, lhs: lhs.copy(), rhsValue: rhsValue) {
+                    _ = rhs.bindings.popLast()
+                    return fragment
+                }
+            } catch {
+                return .invalid("Error: \(error)")
+            }
+            if lhsClause == "NULL" {
+                if let rhsValue = rhsValue as? SQLValue, rhsValue == .null {
+                    clause = "FALSE"
+                    removedValue = rhs.bindings.popLast()
+                    break
+                } else {
+                    clause = "TRUE"
+                    removedValue = rhs.bindings.popLast()
+                    break
+                }
+            }
+            if let rhsValue = rhsValue as? SQLValue, rhs.type is Bool.Type {
+                if rhsValue == SQLValue(any: true) {
+                    clause = "(NOT \(lhsClause))"
+                    removedValue = rhs.bindings.popLast()
+                    break
+                }
+                if rhsValue == SQLValue(any: false) {
+                    clause = "(\(lhsClause))"
+                    removedValue = rhs.bindings.popLast()
+                    break
+                }
+            }
+            clause = "(\(lhsClause) != ?)"
+        case ("NULL", "NULL"):
+            clause = "FALSE"
+        case ("NULL", _):
+            clause = "(\(rhs.clause) IS NOT NULL)"
+        case (_, "NULL"):
+            clause = "(\(lhs.clause) IS NOT NULL)"
+        case ("", _):
+            context.log(.warning, "Empty LHS fragment is not allowed.")
+            clause = "(1 = 0)"
+        case (_, ""):
+            context.log(.warning, "Empty RHS fragment is not allowed.")
+            clause = "(1 = 0)"
+        default:
+            clause = "(\(lhs.clause) != \(rhs.clause))"
+        }
+        #if DEBUG
+        if let removedValue {
+            clause += " /* (removed: \(removedValue)) */"
+        }
+        #endif
+        return lhs.copy(clause: clause, bindings: lhs.bindings + rhs.bindings, kind: .binaryOperation)
+    }
+    
+    internal func translateEphemeralInequality<T>(
+        _ context: inout Context<T>,
+        lhs: consuming SQLPredicateFragment,
+        rhsValue: any Sendable
+    ) throws -> SQLPredicateFragment? {
+        guard let editingState = context.editingState,
+              let entity = lhs.entity,
+              let alias = lhs.alias,
+              let property = lhs.property,
+              let attribute = property.metadata as? Schema.Attribute,
+              attribute.options.contains(.ephemeral) else {
+            return nil
+        }
+        let comparisonValue: any Sendable = (rhsValue as? SQLValue)?.base ?? rhsValue
+        assert(comparisonValue is SQLValue == false, "Ephemeral inequality should not compare to SQLValue")
+        guard let matchingSnapshots = try context.evaluateEphemeralProperty(.init(
+            editingState: editingState,
+            entityName: entity.name,
+            propertyIndex: property.index,
+            value: comparisonValue
+        )) else {
+            return nil
+        }
+        if matchingSnapshots.isEmpty {
+            return lhs.copy(clause: "TRUE", bindings: [], kind: .setMembership)
+        }
+        let primaryKeys = matchingSnapshots.map { matchingSnapshot in
+            SQLValue.text(matchingSnapshot.key.primaryKey(as: String.self))
+        }
+        let placeholders = Array(repeating: "?", count: primaryKeys.count).joined(separator: ", ")
+        context.hasher.combine(entity.name)
+        context.hasher.combine(property.index)
+        context.hasher.combine(primaryKeys.count)
+        if context.evaluatedSnapshots == nil {
+            context.evaluatedSnapshots = matchingSnapshots
+        } else {
+            context.evaluatedSnapshots?.merge(matchingSnapshots) { _, new in new }
+        }
+        return lhs.copy(
+            clause: "(\(quote(alias)).\(quote(pk)) NOT IN (\(placeholders)))",
+            bindings: primaryKeys,
+            kind: .setMembership
         )
     }
 }
@@ -1601,6 +1797,7 @@ where LHS: SQLPredicateExpression,
             _ = context.references[elementKey].take()
         default:
             context.log(.debug, "Filter on non-model sequence: \(element.description)")
+            return .invalid
         }
         return sequence.copy(
             clause: condition.clause,
@@ -1678,108 +1875,6 @@ where Wrapped: SQLPredicateExpression {
     func evaluate<T>(_ context: inout Context<T>) -> Fragment {
         let wrapped = self.wrapped.query(&context)
         return wrapped.copy(clause: "(NOT \(wrapped.clause))", kind: .unaryOperation)
-    }
-}
-
-/// `$0.property != "label"`
-extension PredicateExpressions.NotEqual: SQLPredicateExpression
-where LHS: SQLPredicateExpression, RHS: SQLPredicateExpression {
-    func evaluate<T>(_ context: inout Context<T>) -> SQLPredicateFragment {
-        var lhs = self.lhs.query(&context)
-        var rhs = self.rhs.query(&context)
-        var clause = ""
-        var removedValue: Any?
-        switch (lhs.clause, rhs.clause) {
-        case ("?", "?") where lhs.bindings.count == 1 && rhs.bindings.count == 1:
-            if lhs.type == rhs.type,
-               let lhsValue = lhs.bindings.last as? SQLValue,
-               let rhsValue = rhs.bindings.last as? SQLValue {
-                _ = lhs.bindings.popLast()
-                _ = rhs.bindings.popLast()
-                clause = lhsValue == rhsValue ? "FALSE" : "TRUE"
-            } else {
-                clause = "(? != ?)"
-            }
-        case ("?", let rhsClause) where lhs.bindings.count == 1:
-            guard let lhsValue = lhs.bindings.last else {
-                clause = (rhsClause == "NULL") ? "FALSE" : "TRUE"
-                break
-            }
-            if rhsClause == "NULL" {
-                if let lhsValue = lhsValue as? SQLValue, lhsValue == .null {
-                    clause = "FALSE"
-                    removedValue = lhs.bindings.popLast()
-                } else {
-                    clause = "TRUE"
-                    removedValue = lhs.bindings.popLast()
-                }
-                break
-            }
-            if let lhsValue = lhsValue as? SQLValue, lhs.type is Bool.Type {
-                if lhsValue == SQLValue(any: true) {
-                    clause = "(NOT \(rhsClause))"
-                    removedValue = lhs.bindings.popLast()
-                    break
-                }
-                if lhsValue == SQLValue(any: false) {
-                    clause = "(\(rhsClause))"
-                    removedValue = lhs.bindings.popLast()
-                    break
-                }
-            }
-            clause = "(? != \(rhsClause))"
-        case (let lhsClause, "?") where rhs.bindings.count == 1:
-            guard let rhsValue = rhs.bindings.last else {
-                clause = (lhsClause == "NULL") ? "FALSE" : "TRUE"
-                break
-            }
-            if lhsClause == "NULL" {
-                if let rhsValue = rhsValue as? SQLValue, rhsValue == .null {
-                    clause = "FALSE"
-                    removedValue = rhs.bindings.popLast()
-                    break
-                } else {
-                    clause = "TRUE"
-                    removedValue = rhs.bindings.popLast()
-                    break
-                }
-            }
-            if let rhsValue = rhsValue as? SQLValue, rhs.type is Bool.Type {
-                if rhsValue == SQLValue(any: true) {
-                    clause = "(NOT \(lhsClause))"
-                    removedValue = rhs.bindings.popLast()
-                    break
-                }
-                if rhsValue == SQLValue(any: false) {
-                    clause = "(\(lhsClause))"
-                    removedValue = rhs.bindings.popLast()
-                    break
-                }
-            }
-            clause = "(\(lhsClause) != ?)"
-        case ("NULL", "NULL"):
-            clause = "FALSE"
-        case ("NULL", _):
-            clause = "(\(rhs.clause) IS NOT NULL)"
-        case (_, "NULL"):
-            clause = "(\(lhs.clause) IS NOT NULL)"
-        case ("", _):
-            context.log(.warning, "Empty LHS fragment is not allowed.")
-            clause = "(1 = 0)"
-        case (_, ""):
-            context.log(.warning, "Empty RHS fragment is not allowed.")
-            clause = "(1 = 0)"
-        default:
-            clause = "(\(lhs.clause) != \(rhs.clause))"
-        }
-        if let removedValue {
-            clause += " /* (removed: \(removedValue)) */"
-        }
-        return lhs.copy(
-            clause: clause,
-            bindings: lhs.bindings + rhs.bindings,
-            kind: .binaryOperation
-        )
     }
 }
 
@@ -1955,12 +2050,8 @@ where Input: SQLPredicateExpression {
                 kind: .binaryOperation
             )
         }
-        switch input.type {
-        case is Desired.Type:
-            return input.copy(clause: "TRUE", kind: .binaryOperation)
-        default:
-            return input.copy(clause: "FALSE", kind: .binaryOperation)
-        }
+        // Short-circuit in-memory evaluation, because expression 
+        return input.copy(clause: input.type is Desired.Type ? "TRUE" : "FALSE", kind: .binaryOperation)
     }
 }
 

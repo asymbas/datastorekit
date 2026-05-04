@@ -77,6 +77,7 @@ where T: PersistentModel & SendableMetatype {
     nonisolated internal var aliases: [PredicateExpressions.VariableID: String] = [:]
     /// Type names mapped to metatypes.
     nonisolated internal var types: [String: any SendableMetatype.Type] = [:]
+    
     /// Manages dependencies of referenced columns.
     nonisolated internal var references: [PredicateExpressions.VariableID: OrderedSet<TableReference>] = [:]
     /// Adds related entities into the result set due to dependency requirements.
@@ -347,56 +348,6 @@ where T: PersistentModel & SendableMetatype {
         /// Missing in-memory models for ephemeral property evaluations.
         case cannotEvaluateEphemeralProperties
         case invalidTranslation(String)
-    }
-}
-
-extension SQLPredicateTranslator {
-    internal mutating func translateEphemeralEquality(
-        lhs: consuming SQLPredicateFragment,
-        rhsValue: any Sendable
-    ) throws -> SQLPredicateFragment? {
-        guard let editingState = self.editingState,
-              let entity = lhs.entity,
-              let alias = lhs.alias,
-              let property = lhs.property,
-              let attribute = property.metadata as? Schema.Attribute,
-              attribute.options.contains(.ephemeral) else {
-            return nil
-        }
-        let comparisonValue: any Sendable = (rhsValue as? SQLValue)?.base ?? rhsValue
-        assert(comparisonValue is SQLValue == false, "Ephemeral equality should not compare to SQLValue")
-        guard let matchingSnapshots = try evaluateEphemeralProperty(.init(
-            editingState: editingState,
-            entityName: entity.name,
-            propertyIndex: property.index,
-            value: comparisonValue
-        )) else {
-            return nil
-        }
-        if matchingSnapshots.isEmpty {
-            return lhs.copy(
-                clause: "FALSE",
-                bindings: [],
-                kind: .setMembership
-            )
-        }
-        let primaryKeys = matchingSnapshots.map { matchingSnapshot in
-            SQLValue.text(matchingSnapshot.key.primaryKey(as: String.self))
-        }
-        let placeholders = Array(repeating: "?", count: primaryKeys.count).joined(separator: ", ")
-        hasher.combine(entity.name)
-        hasher.combine(property.index)
-        hasher.combine(primaryKeys.count)
-        if evaluatedSnapshots == nil {
-            evaluatedSnapshots = matchingSnapshots
-        } else {
-            evaluatedSnapshots?.merge(matchingSnapshots) { _, new in new }
-        }
-        return lhs.copy(
-            clause: "(\(quote(alias)).\(quote(pk)) IN (\(placeholders)))",
-            bindings: primaryKeys,
-            kind: .setMembership
-        )
     }
 }
 
