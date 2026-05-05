@@ -17,6 +17,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
 
 package final class InheritanceResolver: Sendable {
     nonisolated private let storage: Mutex<[PersistentIdentifier: PersistentIdentifier]> = .init([:])
+    nonisolated private let topology: AtomicLazyReference<TopologyCache> = .init()
     nonisolated private let _manager: AtomicLazyReference<ModelManager> = .init()
     
     nonisolated private var manager: ModelManager {
@@ -33,6 +34,31 @@ package final class InheritanceResolver: Sendable {
     nonisolated internal func bootstrap(manager: ModelManager) {
         let insert = _manager.storeIfNil(manager)
         assert(manager === insert)
+        var absoluteDepth = [String: Int]()
+        for entity in manager.schema.entities {
+            var depth = 0
+            var current = entity.superentity
+            while let entity = current {
+                depth += 1
+                current = entity.superentity
+            }
+            absoluteDepth[entity.name] = depth
+        }
+        var descendants = [String: [Descendant]]()
+        for entity in manager.schema.entities {
+            var list = [Descendant]()
+            var queue = Array(entity.subentities)
+            var index = 0
+            while index < queue.count {
+                let subentity = queue[index]
+                index += 1
+                list.append(Descendant(name: subentity.name, depth: absoluteDepth[subentity.name] ?? 0))
+                queue.append(contentsOf: subentity.subentities)
+            }
+            list.sort { $0.depth > $1.depth }
+            descendants[entity.name] = list
+        }
+        _ = topology.storeIfNil(TopologyCache(descendants: descendants, absoluteDepth: absoluteDepth))
     }
     
     /// Returns the resolved persistent identifier with the concrete entity name.
@@ -57,6 +83,34 @@ package final class InheritanceResolver: Sendable {
     
     nonisolated internal func remove(persistentIdentifier: PersistentIdentifier) {
         storage.withLock { $0[persistentIdentifier] = nil }
+    }
+}
+
+extension InheritanceResolver {
+    nonisolated private struct Descendant: Sendable {
+        nonisolated fileprivate let name: String
+        nonisolated fileprivate let depth: Int
+    }
+    
+    nonisolated private final class TopologyCache: Sendable {
+        nonisolated fileprivate let descendants: [String: [Descendant]]
+        nonisolated fileprivate let absoluteDepth: [String: Int]
+        
+        nonisolated fileprivate init(
+            descendants: [String: [Descendant]],
+            absoluteDepth: [String: Int]
+        ) {
+            self.descendants = descendants
+            self.absoluteDepth = absoluteDepth
+        }
+    }
+    
+    nonisolated private func descendants(ofEntityNamed entityName: String) -> [Descendant] {
+        topology.load()?.descendants[entityName] ?? []
+    }
+    
+    nonisolated private func absoluteDepth(ofEntityNamed entityName: String) -> Int {
+        topology.load()?.absoluteDepth[entityName] ?? 0
     }
 }
 
@@ -102,17 +156,160 @@ extension InheritanceResolver {
         return resolvedPersistentIdentifier
     }
     
-    /// Recursively performs a fetch on each entity's subentities to find the concrete entity.
-    ///
-    /// - Parameters:
-    ///   - persistentIdentifier:
-    ///     The persistent identifier whose primary key is shared across the inheritance chain.
-    ///   - entity:
-    ///     The current entity to inspect.
-    ///   - connection:
-    ///     The database connection to resolve recursively.
-    /// - Returns:
-    ///   The concrete entity.
+    nonisolated internal func fetchConcreteEntity(
+        for persistentIdentifier: PersistentIdentifier,
+        on entity: Schema.Entity,
+        connection: borrowing DatabaseConnection<DatabaseStore>
+    ) throws -> Schema.Entity {
+        let descendants = self.descendants(ofEntityNamed: entity.name)
+        guard !descendants.isEmpty else { return entity }
+        let primaryKey: String = manager.primaryKey(for: persistentIdentifier)
+        var clauses = [String]()
+        clauses.reserveCapacity(descendants.count)
+        for descendant in descendants {
+            clauses.append(
+                """
+                SELECT '\(descendant.name)' AS entity, \(descendant.depth) AS depth
+                WHERE EXISTS (SELECT 1 FROM "\(descendant.name)" WHERE "\(pk)" = ?)
+                """
+            )
+        }
+        let sql = """
+            SELECT entity
+            FROM (\(clauses.joined(separator: "\nUNION ALL ")))
+            ORDER BY depth DESC LIMIT 1
+            """
+        var bindings = [any Sendable]()
+        bindings.reserveCapacity(descendants.count)
+        for _ in 0..<descendants.count {
+            bindings.append(primaryKey)
+        }
+        let rows = try connection.fetch(sql, bindings: bindings)
+        guard let resolvedName = rows.first?.first as? String,
+              let resolvedEntity = manager.schema.entitiesByName[resolvedName] else {
+            return entity
+        }
+        return resolvedEntity
+    }
+}
+
+extension InheritanceResolver {
+    nonisolated internal func prepare(
+        entityName: String,
+        subentities: [Schema.Entity],
+        persistentIdentifiers: [PersistentIdentifier],
+        connection: borrowing DatabaseConnection<DatabaseStore>
+    ) throws {
+        let descendants = subentities.map {
+            Descendant(name: $0.name, depth: absoluteDepth(ofEntityNamed: $0.name))
+        }
+        try prepare(
+            entityName: entityName,
+            descendants: descendants,
+            persistentIdentifiers: persistentIdentifiers,
+            connection: connection
+        )
+    }
+    
+    nonisolated internal func prepare(
+        destination: String,
+        subentities: [Schema.Entity],
+        persistentIdentifiers: [PersistentIdentifier],
+        connection: borrowing DatabaseConnection<DatabaseStore>
+    ) throws {
+        try prepare(
+            entityName: destination,
+            subentities: subentities,
+            persistentIdentifiers: persistentIdentifiers,
+            connection: connection
+        )
+    }
+    
+    nonisolated internal func prepare(
+        entity: Schema.Entity,
+        persistentIdentifiers: [PersistentIdentifier],
+        connection: borrowing DatabaseConnection<DatabaseStore>
+    ) throws {
+        try prepare(
+            entityName: entity.name,
+            descendants: descendants(ofEntityNamed: entity.name),
+            persistentIdentifiers: persistentIdentifiers,
+            connection: connection
+        )
+    }
+    
+    nonisolated private func prepare(
+        entityName: String,
+        descendants: [Descendant],
+        persistentIdentifiers: [PersistentIdentifier],
+        connection: borrowing DatabaseConnection<DatabaseStore>
+    ) throws {
+        guard !persistentIdentifiers.isEmpty, !descendants.isEmpty else { return }
+        guard let storeIdentifier = connection.storeIdentifier else {
+            preconditionFailure()
+        }
+        let requestedIdentifiers = persistentIdentifiers.filter {
+            $0.entityName == entityName && $0.storeIdentifier == storeIdentifier
+        }
+        guard !requestedIdentifiers.isEmpty else { return }
+        let primaryKeysByIdentifier: [PersistentIdentifier: String] = manager.primaryKeys(
+            for: requestedIdentifiers,
+            as: String.self
+        )
+        let identifiersByPrimaryKey = Dictionary(grouping: requestedIdentifiers) {
+            primaryKeysByIdentifier[$0]!
+        }
+        let primaryKeys = Array(identifiersByPrimaryKey.keys)
+        let placeholders = Array(repeating: "?", count: primaryKeys.count).joined(separator: ",")
+        var clauses = [String]()
+        clauses.reserveCapacity(descendants.count)
+        for descendant in descendants {
+            clauses.append(
+                """
+                SELECT "\(pk)" AS pk, '\(descendant.name)' AS entity, \(descendant.depth) AS depth
+                FROM "\(descendant.name)"
+                WHERE "\(pk)" IN (\(placeholders))
+                """
+            )
+        }
+        let sql = """
+            SELECT pk, entity, MAX(depth)
+            FROM (\(clauses.joined(separator: "\nUNION ALL ")))
+            GROUP BY pk
+            """
+        var bindings = [any Sendable]()
+        bindings.reserveCapacity(primaryKeys.count * descendants.count)
+        for _ in 0..<descendants.count {
+            for primaryKey in primaryKeys {
+                bindings.append(primaryKey)
+            }
+        }
+        let rows = try connection.fetch(sql, bindings: bindings)
+        var resolved = [(PersistentIdentifier, PersistentIdentifier)]()
+        for row in rows {
+            guard let resolvedPrimaryKey = row[0] as? String,
+                  let resolvedName = row[1] as? String,
+                  let requestedIdentifiers = identifiersByPrimaryKey[resolvedPrimaryKey] else {
+                continue
+            }
+            let resolvedPersistentIdentifier = try PersistentIdentifier.identifier(
+                for: storeIdentifier,
+                entityName: resolvedName,
+                primaryKey: resolvedPrimaryKey
+            )
+            for requestedPersistentIdentifier in requestedIdentifiers {
+                resolved.append((requestedPersistentIdentifier, resolvedPersistentIdentifier))
+            }
+        }
+        storage.withLock { storage in
+            for (requestedPersistentIdentifier, resolvedPersistentIdentifier) in resolved {
+                storage[requestedPersistentIdentifier] = resolvedPersistentIdentifier
+            }
+        }
+    }
+    
+    #if false
+    
     nonisolated internal func fetchConcreteEntity(
         for persistentIdentifier: PersistentIdentifier,
         on entity: Schema.Entity,
@@ -132,9 +329,7 @@ extension InheritanceResolver {
         }
         return entity
     }
-}
-
-extension InheritanceResolver {
+    
     nonisolated internal func prepare(
         entityName: String,
         subentities: [Schema.Entity],
@@ -188,20 +383,6 @@ extension InheritanceResolver {
                 storage[requestedPersistentIdentifier] = resolvedPersistentIdentifier
             }
         }
-    }
-    
-    nonisolated internal func prepare(
-        destination: String,
-        subentities: [Schema.Entity],
-        persistentIdentifiers: [PersistentIdentifier],
-        connection: borrowing DatabaseConnection<DatabaseStore>
-    ) throws {
-        try prepare(
-            entityName: destination,
-            subentities: subentities,
-            persistentIdentifiers: persistentIdentifiers,
-            connection: connection
-        )
     }
     
     nonisolated internal func prepare(
@@ -260,10 +441,6 @@ extension InheritanceResolver {
         }
     }
     
-    /// Returns a flattened list of all descendant subentities of the given entity.
-    ///
-    /// - Parameter entity: The root entity whose descendant subentities are returned.
-    /// - Returns: A flattened list of all nested subentities.
     nonisolated private func descendants(of entity: Schema.Entity) -> [Schema.Entity] {
         guard !entity.subentities.isEmpty else { return [] }
         var descendants = [Schema.Entity]()
@@ -277,4 +454,6 @@ extension InheritanceResolver {
         }
         return descendants
     }
+    
+    #endif
 }
