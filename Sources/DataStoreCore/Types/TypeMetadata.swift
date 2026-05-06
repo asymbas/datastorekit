@@ -11,21 +11,21 @@
 public struct TypeMetadata: Sendable {
     nonisolated public let type: AnyClass
     nonisolated public let typeName: String
+    nonisolated public let qualifiedTypeName: String
     nonisolated public let mangledTypeName: String
     nonisolated public let metadata: (any Sendable)?
     
     nonisolated internal init(
         type: AnyClass,
         typeName: String,
+        qualifiedTypeName: String,
         mangledTypeName: String,
         metadata: (any Sendable)? = nil
     ) {
         self.type = type
         self.typeName = typeName
+        self.qualifiedTypeName = qualifiedTypeName
         self.mangledTypeName = mangledTypeName
         self.metadata = metadata
     }
 }
-
-
-

@@ -1034,7 +1034,7 @@ extension SQLPredicateTranslator {
         guard let variableID,
               let currentEntity = self.schema.entity(for: type),
               let superentity = currentEntity.superentity,
-              let superType = self.types[superentity.name] ?? Schema.type(for: superentity.name),
+              let superType = self.types[superentity.name] ?? Schema.type(for: superentity),
               let superType = superType as? any PersistentModel.Type else {
             return
         }

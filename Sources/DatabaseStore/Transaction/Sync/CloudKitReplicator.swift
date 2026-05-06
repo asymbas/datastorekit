@@ -196,7 +196,8 @@ extension DatabaseConfiguration.CloudKitDatabase {
         public func sync(transactions: [Store.HistoryType]) async throws {
             try initializeSyncEngineIfNeeded()
             for change in coalesceTransactions(transactions) {
-                guard let type = Schema.type(for: change.changedPersistentIdentifier.entityName) else {
+                guard let entity = self.store.schema.entitiesByName[change.changedPersistentIdentifier.entityName],
+                      let type = Schema.type(for: entity) else {
                     throw SchemaError.entityNotRegistered
                 }
                 let pendingRecordZoneChanges = try makePendingRecordZoneChanges(for: change, as: type)

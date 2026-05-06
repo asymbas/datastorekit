@@ -165,6 +165,24 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                 startingAt: entity,
                 schemaMetadata: &schemaMetadata
             ) else {
+                let superentityName = entity.superentity?.name ?? "nil"
+                let superclass = entity.superentity.flatMap { Schema.type(for: $0) }
+                let superMetadata = superclass.map { reflectPropertyMetadata(for: $0) } ?? []
+                let superClassMetadataNames = superMetadata.map(\.name)
+                let subclassReflected = schemaMetadata[entity]?.map(\.name) ?? []
+                let storedPropertyNames = entity.storedProperties.map(\.name)
+                logger.error(
+                    """
+                    Failed to resolve inherited property:
+                        Looking for: \(property.name)
+                        On entity: \(entity.name)
+                        Superentity: \(superentityName)
+                        Superclass: \(String(describing: superclass))
+                        \(superentityName).schemaMetadata names: \(superClassMetadataNames)
+                        \(entity.name) reflected (subclass) metadata names: \(subclassReflected)
+                        \(entity.name).storedProperties names: \(storedPropertyNames)
+                    """
+                )
                 fatalError("Unable to find inherited property metadata: \(description)")
             }
             isInherited = true
@@ -365,6 +383,7 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                     "subentity": "\(entity.name)",
                     "reference": "\(reference)"
                 ])
+                print("created inheritance reference: \(reference)")
             default:
                 break
             }
@@ -450,7 +469,7 @@ nonisolated private func findInheritedPropertyMetadata(
     if false, #available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *) {
         logger.warning("Inheritance is not fully implemented: \(superentity.name).\(property.name)")
     }
-    guard let superclass = Schema.type(for: superentity.name) else {
+    guard let superclass = Schema.type(for: superentity) else {
         logger.warning(
             "The superentity's associated superclass type is not registered: \(superentity.name)",
             metadata: [
@@ -500,7 +519,7 @@ nonisolated internal func collectKeyPathVariants(
     var variants = [AnyKeyPath & Sendable]()
     func walk(_ currentEntity: Schema.Entity) {
         for subentity in currentEntity.subentities {
-            guard let subType = Schema.type(for: subentity.name) else { continue }
+            guard let subType = Schema.type(for: subentity) else { continue }
             if let variant = castKeyPath(keyPath, to: subType) {
                 variants.append(variant)
             }

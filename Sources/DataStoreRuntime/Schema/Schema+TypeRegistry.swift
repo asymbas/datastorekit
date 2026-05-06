@@ -15,18 +15,46 @@ public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.bootstrap")
 
+// FIXME: Handle name collisions with entity and types that use the same name.
+
 extension Schema {
-    /// Returns the model type associated with the entity's name.
+    /// Returns the model type associated with the given entity by matching the entity's identity against registered metadata.
+    nonisolated public static func type(for entity: Schema.Entity)
+    -> (any (PersistentModel & SendableMetatype).Type)? {
+        for entry in TypeRegistry.getValues(forTypeName: entity.name) {
+            if let storedEntity = entry.metadata as? Schema.Entity, storedEntity === entity {
+                return entry.type as? any (PersistentModel & SendableMetatype).Type
+            }
+        }
+        return nil
+    }
+    
+    @available(*, deprecated, message: "The return value may be ambiguous.")
     nonisolated public static func type(for entityName: String)
     -> (any (PersistentModel & SendableMetatype).Type)? {
         TypeRegistry.getType(forName: entityName) as? any (PersistentModel & SendableMetatype).Type
+    }
+    
+    nonisolated public static func type(for entityName: String, in storeIdentifier: String) throws
+    -> (any (PersistentModel & SendableMetatype).Type)? {
+        guard let store = try DataStoreAggregate.load(for: storeIdentifier),
+              let entity = store.schema.entitiesByName[entityName] else {
+            return nil
+        }
+        return Schema.type(for: entity)
+    }
+    
+    /// Returns the model type associated with the fully qualified type name.
+    nonisolated public static func type(forQualifiedTypeName qualifiedTypeName: String)
+    -> (any (PersistentModel & SendableMetatype).Type)? {
+        TypeRegistry.getType(forQualifiedTypeName: qualifiedTypeName) as? any (PersistentModel & SendableMetatype).Type
     }
 }
 
 extension Schema.Entity {
     /// The model type associated to this entity.
     nonisolated public var type: (any (PersistentModel & SendableMetatype).Type)? {
-        Schema.type(for: self.name) ?? reflectEntity(self)
+        Schema.type(for: self) ?? reflectEntity(self)
     }
 }
 

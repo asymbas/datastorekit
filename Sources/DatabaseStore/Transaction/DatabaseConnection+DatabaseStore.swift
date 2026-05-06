@@ -166,7 +166,8 @@ extension DatabaseConnection where Store == DatabaseStore {
     }
     
     nonisolated public func fetch(for persistentIdentifier: PersistentIdentifier) throws -> Store.Snapshot? {
-        guard let type = Schema.type(for: persistentIdentifier.entityName) else {
+        guard let entity = self.schema?.entitiesByName[persistentIdentifier.entityName],
+              let type = Schema.type(for: entity) else {
             preconditionFailure()
         }
         return try fetch(for: primaryKey(for: persistentIdentifier), as: type)

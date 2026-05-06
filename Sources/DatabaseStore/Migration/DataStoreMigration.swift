@@ -47,7 +47,7 @@ extension DataStoreMigration {
     ) -> [any TableDefinition] {
         let selection = schema
         DataStoreRuntime.makeTableDefinitions(schema: selection) { entity in
-            let registeredType = Schema.type(for: entity.name)
+            let registeredType = Schema.type(for: entity)
             guard let type = registeredType ?? entity.type else {
                 preconditionFailure("The associated type for \(entity.name) entity was not registered.")
             }

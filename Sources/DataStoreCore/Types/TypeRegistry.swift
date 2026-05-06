@@ -12,6 +12,7 @@ public enum TypeRegistry {
     public enum Key {
         case type(AnyClass)
         case typeName(String)
+        case qualifiedTypeName(String)
         case mangledTypeName(String)
     }
 }

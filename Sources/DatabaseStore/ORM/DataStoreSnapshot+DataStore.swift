@@ -140,7 +140,7 @@ extension DatabaseSnapshot {
             entityName: entity.name,
             primaryKey: primaryKey
         ))
-        guard let resolvedType = Schema.type(for: resolvedEntity.name) else {
+        guard let resolvedType = Schema.type(for: resolvedEntity) else {
             preconditionFailure()
         }
         let resolvedPersistentIdentifier = try PersistentIdentifier.identifier(

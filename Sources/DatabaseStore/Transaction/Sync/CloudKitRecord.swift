@@ -50,7 +50,8 @@ nonisolated internal func makeEntityName(fromRecordType recordType: String) -> S
 
 extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     internal func snapshot(for persistentIdentifier: PersistentIdentifier) throws -> Store.Snapshot? {
-        guard let type = Schema.type(for: persistentIdentifier.entityName) else {
+        guard let entity = self.store.schema.entitiesByName[persistentIdentifier.entityName],
+              let type = Schema.type(for: entity) else {
             throw SchemaError.entityNotRegistered
         }
         let primaryKey = self.store.manager.primaryKey(for: persistentIdentifier)
@@ -468,7 +469,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
 extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     internal func intermediaryRecordDescriptor(for recordType: String) -> IntermediaryRecordDescriptor? {
         for entity in store.schema.entities where configuration.delegate.shouldSyncEntity(entity.name) {
-            guard let type = Schema.type(for: entity.name) else {
+            guard let type = Schema.type(for: entity) else {
                 preconditionFailure()
             }
             for property in type.databaseSchemaMetadata {

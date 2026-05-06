@@ -13,6 +13,8 @@ private import Synchronization
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
+// TODO: Phase out type name lookups due to ambiguity issues.
+
 extension TypeRegistry {
     /// All registered `TypeMetadata` entries in the current snapshot (with stable ordering).
     nonisolated public static var entries: [TypeMetadata] {
@@ -28,10 +30,37 @@ extension TypeRegistry {
         return snapshot.entries[index]
     }
     
-    /// Get the `TypeMetadata` entry for the given type name.
+    /// Get the first `TypeMetadata` entry whose simple type name matches.
+    ///
+    /// - Warning:
+    ///   Simple type names are not unique.
+    ///   If multiple entries share the same `typeName`, the first registered match is returned and a warning is logged.
+    ///   Use `getValue(forQualifiedTypeName:)` for unambiguous lookup.
     nonisolated public static func getValue(forTypeName typeName: String) -> TypeMetadata? {
         let snapshot = _getOrInitializeSnapshot()
-        guard let index = snapshot.indexByTypeName[typeName] else {
+        guard let indices = snapshot.indicesByTypeName[typeName], !indices.isEmpty else {
+            return nil
+        }
+        if indices.count > 1 {
+            let qualifiedTypeNames = indices.map { snapshot.entries[$0].qualifiedTypeName }
+            logger.warning("Ambiguous type name '\(typeName)' resolves to: \(qualifiedTypeNames)")
+        }
+        return snapshot.entries[indices[0]]
+    }
+    
+    /// Get all `TypeMetadata` entries whose simple type name matches.
+    nonisolated public static func getValues(forTypeName typeName: String) -> [TypeMetadata] {
+        let snapshot = _getOrInitializeSnapshot()
+        guard let indices = snapshot.indicesByTypeName[typeName] else {
+            return []
+        }
+        return indices.map { snapshot.entries[$0] }
+    }
+    
+    /// Get the `TypeMetadata` entry for the given fully qualified type name.
+    nonisolated public static func getValue(forQualifiedTypeName qualifiedTypeName: String) -> TypeMetadata? {
+        let snapshot = _getOrInitializeSnapshot()
+        guard let index = snapshot.indexByQualifiedTypeName[qualifiedTypeName] else {
             return nil
         }
         return snapshot.entries[index]
@@ -46,13 +75,23 @@ extension TypeRegistry {
         return snapshot.entries[index]
     }
     
-    /// Get the type for the given type name.
+    /// Get the type for the given simple type name (first match, may be ambiguous).
     nonisolated public static func getType(forName typeName: String) -> AnyClass? {
         getValue(forTypeName: typeName)?.type
     }
     
+    /// Get all types matching the given simple type name.
+    nonisolated public static func getTypes(forName typeName: String) -> [AnyClass] {
+        getValues(forTypeName: typeName).map(\.type)
+    }
+    
+    /// Get the type for the given fully qualified type name.
+    nonisolated public static func getType(forQualifiedTypeName qualifiedTypeName: String) -> AnyClass? {
+        getValue(forQualifiedTypeName: qualifiedTypeName)?.type
+    }
+    
     /// Get the type for the given mangled type name.
-    nonisolated public static func getType(forMangledName mangledTypeName: String) -> AnyClass? {
+    nonisolated public static func getType(forMangledTypeName mangledTypeName: String) -> AnyClass? {
         getValue(forMangledTypeName: mangledTypeName)?.type
     }
     
@@ -61,8 +100,13 @@ extension TypeRegistry {
         getValue(forType: type)?.typeName
     }
     
+    /// Get the qualified type name for the given type.
+    nonisolated public static func getQualifiedTypeName(forType type: AnyClass) -> String? {
+        getValue(forType: type)?.qualifiedTypeName
+    }
+    
     /// Get the mangled type name for the given type.
-    nonisolated public static func getMangledName(forType type: AnyClass) -> String? {
+    nonisolated public static func getMangledTypeName(forType type: AnyClass) -> String? {
         getValue(forType: type)?.mangledTypeName
     }
     
@@ -71,13 +115,18 @@ extension TypeRegistry {
         getValue(forType: type)?.metadata
     }
     
-    /// Get the metadata for the given type name.
+    /// Get the metadata for the given simple type name (first match, may be ambiguous).
     nonisolated public static func getMetadata(forName typeName: String) -> (any Sendable)? {
         getValue(forTypeName: typeName)?.metadata
     }
     
+    /// Get the metadata for the given qualified type name.
+    nonisolated public static func getMetadata(forQualifiedTypeName qualifiedTypeName: String) -> (any Sendable)? {
+        getValue(forQualifiedTypeName: qualifiedTypeName)?.metadata
+    }
+    
     /// Get the metadata for the given mangled type name.
-    nonisolated public static func getMetadata(forMangledName mangledTypeName: String) -> (any Sendable)? {
+    nonisolated public static func getMetadata(forMangledTypeName mangledTypeName: String) -> (any Sendable)? {
         getValue(forMangledTypeName: mangledTypeName)?.metadata
     }
 }
@@ -87,18 +136,20 @@ nonisolated private let _lock: Mutex<Void> = .init(())
 extension TypeRegistry {
     /// Registers a new metatype in the registry.
     nonisolated public static func register<T>(_ metatype: T.Type) {
-        let (pointer, length) = _getTypeName(metatype, qualified: true)
-        let string = String(decoding: UnsafeBufferPointer(start: pointer, count: length), as: UTF8.self)
-        Self.register(metatype as! AnyClass, typeName: string, mangledTypeName: _mangledTypeName(T.self)!)
+        let qualifiedTypeName = _qualifiedTypeName(of: T.self as Any.Type)
+        Self.register(metatype as! AnyClass, typeName: qualifiedTypeName, mangledTypeName: _mangledTypeName(T.self)!)
     }
     
-    /// Upserts by type, replacing any existing records that collide by `type`, `typeName`, or `mangledTypeName`.
+    /// Upserts by type, replacing any existing records that collide by `type`,
+    /// `qualifiedTypeName`, or `mangledTypeName`. Multiple entries may share a
+    /// non-unique simple `typeName`.
     nonisolated public static func register(
         _ type: AnyClass,
         typeName: String,
         mangledTypeName: String,
         metadata: (any Sendable)? = nil
     ) {
+        let qualifiedTypeName = _qualifiedTypeName(of: type as Any.Type)
         _lock.withLock { _ in
             let currentEntries = _getOrInitializeSnapshot().entries
             var nextEntries = [TypeMetadata]()
@@ -106,13 +157,14 @@ extension TypeRegistry {
             let targetType = ObjectIdentifier(type)
             for currentEntry in currentEntries {
                 if ObjectIdentifier(currentEntry.type) == targetType { continue }
-                if currentEntry.typeName == typeName { continue }
+                if currentEntry.qualifiedTypeName == qualifiedTypeName { continue }
                 if currentEntry.mangledTypeName == mangledTypeName { continue }
                 nextEntries.append(currentEntry)
             }
             nextEntries.append(TypeMetadata(
                 type: type,
                 typeName: typeName,
+                qualifiedTypeName: qualifiedTypeName,
                 mangledTypeName: mangledTypeName,
                 metadata: metadata
             ))
@@ -128,19 +180,16 @@ extension TypeRegistry {
         metadata: (any Sendable)? = nil
     ) {
         let genericType: Any.Type? = type
-        let type: Any.Type? = genericType ?? (mangledTypeName != nil ? _typeByName(mangledTypeName!) : nil)
-        let typeName = typeName ?? (type != nil ? {
-            let (pointer, length) = _getTypeName(type!, qualified: true)
-            return String(decoding: UnsafeBufferPointer(start: pointer, count: length), as: UTF8.self)
-        }() : nil)
-        let mangledTypeName = mangledTypeName ?? (type != nil ? _mangledTypeName(type!) ?? {
-            let (pointer, length) = _getMangledTypeName(type!)
+        let resolvedType: Any.Type? = genericType ?? (mangledTypeName != nil ? _typeByName(mangledTypeName!) : nil)
+        let resolvedTypeName = typeName ?? (resolvedType != nil ? _qualifiedTypeName(of: resolvedType!) : nil)
+        let resolvedMangledTypeName = mangledTypeName ?? (resolvedType != nil ? _mangledTypeName(resolvedType!) ?? {
+            let (pointer, length) = _getMangledTypeName(resolvedType!)
             return String(decoding: UnsafeBufferPointer(start: pointer, count: length), as: UTF8.self)
         }() : nil)
         Self.register(
-            type as! AnyClass,
-            typeName: typeName ?? String(describing: type!),
-            mangledTypeName: mangledTypeName!,
+            resolvedType as! AnyClass,
+            typeName: resolvedTypeName ?? String(describing: resolvedType!),
+            mangledTypeName: resolvedMangledTypeName!,
             metadata: metadata
         )
     }
@@ -156,6 +205,7 @@ extension TypeRegistry {
             switch key {
             case .type(let value): getValue(forType: value)
             case .typeName(let value): getValue(forTypeName: value)
+            case .qualifiedTypeName(let value): getValue(forQualifiedTypeName: value)
             case .mangledTypeName(let value): getValue(forMangledTypeName: value)
             }
         }() else {
@@ -168,14 +218,19 @@ extension TypeRegistry {
         return true
     }
     
-    /// Removes a type entry by any key. No-op if missing.
+    /// Removes a type entry by any key. No-op if missing. `.typeName` removes the first matching entry when ambiguous.
     nonisolated public static func removeValue(forKey key: Key) {
         let snapshot = _getOrInitializeSnapshot()
         var index: Int?
         switch key {
-        case .type(let value): index = snapshot.indexByType[ObjectIdentifier(value)]
-        case .typeName(let value): index = snapshot.indexByTypeName[value]
-        case .mangledTypeName(let value): index = snapshot.indexByMangledTypeName[value]
+        case .type(let value):
+            index = snapshot.indexByType[ObjectIdentifier(value)]
+        case .typeName(let value):
+            index = snapshot.indicesByTypeName[value]?.first
+        case .qualifiedTypeName(let value):
+            index = snapshot.indexByQualifiedTypeName[value]
+        case .mangledTypeName(let value):
+            index = snapshot.indexByMangledTypeName[value]
         }
         guard let index else { return }
         var nextEntries = snapshot.entries
@@ -187,6 +242,12 @@ extension TypeRegistry {
     nonisolated public static func removeAll() {
         _overwriteSnapshot([])
     }
+}
+
+@inline(__always) nonisolated
+private func _qualifiedTypeName(of type: Any.Type) -> String {
+    let (pointer, length) = _getTypeName(type, qualified: true)
+    return .init(decoding: UnsafeBufferPointer(start: pointer, count: length), as: UTF8.self)
 }
 
 private final class _AssociationKeyToken {}
@@ -225,22 +286,26 @@ private func _getOrInitializeBox() -> _Box {
 private final class _Snapshot: Sendable {
     nonisolated fileprivate let entries: [TypeMetadata]
     nonisolated fileprivate let indexByType: [ObjectIdentifier: Int]
-    nonisolated fileprivate let indexByTypeName: [String: Int]
+    nonisolated fileprivate let indicesByTypeName: [String: [Int]]
+    nonisolated fileprivate let indexByQualifiedTypeName: [String: Int]
     nonisolated fileprivate let indexByMangledTypeName: [String: Int]
     
     nonisolated fileprivate init(_ entries: [TypeMetadata]) {
         self.entries = entries
         let count = entries.count
         var byType = Dictionary<ObjectIdentifier, Int>(minimumCapacity: count)
-        var byTypeName = Dictionary<String, Int>(minimumCapacity: count)
+        var byTypeName = Dictionary<String, [Int]>(minimumCapacity: count)
+        var byQualifiedTypeName = Dictionary<String, Int>(minimumCapacity: count)
         var byMangledTypeName = Dictionary<String, Int>(minimumCapacity: count)
         for (index, entry) in entries.enumerated() {
             byType[ObjectIdentifier(entry.type)] = index
-            byTypeName[entry.typeName] = index
+            byTypeName[entry.typeName, default: []].append(index)
+            byQualifiedTypeName[entry.qualifiedTypeName] = index
             byMangledTypeName[entry.mangledTypeName] = index
         }
         self.indexByType = consume byType
-        self.indexByTypeName = consume byTypeName
+        self.indicesByTypeName = consume byTypeName
+        self.indexByQualifiedTypeName = consume byQualifiedTypeName
         self.indexByMangledTypeName = consume byMangledTypeName
     }
 }

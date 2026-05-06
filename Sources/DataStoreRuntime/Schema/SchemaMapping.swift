@@ -26,8 +26,8 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
         makeTableDefinition(schema: schema, entity: entity, metadata: makeSchemaMetadata)
     }
     for entity in schema.entities {
-        let type = Schema.type(for: entity.name).unsafelyUnwrapped
-        for property in type.databaseSchemaMetadata where property.isManyToManyRelationship {
+        let type = Schema.type(for: entity) ?? reflectEntity(entity)
+        for property in type.unsafelyUnwrapped.databaseSchemaMetadata where property.isManyToManyRelationship {
             makeIntermediaryTableDefinition(schema: schema, entity: entity, property: property)
         }
     }

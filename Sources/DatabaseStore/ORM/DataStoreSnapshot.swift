@@ -94,8 +94,14 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
         values: ContiguousArray<any DataStoreSnapshotValue>,
         flags: Flags = []
     ) {
+        // TODO: Optionally pass an entity if available.
         let entityName = persistentIdentifier.entityName
-        guard let type = type ?? Schema.type(for: entityName) else {
+        guard let type = type ?? {
+            guard let storeIdentifier = persistentIdentifier.storeIdentifier else {
+                return nil
+            }
+            return try? Schema.type(for: entityName, in: storeIdentifier)
+        }() else {
             preconditionFailure("A type was not provided for the entity named \(entityName).")
         }
         self.type = type
@@ -104,6 +110,7 @@ public struct DatabaseSnapshot: DataStoreSnapshot {
         self.properties = !properties.isEmpty ? properties : .init(type.databaseSchemaMetadata)
         self.values = !values.isEmpty ? values : .init(repeating: SQLNull(), count: self.properties.count)
         self.flags = flags
+        // TODO: Temporarily disabled due to how CTI is handled.
 //        assert(
 //            self.properties.count == self.values.count,
 //            "Property and value counts do not match: \(self.properties.count) != \(self.values.count)"
@@ -933,7 +940,7 @@ extension DatabaseSnapshot {
         indices: [Int],
         inheritedTraversalSnapshots: inout [Self]
     ) throws {
-        guard let superType = Schema.type(for: entity.name) else {
+        guard let superType = Schema.type(for: entity) else {
             preconditionFailure(SchemaError.entityNotRegistered.localizedDescription)
         }
         let schemaMetadata = superType.databaseSchemaMetadata
@@ -1729,12 +1736,13 @@ extension DatabaseSnapshot {
     
     nonisolated package static func fetchSuperentities(
         for identifier: PersistentIdentifier,
-        entity: String,
+        entityName: String,
         connection: borrowing DatabaseConnection<Store>,
         chain: inout [PersistentIdentifier]
     ) throws {
         chain.append(identifier)
-        guard let type = Schema.type(for: entity),
+        guard let entity = connection.schema?.entitiesByName[entityName],
+              let type = Schema.type(for: entity),
               let superEntity = class_getSuperclass(type) as? any PersistentModel.Type else {
             return
         }
@@ -1758,7 +1766,7 @@ extension DatabaseSnapshot {
             )
             try Self.fetchSuperentities(
                 for: superentityIdentifier,
-                entity: superentityName,
+                entityName: superentityName,
                 connection: connection,
                 chain: &chain
             )
@@ -1775,7 +1783,7 @@ extension DatabaseSnapshot {
             return (entity, identifier)
         }
         let superentityName = superentity.name
-        guard let superType = Schema.type(for: superentityName) else {
+        guard let superType = Schema.type(for: superentity) else {
             return (entity, identifier)
         }
         guard let row = try connection.query(
