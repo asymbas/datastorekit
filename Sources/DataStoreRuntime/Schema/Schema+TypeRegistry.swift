@@ -9,11 +9,62 @@
 
 private import Logging
 private import ObjectiveC
+package import Foundation
 public import DataStoreCore
 public import DataStoreSupport
 public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.bootstrap")
+
+extension Schema {
+    // Resolves the scenario where a store is copied between packages and the encoded schema references types mangled under a different module identity.
+    
+    /// Filters the `Schema` payload to remove entities whose attribute types cannot be resolved at runtime so they are not decoded.
+    ///
+    /// - Note:
+    ///   SwiftData fatally traps inside `Schema.Attribute.init(from:)`.
+    ///   It's caused when an attribute's mangled `valueTypeName` cannot be resolved at runtime.
+    /// - Parameter data:
+    ///   The raw JSON-encoded `Schema` payload.
+    /// - Returns:
+    ///   The original or filtered payload.
+    nonisolated package static func filteringUnregisteredEntities(in data: Data) throws -> Data {
+        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let originalEntities = root["entities"] as? [[String: Any]] else {
+            return data
+        }
+        func collectValueTypeNames(in value: Any, into candidates: inout Set<String>) {
+            switch value {
+            case let dictionary as [String: Any]:
+                if let valueTypeName = dictionary["valueTypeName"] as? String {
+                    candidates.insert(valueTypeName)
+                }
+                for child in dictionary.values { collectValueTypeNames(in: child, into: &candidates) }
+            case let array as [Any]:
+                for child in array { collectValueTypeNames(in: child, into: &candidates) }
+            default:
+                break
+            }
+        }
+        var didDrop = false
+        let surviving = originalEntities.filter { entity in
+            var valueTypeNames = Set<String>()
+            collectValueTypeNames(in: entity, into: &valueTypeNames)
+            for name in valueTypeNames {
+                if _typeByName(name) != nil { continue }
+                if _typeByName("$s" + name) != nil { continue }
+                let entityName = entity["name"] as? String ?? "<unnamed>"
+                logger.warning("Dropping persisted entity '\(entityName)': value type name '\(name)' does not resolve")
+                didDrop = true
+                return false
+            }
+            return true
+        }
+        guard didDrop else { return data }
+        root["entities"] = surviving
+        return try JSONSerialization.data(withJSONObject: root)
+    }
+}
 
 // FIXME: Handle name collisions with entity and types that use the same name.
 

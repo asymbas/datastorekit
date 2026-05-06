@@ -27,6 +27,25 @@ internal import SwiftData
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.migration")
 
 extension DataStoreMigration {
+    nonisolated private static func loadPersistedSchema(from store: Store) throws -> Schema? {
+        let connection = try store.queue.connection(nil)
+        guard let row = try connection.fetch(
+            """
+            SELECT \(InternalTable.value.rawValue)
+            FROM \(InternalTable.tableName)
+            WHERE \(InternalTable.key.rawValue) = ?
+            LIMIT 1
+            """,
+            bindings: ["schema"]
+        ).first as? [String], let raw = row.first else {
+            return nil
+        }
+        let filteredData = try Schema.filteringUnregisteredEntities(in: Data(raw.utf8))
+        return try JSONDecoder().decode(Schema.self, from: filteredData)
+    }
+}
+
+extension DataStoreMigration {
     nonisolated internal static func load(schema: Schema, shouldRegister: Bool = false) -> DatabaseSchema {
         if shouldRegister {
             TypeRegistry.bootstrap(schema: schema)
@@ -179,7 +198,7 @@ internal final class DataStoreMigration: StoreBound {
         store.configuration.options.contains(.disableLightweightSchemaMigrations) == false
         let oldSchema: Schema?
         do {
-            oldSchema = try store.getValue(forKey: "schema", as: Schema.self)
+            oldSchema = try Self.loadPersistedSchema(from: store) // try store.getValue(forKey: "schema", as: Schema.self)
         } catch {
             logger.warning(
                 "Failed to decode persisted SwiftData.Schema. Treating store as fresh.",
