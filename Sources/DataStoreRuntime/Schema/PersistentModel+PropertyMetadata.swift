@@ -15,6 +15,8 @@ public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.bootstrap")
 
+// FIXME: Key path variants appear to show a race condition in application. Disabling the option reduced crashing.
+
 extension PersistentModel where Self: AnyObject {
     nonisolated public static var databaseSchemaMetadata: [PropertyMetadata] {
         _getOrInitializeSnapshot(for: Self.self, make: { [] }).entries
@@ -87,12 +89,20 @@ extension PersistentModel where Self: AnyObject {
         for property: PropertyMetadata
     ) {
         let `class`: AnyClass = Self.self
+        #if false
         let oldSnapshot = _getOrInitializeSnapshot(for: `class`) { [] }
         let canonical = property.keyPath
         let newSnapshot = oldSnapshot.addingKeyPathVariant(variant, canonical: canonical)
         guard newSnapshot !== oldSnapshot else { return }
         _publishSnapshot(newSnapshot, in: `class`)
-        logger.debug("Added a key path alias: \(Self.self).\(property.name) -> \(canonical) = \(variant)")
+        #endif
+        let canonical = property.keyPath
+        let didChange = _updateSnapshot(for: `class`) { current in
+            current.addingKeyPathVariant(variant, canonical: canonical)
+        }
+        if didChange {
+            logger.debug("Added a key path alias: \(Self.self).\(property.name) -> \(canonical) = \(variant)")
+        }
     }
     
     nonisolated package static func addKeyPathVariantToPropertyMetadata(
@@ -102,10 +112,17 @@ extension PersistentModel where Self: AnyObject {
         let `class`: AnyClass = Self.self
         let oldSnapshot = _getOrInitializeSnapshot(for: `class`) { [] }
         let canonical = canonicalKeyPath
+        #if false
         let newSnapshot = oldSnapshot.addingKeyPathVariant(variant, canonical: canonical)
         guard newSnapshot !== oldSnapshot else { return }
         _publishSnapshot(newSnapshot, in: `class`)
-        logger.trace("Added a key path alias: \(Self.self) -> \(canonical) = \(variant)")
+        #endif
+        let didChange = _updateSnapshot(for: `class`) { current in
+            current.addingKeyPathVariant(variant, canonical: canonical)
+        }
+        if didChange {
+            logger.trace("Added a key path alias: \(Self.self) -> \(canonical) = \(variant)")
+        }
     }
     
     nonisolated package static func appendPropertyMetadata(_ property: PropertyMetadata) {
@@ -132,8 +149,7 @@ extension PersistentModel where Self: AnyObject {
             .withUnsafeBufferPointer(body)
     }
     
-    nonisolated internal static func _schemaMetadata(for keyPath: AnyKeyPath & Sendable)
-    -> PropertyMetadata? {
+    nonisolated internal static func _schemaMetadata(for keyPath: AnyKeyPath & Sendable) -> PropertyMetadata? {
         let targetKeyPath = ObjectIdentifier(keyPath)
         return _withPropertyMetadata { buffer in
             guard let baseAddress = buffer.baseAddress else {
@@ -172,10 +188,23 @@ private func _makeKeyPointer() -> UnsafeRawPointer {
     return UnsafeRawPointer(bitPattern: published).unsafelyUnwrapped
 }
 
+#if false
 private final class _Box: Sendable {
     nonisolated fileprivate let reference: AtomicLazyReference<_Snapshot> = .init()
 }
+#endif
 
+private final class _Box: Sendable {
+    nonisolated fileprivate let snapshot: Mutex<_Snapshot>
+    
+    nonisolated fileprivate init(_ initial: _Snapshot) {
+        self.snapshot = .init(initial)
+    }
+}
+
+nonisolated private let _lock: Mutex<Void> = .init(())
+
+#if false
 @inline(__always) nonisolated
 private func _getOrInitializeBox(for `class`: AnyClass) -> _Box {
     let key = _makeKeyPointer()
@@ -183,6 +212,19 @@ private func _getOrInitializeBox(for `class`: AnyClass) -> _Box {
     let newBox = _Box()
     objc_setAssociatedObject(`class`, key, newBox, .OBJC_ASSOCIATION_RETAIN)
     return (objc_getAssociatedObject(`class`, key) as? _Box) ?? newBox
+}
+#endif
+
+@inline(__always) nonisolated
+private func _getOrInitializeBox(for `class`: AnyClass, make: () -> [PropertyMetadata]) -> _Box {
+    let key = _makeKeyPointer()
+    if let box = objc_getAssociatedObject(`class`, key) as? _Box { return box }
+    return _lock.withLock { _ in
+        if let box = objc_getAssociatedObject(`class`, key) as? _Box { return box }
+        let newBox = _Box(_Snapshot(make()))
+        objc_setAssociatedObject(`class`, key, newBox, .OBJC_ASSOCIATION_RETAIN)
+        return newBox
+    }
 }
 
 private final class _Snapshot: Sendable {
@@ -232,19 +274,37 @@ extension _Snapshot {
 }
 
 @inline(__always) nonisolated
-private func _getOrInitializeSnapshot(for `class`: AnyClass, make: () -> [PropertyMetadata])
--> _Snapshot {
+private func _getOrInitializeSnapshot(for `class`: AnyClass, make: () -> [PropertyMetadata]) -> _Snapshot {
+    #if false
     let box = _getOrInitializeBox(for: `class`)
     if let snapshot = box.reference.load() { return snapshot }
     return box.reference.storeIfNil(_Snapshot(make()))
+    #endif
+    let box = _getOrInitializeBox(for: `class`, make: make)
+    return box.snapshot.withLock { $0 }
+}
+
+@discardableResult @inline(__always) nonisolated
+private func _updateSnapshot(for `class`: AnyClass, _ body: (_Snapshot) -> _Snapshot) -> Bool {
+    let box = _getOrInitializeBox(for: `class`, make: { [] })
+    return box.snapshot.withLock { snapshot in
+        let updated = body(snapshot)
+        if updated === snapshot { return false }
+        snapshot = updated
+        return true
+    }
 }
 
 @inline(__always) nonisolated
 private func _overwriteSnapshot(_ entries: [PropertyMetadata], in `class`: AnyClass) {
     let newSnapshot = _Snapshot(consume entries)
+    #if false
     _publishSnapshot(newSnapshot, in: `class`)
+    #endif
+    _ = _updateSnapshot(for: `class`) { _ in newSnapshot }
 }
 
+#if false
 @inline(__always) nonisolated
 private func _publishSnapshot(_ snapshot: _Snapshot, in `class`: AnyClass) {
     let key = _makeKeyPointer()
@@ -252,8 +312,15 @@ private func _publishSnapshot(_ snapshot: _Snapshot, in `class`: AnyClass) {
     _ = newBox.reference.storeIfNil(consume snapshot)
     objc_setAssociatedObject(`class`, key, newBox, .OBJC_ASSOCIATION_RETAIN)
 }
+#endif
 
 @inline(__always) nonisolated
 private func _clearSnapshot(for `class`: AnyClass) {
+    #if false
     objc_setAssociatedObject(`class`, _makeKeyPointer(), nil, .OBJC_ASSOCIATION_RETAIN)
+    #endif
+    let box = _getOrInitializeBox(for: `class`, make: { [] })
+    box.snapshot.withLock { snapshot in
+        snapshot = _Snapshot([])
+    }
 }
