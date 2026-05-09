@@ -22,6 +22,66 @@ extension PersistentIdentifier {
     nonisolated public func primaryKey<T>(as type: T.Type = String.self) -> T
     where T: LosslessStringConvertible {
         do {
+            let data = try JSONEncoder().encode(self)
+            let envelope = try JSONDecoder().decode(_PrimaryKeyEnvelope.self, from: data)
+            let rawValue = envelope.implementation.primaryKey.stringValue
+            if let typed = rawValue as? T { return typed }
+            if let value = T(rawValue) { return value }
+            fatalError("Unable to convert primary key '\(rawValue)' to \(T.self) for \(self)")
+        } catch {
+            fatalError("Unable to extract primary key from PersistentIdentifier: \(error)")
+        }
+    }
+    
+    private struct _PrimaryKeyEnvelope: Decodable {
+        nonisolated fileprivate let implementation: _PrimaryKeyImplementation
+    }
+    
+    private struct _PrimaryKeyImplementation: Decodable {
+        nonisolated fileprivate let primaryKey: _PrimaryKeyValue
+    }
+    
+    private enum _PrimaryKeyValue: Decodable {
+        case string(String)
+        case int(Int64)
+        case uint(UInt64)
+        case double(Double)
+        
+        nonisolated fileprivate var stringValue: String {
+            switch self {
+            case .string(let value): value
+            case .int(let value): .init(value)
+            case .uint(let value): .init(value)
+            case .double(let value): .init(value)
+            }
+        }
+        
+        nonisolated fileprivate init(from decoder: any Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let value = try? container.decode(String.self) {
+                self = .string(value)
+            } else if let value = try? container.decode(Int64.self) {
+                self = .int(value)
+            } else if let value = try? container.decode(UInt64.self) {
+                self = .uint(value)
+            } else if let value = try? container.decode(Double.self) {
+                self = .double(value)
+            } else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Unsupported primary key type for PersistentIdentifier"
+                )
+            }
+        }
+    }
+}
+
+#if false
+
+extension PersistentIdentifier {
+    nonisolated public func primaryKey<T>(as type: T.Type = String.self) -> T
+    where T: LosslessStringConvertible {
+        do {
             let decoded = try JSONSerialization.jsonObject(
                 with: JSONEncoder().encode(self),
                 options: []
@@ -64,3 +124,5 @@ extension PersistentIdentifier {
         nonisolated public let uriRepresentation: String
     }
 }
+
+#endif
