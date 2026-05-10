@@ -71,10 +71,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                             .references(
                                 relationship.destination,
                                 discriminator.name,
-                                onDelete: referenceDeleteAction(
-                                    for: relationship,
-                                    inverse: inverseRelationship
-                                ),
+                                onDelete: deleteAction(for: relationship, inverse: inverseRelationship).referentialAction,
                                 onUpdate: nil,
                                 deferrable: .deferrable.initiallyDeferred
                             )
@@ -176,14 +173,14 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                     reference[0].destinationColumn,
                     references: reference[0].sourceTable,
                     at: pk,
-                    onDelete: joinTableDeleteAction(from: relationship.deleteRule),
+                    onDelete: deleteAction(from: relationship.deleteRule).referentialAction,
                     deferrable: .deferrable.initiallyDeferred
                 ),
                 .foreignKey(
                     reference[1].sourceColumn,
                     references: reference[1].destinationTable,
                     at: pk,
-                    onDelete: joinTableDeleteAction(from: inverseRelationship.deleteRule),
+                    onDelete: deleteAction(from: inverseRelationship.deleteRule).referentialAction,
                     deferrable: .deferrable.initiallyDeferred
                 )
             ]
@@ -230,5 +227,58 @@ nonisolated internal func validatePropertyOptions(
         default:
             logger.notice("Unknown attribute option: \(option)")
         }
+    }
+}
+
+// MARK: Delete Rule Mapping
+
+// TODO: Add implicit delete rules based on implicitly annotated `@Relationship`.
+
+extension Schema.Relationship.DeleteRule {
+    nonisolated package var referentialAction: ReferentialAction {
+        switch self {
+        case .nullify: .setNull
+        case .cascade: .cascade
+        case .deny: .restrict
+        case .noAction: .noAction
+        @unknown default:
+            fatalError(DataStoreError.unsupportedFeature.localizedDescription)
+        }
+    }
+}
+
+// Join table delete
+nonisolated package func deleteAction(from deleteRule: Schema.Relationship.DeleteRule)
+-> Schema.Relationship.DeleteRule {
+    switch deleteRule {
+    case .deny: .deny
+    case .noAction: .noAction
+    case .nullify, .cascade: .cascade
+    @unknown default:
+        fatalError(DataStoreError.unsupportedFeature.localizedDescription)
+    }
+}
+
+nonisolated package func deleteAction(
+    for relationship: Schema.Relationship,
+    inverse inverseRelationship: Schema.Relationship?
+) -> Schema.Relationship.DeleteRule {
+    switch inverseRelationship?.deleteRule ?? relationship.deleteRule {
+    case .cascade:
+        if relationship.isToOneRelationship
+            && inverseRelationship?.isToOneRelationship ?? false
+            && relationship.isOptional {
+            return .nullify
+        } else {
+            return .cascade
+        }
+    case .nullify:
+        return relationship.isOptional ? .nullify : .noAction
+    case .deny:
+        return .deny
+    case .noAction:
+        return .noAction
+    @unknown default:
+        fatalError(DataStoreError.unsupportedFeature.localizedDescription)
     }
 }
