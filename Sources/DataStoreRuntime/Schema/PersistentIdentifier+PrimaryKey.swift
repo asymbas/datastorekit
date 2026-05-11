@@ -8,9 +8,10 @@
 //
 
 private import Foundation
-public import SwiftData
+private import Synchronization
+internal import SwiftData
 
-#if DEBUG
+#if false
 extension PersistentIdentifier: @retroactive CustomStringConvertible {
     nonisolated public var description: String {
         "\(storeIdentifier ?? "nil") \(entityName) \(primaryKey())"
@@ -20,18 +21,22 @@ extension PersistentIdentifier: @retroactive CustomStringConvertible {
 
 // TODO: Only call this method as a fallback.
 
+nonisolated private let encoder: Mutex<JSONEncoder> = .init(.init())
+
 extension PersistentIdentifier {
     nonisolated package func primaryKey<T>(as type: T.Type = String.self) -> T
-    where T: LosslessStringConvertible {
-        do {
-            let data = try JSONEncoder().encode(self)
-            let envelope = try JSONDecoder().decode(_PrimaryKeyEnvelope.self, from: data)
-            let rawValue = envelope.implementation.primaryKey.stringValue
-            if let typed = rawValue as? T { return typed }
-            if let value = T(rawValue) { return value }
-            fatalError("Unable to convert primary key '\(rawValue)' to \(T.self) for \(self)")
-        } catch {
-            fatalError("Unable to extract primary key from PersistentIdentifier: \(error)")
+    where T: LosslessStringConvertible & Sendable {
+        encoder.withLock { encoder in
+            do {
+                let data = try encoder.encode(self)
+                let envelope = try JSONDecoder().decode(_PrimaryKeyEnvelope.self, from: data)
+                let rawValue = envelope.implementation.primaryKey.stringValue
+                if let typed = rawValue as? T { return typed }
+                if let value = T(rawValue) { return value }
+                fatalError("Unable to convert primary key '\(rawValue)' to \(T.self) for \(self)")
+            } catch {
+                fatalError("Unable to extract primary key from PersistentIdentifier: \(error)")
+            }
         }
     }
     
