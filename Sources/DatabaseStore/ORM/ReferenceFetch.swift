@@ -119,14 +119,11 @@ nonisolated package func fetchExternalReferences(
     }
     let description = "\(persistentIdentifier.entityName).\(property)"
     if let graph = connection.context?.graph,
-       let cachedTargets = graph.cachedReferencesIfPresent(
-        for: persistentIdentifier,
-        at: property.name
-       ) {
+       let cachedTargets = graph.cachedReferencesIfPresent(for: persistentIdentifier, at: property.name) {
         logger.debug("Using cached references: \(description) -> \(cachedTargets)")
         return try ensureRelationshipValue(cachedTargets, in: relationship)
     }
-    let primaryKey = persistentIdentifier.primaryKey()
+    let primaryKey = connection.primaryKey(for: persistentIdentifier)
     let relationshipAlias = "relationship"
     let results: [[String: any Sendable]]
     switch property.reference {
@@ -167,10 +164,7 @@ nonisolated package func fetchExternalReferences(
     if let graph = connection.context?.graph {
         graph.setReferences(for: persistentIdentifier, at: property.name, to: relatedIdentifiers)
     }
-    logger.trace(
-        "Fetched external references: \(description)",
-        metadata: ["results": "\(relatedIdentifiers)"]
-    )
+    logger.trace("Fetched external references: \(description)", metadata: ["results": "\(relatedIdentifiers)"])
     return try ensureRelationshipValue(relatedIdentifiers, in: relationship)
 }
 
@@ -188,7 +182,7 @@ nonisolated package func fetchExternalRows(
     guard let type = type as? any PersistentModel.Type else {
         preconditionFailure("The relationship value type should be a PersistentModel.Type: \(property)")
     }
-    let primaryKey = persistentIdentifier.primaryKey()
+    let primaryKey = connection.primaryKey(for: persistentIdentifier)
     let destinationColumns = type.databaseSchemaMetadata.columns
     let destinationTable = relationship.destination
     let results: [[any Sendable]]

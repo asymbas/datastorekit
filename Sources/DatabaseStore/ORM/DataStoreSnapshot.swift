@@ -821,6 +821,7 @@ extension DatabaseSnapshot {
             self.persistentIdentifier.entityName == persistentIdentifier.entityName,
             "The entity must be stable during remapping: \(self.persistentIdentifier) -> \(persistentIdentifier)"
         )
+        let isIdentical = self.persistentIdentifier == persistentIdentifier
         #if DEBUG
         let useDetailedLogging = DataStoreDebugging.mode == .trace
         var count = 0
@@ -829,7 +830,7 @@ extension DatabaseSnapshot {
             let propertyName: String
             let (oldIdentifier, newIdentifier): (PersistentIdentifier, PersistentIdentifier)
         }
-        if useDetailedLogging, self.persistentIdentifier != persistentIdentifier {
+        if useDetailedLogging, !isIdentical {
             logger.debug("Snapshot remapped: \(self.persistentIdentifier) -> \(persistentIdentifier)")
         }
         #endif
@@ -873,7 +874,7 @@ extension DatabaseSnapshot {
         #endif
         return .init(
             persistentIdentifier: persistentIdentifier,
-            primaryKey: persistentIdentifier.primaryKey(),
+            primaryKey: isIdentical ? primaryKey : persistentIdentifier.primaryKey(),
             type: type,
             properties: properties,
             values: values,
@@ -1104,7 +1105,7 @@ extension DatabaseSnapshot {
         switch (oldValue, values[property.index]) {
         case let (oldIdentifiers as [PersistentIdentifier], newIdentifiers as [PersistentIdentifier]):
             try checkRelationshipCountConstraint(newIdentifiers)
-            let oldIdentifiers = try resolveInheritedIdentifiers(oldIdentifiers, relativeTo: newIdentifiers)
+            let oldIdentifiers = try connection.resolveInheritedIdentifiers(oldIdentifiers, relativeTo: newIdentifiers)
             guard oldIdentifiers != newIdentifiers else { break }
             if shouldAddOnly {
                 let inserted = Array(Set(newIdentifiers).subtracting(Set(oldIdentifiers)))
@@ -1327,42 +1328,6 @@ extension DatabaseSnapshot {
             }
         }
         return (unlinkedIdentifiers, cascadedIdentifiers)
-    }
-    
-    // TODO: Check if `PersistentIdentifier.id` differs with inheritance.
-    
-    nonisolated private func resolveInheritedIdentifiers(
-        _ oldIdentifiers: [PersistentIdentifier],
-        relativeTo newIdentifiers: [PersistentIdentifier]
-    ) throws -> [PersistentIdentifier] {
-        guard !oldIdentifiers.isEmpty, !newIdentifiers.isEmpty else {
-            return oldIdentifiers
-        }
-        let newEntityNameByPrimaryKey = Dictionary(
-            try newIdentifiers.compactMap { identifier -> (String, String)? in
-                guard identifier.storeIdentifier != nil else {
-                    throw Error.identifierNotAssociatedToStore
-                }
-                return (identifier.primaryKey(), identifier.entityName)
-            },
-            uniquingKeysWith: { first, _ in first }
-        )
-        guard !newEntityNameByPrimaryKey.isEmpty else {
-            return oldIdentifiers
-        }
-        return try oldIdentifiers.map { oldIdentifier in
-            let primaryKey = oldIdentifier.primaryKey()
-            guard let resolvedEntityName = newEntityNameByPrimaryKey[primaryKey],
-                  resolvedEntityName != oldIdentifier.entityName,
-                  let storeIdentifier = oldIdentifier.storeIdentifier else {
-                return oldIdentifier
-            }
-            return try PersistentIdentifier.identifier(
-                for: storeIdentifier,
-                entityName: resolvedEntityName,
-                primaryKey: primaryKey
-            )
-        }
     }
     
     nonisolated internal func linkManyToManyReference(

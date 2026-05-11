@@ -18,8 +18,10 @@ extension PersistentIdentifier: @retroactive CustomStringConvertible {
 }
 #endif
 
+// TODO: Only call this method as a fallback.
+
 extension PersistentIdentifier {
-    nonisolated public func primaryKey<T>(as type: T.Type = String.self) -> T
+    nonisolated package func primaryKey<T>(as type: T.Type = String.self) -> T
     where T: LosslessStringConvertible {
         do {
             let data = try JSONEncoder().encode(self)

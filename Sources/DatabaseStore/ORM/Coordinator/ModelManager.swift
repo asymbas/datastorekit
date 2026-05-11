@@ -479,6 +479,7 @@ extension ModelManager {
             backingData = .init(
                 registry: registry,
                 inheritanceChain: inheritanceChain,
+                primaryKey: snapshot.primaryKey,
                 persistentIdentifier: persistentIdentifier,
                 values: snapshot.values
             )

@@ -73,6 +73,39 @@ extension DatabaseConnection where Store == DatabaseStore {
         return try attachment!.inheritance.resolvePersistentIdentifier(for: persistentIdentifier, connection: self)
         #endif
     }
+    
+    // TODO: Check if `PersistentIdentifier.id` differs with inheritance.
+    
+    nonisolated package func resolveInheritedIdentifiers(
+        _ oldIdentifiers: [PersistentIdentifier],
+        relativeTo newIdentifiers: [PersistentIdentifier]
+    ) throws -> [PersistentIdentifier] {
+        guard !oldIdentifiers.isEmpty, !newIdentifiers.isEmpty else {
+            return oldIdentifiers
+        }
+        let newEntityNameByPrimaryKey = Dictionary(
+            try newIdentifiers.compactMap { identifier -> (String, String)? in
+                guard identifier.storeIdentifier != nil else {
+                    throw DatabaseSnapshot.Error.identifierNotAssociatedToStore
+                }
+                return (primaryKey(for: identifier), identifier.entityName)
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        guard !newEntityNameByPrimaryKey.isEmpty else {
+            return oldIdentifiers
+        }
+        return try oldIdentifiers.map { oldIdentifier in
+            let primaryKey = primaryKey(for: oldIdentifier)
+            guard let resolvedEntityName = newEntityNameByPrimaryKey[primaryKey],
+                  resolvedEntityName != oldIdentifier.entityName,
+                  let storeIdentifier = oldIdentifier.storeIdentifier else {
+                return oldIdentifier
+            }
+            return try .identifier(for: storeIdentifier, entityName: resolvedEntityName, primaryKey: primaryKey)
+        }
+    }
+    
 }
 
 extension DatabaseConnection where Store == DatabaseStore {

@@ -71,11 +71,11 @@ package final class DatabaseBackingData: Sendable {
     nonisolated internal convenience init(
         registry: SnapshotRegistry? = nil,
         inheritanceChain: Set<String>,
+        primaryKey: any LosslessStringConvertible & Sendable,
         persistentIdentifier: PersistentIdentifier,
         values: ContiguousArray<any DataStoreSnapshotValue>
     ) {
         let tableName = persistentIdentifier.entityName
-        let primaryKey = persistentIdentifier.primaryKey()
         guard let storeIdentifier = persistentIdentifier.storeIdentifier else {
             preconditionFailure("Backing data must have a store identifier: \(primaryKey)")
         }
