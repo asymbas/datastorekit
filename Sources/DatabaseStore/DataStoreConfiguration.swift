@@ -33,6 +33,8 @@ nonisolated private let shouldDisableLogging: Bool = {
     }
 }()
 
+// FIXME: `DatabaseConfiguration` cannot be reused to open another `DatabaseStore`.
+
 /// A type that describes the configuration of an app's schema or specific group of models.
 public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     /// Inherited from `DataStoreConfiguration.Store`.
@@ -272,16 +274,15 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                 size: size,
                 attachment: attachment,
                 makeTransactionAttachment: { editingState, handle in
-                    guard options.contains(.disablePersistentHistoryTracking) == false else {
-                        return Optional<Store.Transaction>.none
-                    }
                     guard let attachment, let identifier = attachment.store?.identifier else {
                         logger.warning("No store for transaction attachment.")
                         return nil
                     }
                     defer {
-                        Task { @DatabaseActor in
-                            attachment.store?.history?.run(force: false)
+                        if options.contains(.disablePersistentHistoryTracking) == false {
+                            Task { @DatabaseActor in
+                                attachment.store?.history?.run(force: false)
+                            }
                         }
                     }
                     return TransactionObject(
