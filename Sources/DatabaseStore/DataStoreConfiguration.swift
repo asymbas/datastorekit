@@ -278,8 +278,9 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                         logger.warning("No store for transaction attachment.")
                         return nil
                     }
+                    let recordsHistory = !options.contains(.disablePersistentHistoryTracking)
                     defer {
-                        if options.contains(.disablePersistentHistoryTracking) == false {
+                        if recordsHistory {
                             Task { @DatabaseActor in
                                 attachment.store?.history?.run(force: false)
                             }
@@ -290,7 +291,8 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                         manager: attachment,
                         storeIdentifier: identifier,
                         externalStorageURL: externalStorageURL,
-                        editingState: editingState
+                        editingState: editingState,
+                        recordsHistory: recordsHistory
                     )
                 },
                 onTransactionFailure: { connection in

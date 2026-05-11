@@ -33,6 +33,7 @@ public final class TransactionObject: DatabaseTransaction {
     nonisolated private let manager: ModelManager
     nonisolated private let schema: Schema?
     nonisolated private let isResolved: Bool
+    nonisolated private let recordsHistory: Bool
     nonisolated public let timestamp: Date
     nonisolated public let storeIdentifier: String
     nonisolated public let editingState: any EditingStateProviding
@@ -58,7 +59,8 @@ public final class TransactionObject: DatabaseTransaction {
         manager: ModelManager,
         storeIdentifier: String,
         externalStorageURL: URL,
-        editingState: any EditingStateProviding
+        editingState: any EditingStateProviding,
+        recordsHistory: Bool
     ) {
         self.handle = handle
         self.manager = manager
@@ -67,6 +69,7 @@ public final class TransactionObject: DatabaseTransaction {
         self.transactionIdentifier = Int64(self.timestamp.timeIntervalSince1970 * 1_000_000)
         self.editingState = editingState
         self.isResolved = editingState is EditingState
+        self.recordsHistory = recordsHistory
         self.schema = isResolved ? nil : manager.configuration.schema
         do {
             self._externalStorageTransaction = .init(try ExternalStorageTransaction(baseURL: externalStorageURL))
@@ -217,6 +220,7 @@ public final class TransactionObject: DatabaseTransaction {
         propertyNames: String?,
         preservedValues: Data?
     ) throws {
+        guard recordsHistory else { return }
         _ = try handle?.fetch(
             """
             INSERT INTO "\(HistoryTable.tableName)" (
