@@ -260,6 +260,8 @@ public struct PropertyMetadata: Equatable, Hashable, Sendable {
         hasher.combine(keyPath)
     }
     
+    // TODO: Consider passing the casted type for inheritance or `PersistentModel.Root`.
+    
     /// Creates a temporary `PropertyMetadata` that is not part of the model's schema.
     nonisolated public static func discriminator<T>(for type: T.Type) -> Self
     where T: PersistentModel {

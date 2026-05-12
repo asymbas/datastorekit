@@ -25,6 +25,8 @@ private import SwiftData
 
 private typealias ForEach = SQLForEach
 
+// TODO: Resolve the primary key without decoding `PersistentIdentifier`.
+
 /// `0`
 ///
 /// The input value referenced in a predicate expression.

@@ -33,6 +33,7 @@ nonisolated private let shouldDisableLogging: Bool = {
     }
 }()
 
+// TODO: Rename `DatabaseConfiguration`.
 // FIXME: `DatabaseConfiguration` cannot be reused to open another `DatabaseStore`.
 
 /// A type that describes the configuration of an app's schema or specific group of models.

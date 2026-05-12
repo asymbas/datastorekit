@@ -383,7 +383,6 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                     "subentity": "\(entity.name)",
                     "reference": "\(reference)"
                 ])
-                print("created inheritance reference: \(reference)")
             default:
                 break
             }

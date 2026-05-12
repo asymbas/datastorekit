@@ -745,6 +745,8 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         return result
     }
     
+    // FIXME: Unusual memory growth occurs on large save batches.
+    
     internal func orderedInsertPlan(inserted: [Store.Snapshot], updated: [Store.Snapshot]) -> OrderedInsertPlan {
         var insertLayers = [[Store.Snapshot]]()
         insertLayers.reserveCapacity(inserted.count)

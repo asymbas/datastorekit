@@ -30,6 +30,8 @@ private import CloudKit
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
+// TODO: Remove use of generics.
+
 extension DatabaseStore: DatabaseProtocol {
     public typealias Handle = SQLite
     public typealias Attachment = ModelManager
