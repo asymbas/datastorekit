@@ -15,6 +15,25 @@ public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.bootstrap")
 
+nonisolated private let storage: Mutex<[ObjectIdentifier: [AnyKeyPath & Sendable: PropertyMetadata]]> = .init([:])
+
+extension PersistentModel where Self: SendableMetatype {
+    nonisolated private static var _databaseCompositeSchemaMetadata: [AnyKeyPath & Sendable: PropertyMetadata] {
+        storage.withLock { $0[ObjectIdentifier(self), default: [:]] }
+    }
+    
+    nonisolated internal static
+    func _registerCompositeSchemaMetadata(_ compositeKeyPaths: [AnyKeyPath & Sendable: PropertyMetadata]) {
+        storage.withLock { $0[ObjectIdentifier(self)] = compositeKeyPaths }
+    }
+    
+    nonisolated internal static
+    func compositeSchemaMetadata(for keyPath: AnyKeyPath & Sendable) -> PropertyMetadata? {
+        storage.withLock { $0[ObjectIdentifier(self)]?[keyPath] }
+    }
+}
+
+
 // FIXME: Key path variants appear to show a race condition in application. Disabling the option reduced crashing.
 
 extension PersistentModel where Self: AnyObject {
