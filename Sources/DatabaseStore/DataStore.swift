@@ -760,9 +760,16 @@ public final class DatabaseStore: DataStore, Sendable {
                             operation[.update, default: []].append(candidate.persistentIdentifier)
                             return candidate
                         } onConflict: { existing, candidate in
+                            // TODO: Consider confirming that the entity is part of an inheritance chain.
                             remappedIdentifiers[temporaryIdentifier] = existing.persistentIdentifier
+                            // An existing snapshot that uses inheritance can return with a different entity name.
+                            let resolvedIdentifier = try PersistentIdentifier.identifier(
+                                for: identifier,
+                                entityName: snapshot.persistentIdentifier.entityName,
+                                primaryKey: existing.primaryKey
+                            )
                             let candidate = candidate.copy(
-                                persistentIdentifier: existing.persistentIdentifier,
+                                persistentIdentifier: resolvedIdentifier,
                                 remappedIdentifiers: remappedIdentifiers
                             )
                             try connection.update(from: existing, to: candidate)
