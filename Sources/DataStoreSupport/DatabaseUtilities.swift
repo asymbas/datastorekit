@@ -122,6 +122,28 @@ nonisolated package func liftKeyPath<Super, Sub, Value>(
     #endif
 }
 
+nonisolated package func liftPartialKeyPath<Super, Sub>(
+    _ keyPath: PartialKeyPath<Super>,
+    to _: Sub.Type
+) -> PartialKeyPath<Sub>? {
+    guard Sub.self is Super.Type else { return nil }
+    let raw = Unmanaged.passUnretained(keyPath as AnyObject).toOpaque()
+    return Unmanaged<PartialKeyPath<Sub>>.fromOpaque(raw).takeUnretainedValue()
+}
+
+nonisolated package func liftAnyKeyPath<Sub>(
+    _ keyPath: AnyKeyPath,
+    to _: Sub.Type
+) -> PartialKeyPath<Sub>? {
+    guard let rootClass = type(of: keyPath).rootType as? AnyClass,
+          let subClass = Sub.self as? AnyClass,
+          subClass == rootClass || subClass.isSubclass(of: rootClass) else {
+        return nil
+    }
+    let raw = Unmanaged.passUnretained(keyPath as AnyObject).toOpaque()
+    return Unmanaged<PartialKeyPath<Sub>>.fromOpaque(raw).takeUnretainedValue()
+}
+
 nonisolated package func subclasses<T>(of root: T.Type) -> [T.Type] {
     var count: UInt32 = 0
     guard let classes = objc_copyClassList(&count) else { return [] }

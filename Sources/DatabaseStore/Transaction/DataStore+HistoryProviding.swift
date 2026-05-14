@@ -572,9 +572,15 @@ where T: PersistentModel & SendableMetatype {
         self.fields = keys
         self.updatedAttributes = keys.reduce(into: .init()) { partialResult, propertyName in
             switch T.schemaMetadata(for: propertyName) {
+            case let property? where property.isInherited:
+                guard let keyPath = liftAnyKeyPath(property.keyPath, to: T.self),
+                      let keyPath: PartialKeyPath<T> & Sendable = sendable(cast: keyPath) else {
+                    preconditionFailure("The property key path does not conform to Sendable: \(property) \(property.keyPath) \(T.self)")
+                }
+                partialResult.append(keyPath)
             case let property?:
                 guard let keyPath: PartialKeyPath<T> & Sendable = sendable(cast: property.keyPath) else {
-                    preconditionFailure("The property key path does not conform to Sendable: \(property)")
+                    preconditionFailure("The property key path does not conform to Sendable: \(property) \(property.keyPath) \(T.self)")
                 }
                 partialResult.append(keyPath)
             case nil:

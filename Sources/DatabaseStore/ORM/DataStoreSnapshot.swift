@@ -439,6 +439,12 @@ extension DatabaseSnapshot {
         guard let persistentIdentifier = backingData.persistentModelID else {
             preconditionFailure("The provided BackingData does not contain a PersistentIdentifier.")
         }
+        #if DEBUG
+        logger.debug("Extracting BackingData: \(Swift.type(of: backingData))")
+        if !relatedBackingDatas.isEmpty {
+            logger.critical("DatabaseSnapshot has related backing datas: \(relatedBackingDatas)")
+        }
+        #endif
         relatedBackingDatas[persistentIdentifier] = backingData
         self.init(persistentIdentifier: persistentIdentifier, type: Self.getMetatype(backingData))
         extractBackingData(backingData, from: self.properties)
@@ -474,6 +480,10 @@ extension DatabaseSnapshot {
                         setValue(nil, for: property)
                     }
                 case let valueType as any RelationshipCollection.Type:
+                    if property.isInherited {
+                        setValue(nil, for: property)
+                        continue
+                    }
                     if let models = getValue(backingData, as: valueType, keyPath: keyPath) {
                         setValue(models.map(\.persistentModelID), for: property)
                     } else {
@@ -549,6 +559,10 @@ extension DatabaseSnapshot {
                         preconditionFailure("Required to-one relationship is missing in BackingData: \(description)")
                     }
                 case let valueType as any RelationshipCollection.Type:
+                    if property.isInherited {
+                        setValue(nil, for: property)
+                        continue
+                    }
                     switch getValue(backingData, as: valueType, keyPath: keyPath) {
                     case let models?:
                         let relatedIdentifiers = models.map(\.persistentModelID)
@@ -923,7 +937,7 @@ extension DatabaseSnapshot {
         onChange: (PropertyMetadata, any Sendable, any Sendable) throws -> Collected?
     ) rethrows -> [Collected] {
         var result = [Collected]()
-        for property in self.properties {
+        for property in self.properties where !property.isInherited {
             let lhs = self.values[property.index]
             let rhs = other.values[property.index]
             guard SQLValue(any: lhs) != SQLValue(any: rhs) else { continue }

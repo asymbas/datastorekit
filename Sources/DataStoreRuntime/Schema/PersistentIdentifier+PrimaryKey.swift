@@ -9,11 +9,11 @@
 
 private import Foundation
 private import Synchronization
-internal import SwiftData
+package import SwiftData
 
-#if false
+#if DEBUG
 extension PersistentIdentifier: @retroactive CustomStringConvertible {
-    nonisolated public var description: String {
+    nonisolated package var description: String {
         "\(storeIdentifier ?? "nil") \(entityName) \(primaryKey())"
     }
 }
