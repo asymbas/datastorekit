@@ -8,7 +8,7 @@
 //
 
 internal import DataStoreSupport
-package import Foundation
+public import Foundation
 public import SwiftData
 
 public protocol DataStoreSynchronizer<Store>: Sendable {
@@ -43,8 +43,8 @@ public struct SynchronizationStatus: Sendable {
     nonisolated public let id: String
     nonisolated public var phase: SynchronizationPhase
     nonisolated public var isPending: Bool
-    nonisolated package var lastSyncDate: Date?
-    nonisolated package var lastError: (any Swift.Error)?
+    nonisolated public var lastSyncDate: Date?
+    nonisolated public var lastError: (any Swift.Error)?
     
     nonisolated package init(
         id: String,
