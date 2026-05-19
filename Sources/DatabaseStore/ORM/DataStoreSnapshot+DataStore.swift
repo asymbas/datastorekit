@@ -204,9 +204,7 @@ extension DatabaseSnapshot {
                 try setValue(value, at: property, externalStorageURL: configuration.externalStorageURL)
             }
         } else {
-            logger.debug("Creating snapshot for \(entity.name).", metadata: [
-                "type": "\(type)",
-            ])
+            logger.debug("Creating snapshot for \(entity.name).", metadata: ["type": "\(type)",])
         }
         let configuration = configuration
         let externalStorageURL = configuration.externalStorageURL

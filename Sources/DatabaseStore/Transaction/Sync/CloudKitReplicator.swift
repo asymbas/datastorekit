@@ -314,7 +314,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
             stateSerialization: state.stateSerialization,
             delegate: self
         )
-        configuration.automaticallySync = true
+        configuration.automaticallySync = false // true
         self.syncEngine = CKSyncEngine(configuration)
     }
     
