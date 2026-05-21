@@ -178,7 +178,7 @@ extension DatabaseConnection where Store.Handle == SQLite {
         }
         guard transaction == nil else { return }
         guard let newTransaction = queue?.makeTransaction(editingState, handle) else {
-            throw Self.Error.noEditingStateProvided
+            throw Self.Error.transactionUnavailable
         }
         self.transaction = newTransaction
         do {
@@ -190,7 +190,7 @@ extension DatabaseConnection where Store.Handle == SQLite {
             }
         } catch {
             newTransaction.transactionDidRollback()
-//            self.transaction = nil
+            self.transaction = nil
             throw error
         }
     }

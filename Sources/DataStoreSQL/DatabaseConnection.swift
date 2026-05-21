@@ -146,5 +146,6 @@ extension DatabaseConnection {
     
     public enum Error: Swift.Error {
         case noEditingStateProvided
+        case transactionUnavailable
     }
 }
