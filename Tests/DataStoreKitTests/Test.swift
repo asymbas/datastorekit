@@ -23,7 +23,7 @@ let level: Logger.Level = {
     case "warning": .warning
     case "error": .error
     case "critical": .critical
-    default: .info
+    default: .notice
     }
 }()
 

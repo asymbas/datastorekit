@@ -19,7 +19,6 @@ extension SQLite: DatabaseHandle {}
 
 public final class SQLite: Sendable {
     nonisolated private let storage: Atomic<Int> = .init(0)
-    nonisolated private let referenceCount: Atomic<Int> = .init(0)
     nonisolated internal let dataChangeNotificationContext: DataChangeNotificationContext?
     nonisolated public let id: UUID = .init()
     nonisolated public let role: DataStoreRole?
