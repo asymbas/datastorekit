@@ -66,6 +66,7 @@ extension Schema {
     }
 }
 
+// TODO: Isolate `TypeRegistry` to each configuration.
 // FIXME: Handle name collisions with entity and types that use the same name.
 
 extension Schema {
@@ -77,7 +78,7 @@ extension Schema {
                 return entry.type as? any (PersistentModel & SendableMetatype).Type
             }
         }
-        return nil
+        return reflectEntity(entity)
     }
     
     @available(*, deprecated, message: "The return value may be ambiguous.")
