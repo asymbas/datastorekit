@@ -956,7 +956,7 @@ extension DatabaseSnapshot {
         inheritedTraversalSnapshots: inout [Self]
     ) throws {
         guard let superType = Schema.type(for: entity) else {
-            preconditionFailure(SchemaError.entityNotRegistered.localizedDescription)
+            preconditionFailure("Entity has no registered superentity type: \(entity)")
         }
         let schemaMetadata = superType.databaseSchemaMetadata
         var superProperties = ContiguousArray<PropertyMetadata>()

@@ -141,7 +141,7 @@ extension DatabaseSnapshot {
             primaryKey: primaryKey
         ))
         guard let resolvedType = Schema.type(for: resolvedEntity) else {
-            preconditionFailure()
+            preconditionFailure("Resolved entity did not register a type: \(resolvedEntity)")
         }
         let resolvedPersistentIdentifier = try PersistentIdentifier.identifier(
             for: storeIdentifier,
