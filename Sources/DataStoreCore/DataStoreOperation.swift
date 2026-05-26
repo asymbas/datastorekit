@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-public enum DataStoreOperation: String, Sendable {
+nonisolated public enum DataStoreOperation: String, Sendable {
     case insert
     case update
     case delete
