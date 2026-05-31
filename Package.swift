@@ -129,10 +129,20 @@ let package = Package(
             path: "Sources/SQLSupport",
             swiftSettings: [.unsafeFlags(["-package-name", "DataStoreKit"])]
         ),
+        .target(
+            name: "TestSupport",
+            dependencies: ["DataStoreKit"],
+            path: "Tests/TestSupport"
+        ),
         .testTarget(
             name: "DataStoreKitTests",
-            dependencies: ["DataStoreKit"],
+            dependencies: ["DataStoreKit", "TestSupport"],
             path: "Tests/DataStoreKitTests"
+        ),
+        .testTarget(
+            name: "SwiftDataTests",
+            dependencies: ["DataStoreKit", "TestSupport"],
+            path: "Tests/SwiftDataTests"
         )
     ]
 )
