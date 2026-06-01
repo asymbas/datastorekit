@@ -12,7 +12,7 @@ import Foundation
 import SwiftData
 import Testing
 
-@Suite(.serialized)
+@Suite(.bootstrap, .serialized)
 struct InheritanceTests {
     private let modelContext: ModelContext
     private let modelContainer: ModelContainer
@@ -20,7 +20,6 @@ struct InheritanceTests {
     
     @available(iOS 26.0, macOS 26.0, tvOS 26.0, visionOS 26.0, watchOS 26.0, *)
     init() throws {
-        _ = logging
         let schema = Schema(versionedSchema: Sample.self)
         var configuration = DatabaseConfiguration.transient(
             types: Sample.models,

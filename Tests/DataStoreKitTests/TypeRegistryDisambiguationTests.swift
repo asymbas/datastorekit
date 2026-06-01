@@ -12,7 +12,7 @@ import Foundation
 import SwiftData
 import Testing
 
-@Suite(.serialized)
+@Suite(.bootstrap, .serialized)
 struct TypeRegistryDisambiguationTests {
     enum NamespaceA {
         @Model class Entity { init() {} }

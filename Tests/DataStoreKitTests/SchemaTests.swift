@@ -9,9 +9,12 @@
 
 import DataStoreKit
 import Testing
+import TestSupport
 import SwiftData
 
-@Suite
+// TODO: Move to internal tests for understanding how the macros work.
+
+@Suite(.bootstrap)
 struct SchemaTests {
     @Model class ImplicitEntity {
         var id: String

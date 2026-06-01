@@ -12,7 +12,7 @@ import Foundation
 import SwiftData
 import Testing
 
-@Suite(.serialized)
+@Suite(.bootstrap, .serialized)
 struct SchemaFilteringTests {
     @Model class Known {
         var name: String
