@@ -121,11 +121,7 @@ public final class DatabaseStore: DataStore, Sendable {
                     }
                 }
             } catch {
-                #if DEBUG
-                logger.critical("Migration error: \(error)")
-                #else
                 fatalError("Migration error: \(error)")
-                #endif
             }
         }
         self.identifier = configuration.name
@@ -300,7 +296,6 @@ public final class DatabaseStore: DataStore, Sendable {
                           requestedIdentifier != snapshot.persistentIdentifier else {
                         return snapshot
                     }
-                    var snapshot = snapshot
                     return snapshot.upcast(to: requestedIdentifier)
                 }
             }
