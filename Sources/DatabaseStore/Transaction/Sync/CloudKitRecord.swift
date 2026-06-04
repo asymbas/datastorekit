@@ -48,6 +48,54 @@ nonisolated internal func makeEntityName(fromRecordType recordType: String) -> S
     return recordType
 }
 
+extension DatabaseConfiguration.CloudKitDatabase.Replicator.RecordMetadata {
+    private typealias RecordMetadataTable = DatabaseConfiguration.CloudKitDatabase.RecordMetadataTable
+    
+    nonisolated internal static var selectStatement: String {
+        """
+        SELECT
+            \(RecordMetadataTable.recordType.rawValue) AS record_type,
+            \(RecordMetadataTable.recordName.rawValue) AS record_name,
+            \(RecordMetadataTable.entityName.rawValue) AS entity_name,
+            \(RecordMetadataTable.entityPrimaryKey.rawValue) AS entity_pk,
+            \(RecordMetadataTable.entityTargetPrimaryKey.rawValue) AS related_pk
+        FROM \(RecordMetadataTable.tableName)
+        """
+    }
+    
+    nonisolated internal init?(positionalRow row: [any Sendable]) {
+        guard let recordType = row[0] as? String,
+              let recordName = row[1] as? String,
+              let entityName = row[2] as? String,
+              let primaryKey = row[3] as? String else {
+            return nil
+        }
+        self.init(
+            recordType: recordType,
+            recordName: recordName,
+            entityName: entityName,
+            primaryKey: primaryKey,
+            targetPrimaryKey: row[4] as? String
+        )
+    }
+    
+    nonisolated internal init?(keyedRow row: [String: any Sendable]) {
+        guard let recordType = row["record_type"] as? String,
+              let recordName = row["record_name"] as? String,
+              let entityName = row["entity_name"] as? String,
+              let primaryKey = row["entity_pk"] as? String else {
+            return nil
+        }
+        self.init(
+            recordType: recordType,
+            recordName: recordName,
+            entityName: entityName,
+            primaryKey: primaryKey,
+            targetPrimaryKey: row["related_pk"] as? String
+        )
+    }
+}
+
 extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     internal func snapshot(for persistentIdentifier: PersistentIdentifier) throws -> Store.Snapshot? {
         guard let entity = self.store.schema.entitiesByName[persistentIdentifier.entityName],
@@ -122,13 +170,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         let primaryKey = self.store.manager.primaryKey(for: persistentIdentifier)
         let rows = try store.queue.connection(.reader).fetch(
             """
-            SELECT
-                \(RecordMetadataTable.recordType.rawValue) AS record_type,
-                \(RecordMetadataTable.recordName.rawValue) AS record_name,
-                \(RecordMetadataTable.entityName.rawValue) AS entity_name,
-                \(RecordMetadataTable.entityPrimaryKey.rawValue) AS entity_pk,
-                \(RecordMetadataTable.entityTargetPrimaryKey.rawValue) AS related_pk
-            FROM \(RecordMetadataTable.tableName)
+            \(RecordMetadata.selectStatement)
             WHERE \(RecordMetadataTable.storeIdentifier.rawValue) = ?
             AND \(RecordMetadataTable.entityName.rawValue) = ?
             AND \(RecordMetadataTable.entityPrimaryKey.rawValue) = ?
@@ -137,24 +179,11 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
             """,
             bindings: [store.identifier, entityName, primaryKey, recordType]
         )
-        guard let row = rows.first else {
+        guard let row = rows.first, let metadata = RecordMetadata(positionalRow: row) else {
             return nil
         }
-        guard let recordType = row[0] as? String,
-              let recordName = row[1] as? String,
-              let entityName = row[2] as? String,
-              let primaryKey = row[3] as? String else {
-            return nil
-        }
-        assert(persistentIdentifier.entityName == entityName)
-        assert(persistentIdentifier.primaryKey().description == primaryKey)
-        let metadata = RecordMetadata(
-            recordType: recordType,
-            recordName: recordName,
-            entityName: entityName,
-            primaryKey: primaryKey,
-            targetPrimaryKey: row[4] as? String
-        )
+        assert(persistentIdentifier.entityName == metadata.entityName)
+        assert(persistentIdentifier.primaryKey().description == metadata.primaryKey)
         self.identifiers[persistentIdentifier] = metadata
         return metadata
     }
@@ -162,36 +191,21 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     internal func loadRecordMetadata(recordName: String) throws -> RecordMetadata? {
         let rows = try store.queue.connection(.reader).query(
             """
-            SELECT
-                \(RecordMetadataTable.recordType.rawValue) AS record_type,
-                \(RecordMetadataTable.recordName.rawValue) AS record_name,
-                \(RecordMetadataTable.entityName.rawValue) AS entity_name,
-                \(RecordMetadataTable.entityPrimaryKey.rawValue) AS entity_pk,
-                \(RecordMetadataTable.entityTargetPrimaryKey.rawValue) AS related_pk
-            FROM \(RecordMetadataTable.tableName)
+            \(RecordMetadata.selectStatement)
             WHERE \(RecordMetadataTable.storeIdentifier.rawValue) = ?
             AND \(RecordMetadataTable.recordName.rawValue) = ?
             LIMIT 1
             """,
             bindings: [store.identifier, recordName]
         )
-        guard let row = rows.first else {
+        guard let row = rows.first, let metadata = RecordMetadata(keyedRow: row) else {
             return nil
         }
-        guard let recordType = row["record_type"] as? String,
-              let recordName = row["record_name"] as? String,
-              let entityName = row["entity_name"] as? String,
-              let primaryKey = row["entity_pk"] as? String else {
-            return nil
-        }
-        let metadata = RecordMetadata(
-            recordType: recordType,
-            recordName: recordName,
-            entityName: entityName,
-            primaryKey: primaryKey,
-            targetPrimaryKey: row["related_pk"] as? String
+        let persistentIdentifier = try PersistentIdentifier.identifier(
+            for: store.identifier,
+            entityName: metadata.entityName,
+            primaryKey: metadata.primaryKey
         )
-        let persistentIdentifier = try PersistentIdentifier.identifier(for: store.identifier, entityName: entityName, primaryKey: primaryKey)
         self.identifiers[persistentIdentifier] = metadata
         return metadata
     }
@@ -214,13 +228,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     ) throws -> RecordMetadata? {
         let rows = try store.queue.connection(.reader).fetch(
             """
-            SELECT
-                \(RecordMetadataTable.recordType.rawValue) AS record_type,
-                \(RecordMetadataTable.recordName.rawValue) AS record_name,
-                \(RecordMetadataTable.entityName.rawValue) AS entity_name,
-                \(RecordMetadataTable.entityPrimaryKey.rawValue) AS entity_pk,
-                \(RecordMetadataTable.entityTargetPrimaryKey.rawValue) AS related_pk
-            FROM \(RecordMetadataTable.tableName)
+            \(RecordMetadata.selectStatement)
             WHERE \(RecordMetadataTable.storeIdentifier.rawValue) = ?
             AND \(RecordMetadataTable.entityName.rawValue) = ?
             AND \(RecordMetadataTable.entityPrimaryKey.rawValue) = ?
@@ -230,23 +238,14 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
             """,
             bindings: [store.identifier, entityName, primaryKey, recordType, targetPrimaryKey]
         )
-        guard let row = rows.first else {
+        guard let row = rows.first, let metadata = RecordMetadata(positionalRow: row) else {
             return nil
         }
-        guard let recordType = row[0] as? String,
-              let recordName = row[1] as? String,
-              let entityName = row[2] as? String,
-              let primaryKey = row[3] as? String else {
-            return nil
-        }
-        let metadata = RecordMetadata(
-            recordType: recordType,
-            recordName: recordName,
-            entityName: entityName,
-            primaryKey: primaryKey,
-            targetPrimaryKey: row[4] as? String
+        let persistentIdentifier = try PersistentIdentifier.identifier(
+            for: store.identifier,
+            entityName: metadata.entityName,
+            primaryKey: metadata.primaryKey
         )
-        let persistentIdentifier = try PersistentIdentifier.identifier(for: store.identifier, entityName: entityName, primaryKey: primaryKey)
         self.identifiers[persistentIdentifier] = metadata
         return metadata
     }
@@ -254,32 +253,20 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     internal func loadRelatedRecordMetadata(targetPrimaryKey: String) throws -> [RecordMetadata] {
         try store.queue.connection(.reader).query(
             """
-            SELECT
-                \(RecordMetadataTable.recordType.rawValue) AS record_type,
-                \(RecordMetadataTable.recordName.rawValue) AS record_name,
-                \(RecordMetadataTable.entityName.rawValue) AS entity_name,
-                \(RecordMetadataTable.entityPrimaryKey.rawValue) AS entity_pk,
-                \(RecordMetadataTable.entityTargetPrimaryKey.rawValue) AS related_pk
-            FROM \(RecordMetadataTable.tableName)
+            \(RecordMetadata.selectStatement)
             WHERE \(RecordMetadataTable.storeIdentifier.rawValue) = ?
             AND \(RecordMetadataTable.entityTargetPrimaryKey.rawValue) = ?
             """,
             bindings: [store.identifier, targetPrimaryKey]
-        ).compactMap { row in
-            guard let recordType = row["record_type"] as? String,
-                  let recordName = row["record_name"] as? String,
-                  let entityName = row["entity_name"] as? String,
-                  let primaryKey = row["entity_pk"] as? String else {
+        ).compactMap { row -> RecordMetadata? in
+            guard let metadata = RecordMetadata(keyedRow: row) else {
                 return nil
             }
-            let metadata = RecordMetadata(
-                recordType: recordType,
-                recordName: recordName,
-                entityName: entityName,
-                primaryKey: primaryKey,
-                targetPrimaryKey: row["related_pk"] as? String
+            let persistentIdentifier = try PersistentIdentifier.identifier(
+                for: store.identifier,
+                entityName: metadata.entityName,
+                primaryKey: metadata.primaryKey
             )
-            let persistentIdentifier = try PersistentIdentifier.identifier(for: store.identifier, entityName: entityName, primaryKey: primaryKey)
             if identifiers[persistentIdentifier] == nil {
                 identifiers[persistentIdentifier] = metadata
             }
@@ -291,33 +278,17 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         let primaryKey = self.store.manager.primaryKey(for: persistentIdentifier)
         return try store.queue.connection(.reader).query(
             """
-            SELECT
-                \(RecordMetadataTable.recordType.rawValue) AS record_type,
-                \(RecordMetadataTable.recordName.rawValue) AS record_name,
-                \(RecordMetadataTable.entityName.rawValue) AS entity_name,
-                \(RecordMetadataTable.entityPrimaryKey.rawValue) AS entity_pk,
-                \(RecordMetadataTable.entityTargetPrimaryKey.rawValue) AS related_pk
-            FROM \(RecordMetadataTable.tableName)
+            \(RecordMetadata.selectStatement)
             WHERE \(RecordMetadataTable.storeIdentifier.rawValue) = ?
             AND \(RecordMetadataTable.entityName.rawValue) = ?
             AND \(RecordMetadataTable.entityPrimaryKey.rawValue) = ?
             ORDER BY \(RecordMetadataTable.recordName.rawValue) ASC
             """,
             bindings: [store.identifier, persistentIdentifier.entityName, primaryKey]
-        ).compactMap { row in
-            guard let recordType = row["record_type"] as? String,
-                  let recordName = row["record_name"] as? String,
-                  let entityName = row["entity_name"] as? String,
-                  let primaryKey = row["entity_pk"] as? String else {
-                return Optional<RecordMetadata>.none
+        ).compactMap { row -> RecordMetadata? in
+            guard let metadata = RecordMetadata(keyedRow: row) else {
+                return nil
             }
-            let metadata = RecordMetadata(
-                recordType: recordType,
-                recordName: recordName,
-                entityName: entityName,
-                primaryKey: primaryKey,
-                targetPrimaryKey: row["related_pk"] as? String
-            )
             if identifiers[persistentIdentifier] == nil {
                 identifiers[persistentIdentifier] = metadata
             }
@@ -399,13 +370,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     ) throws -> RecordMetadata? {
         let rows = try store.queue.connection(.reader).fetch(
             """
-            SELECT
-                \(RecordMetadataTable.recordType.rawValue) AS record_type,
-                \(RecordMetadataTable.recordName.rawValue) AS record_name,
-                \(RecordMetadataTable.entityName.rawValue) AS entity_name,
-                \(RecordMetadataTable.entityPrimaryKey.rawValue) AS entity_pk,
-                \(RecordMetadataTable.entityTargetPrimaryKey.rawValue) AS related_pk
-            FROM \(RecordMetadataTable.tableName)
+            \(RecordMetadata.selectStatement)
             WHERE \(RecordMetadataTable.storeIdentifier.rawValue) = ?
             AND \(RecordMetadataTable.recordType.rawValue) = ?
             AND \(RecordMetadataTable.entityPrimaryKey.rawValue) = ?
@@ -417,19 +382,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         guard let row = rows.first else {
             return nil
         }
-        guard let recordType = row[0] as? String,
-              let recordName = row[1] as? String,
-              let entityName = row[2] as? String,
-              let primaryKey = row[3] as? String else {
-            return nil
-        }
-        return RecordMetadata(
-            recordType: recordType,
-            recordName: recordName,
-            entityName: entityName,
-            primaryKey: primaryKey,
-            targetPrimaryKey: row[4] as? String
-        )
+        return RecordMetadata(positionalRow: row)
     }
     
     internal func projectedRecords(for snapshot: Store.Snapshot) throws -> [CKRecord] {
