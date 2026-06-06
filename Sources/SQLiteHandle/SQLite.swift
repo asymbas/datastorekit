@@ -74,6 +74,7 @@ public final class SQLite: Sendable {
         guard sqlite3_open_v2(location.description, &pointer, flags, nil) == SQLITE_OK else {
             fatalError(pointer.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown")
         }
+        _ = sqlite3_busy_timeout(pointer, 5000)
         if let onChange {
             self.dataChangeNotificationContext = .init(handle: pointer, onChange: onChange)
         } else {
