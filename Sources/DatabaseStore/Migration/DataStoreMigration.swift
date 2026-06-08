@@ -394,13 +394,32 @@ nonisolated internal final class DataStoreMigration: StoreBound {
         }
         switch plan.style {
         case .inferred, .custom:
+            let externalStorageToggles = analysis.operations.filter {
+                if case .toggleExternalStorage = $0 { true } else { false }
+            }
             try store.queue.writer { connection in
                 try connection.execute("PRAGMA foreign_keys = OFF;")
                 defer { _ = try? connection.execute("PRAGMA foreign_keys = ON;") }
+                var externalStorageTransaction: ExternalStorageTransaction?
+                if !externalStorageToggles.isEmpty {
+                    externalStorageTransaction = try .init(baseURL: store.configuration.externalStorageURL)
+                }
                 try connection.execute("BEGIN TRANSACTION")
                 do {
                     for step in self.plan.steps {
                         try self.execute(step, connection: connection, custom: custom)
+                    }
+                    for toggle in externalStorageToggles {
+                        guard case let .toggleExternalStorage(entity, attribute, enabled) = toggle else {
+                            continue
+                        }
+                        let paths = try self.relocateExternalStorage(
+                            entity: entity,
+                            attribute: attribute,
+                            enabled: enabled,
+                            connection: connection
+                        )
+                        try externalStorageTransaction?.apply(paths)
                     }
                     let foreignKeyRows = try connection.query("PRAGMA foreign_key_check;")
                     if !foreignKeyRows.isEmpty {
@@ -409,9 +428,11 @@ nonisolated internal final class DataStoreMigration: StoreBound {
                         })
                     }
                     try connection.execute("COMMIT TRANSACTION")
+                    try externalStorageTransaction?.commit()
                 } catch {
                     logger.error("Applying schema migration failed: \(error)")
                     _ = try? connection.execute("ROLLBACK TRANSACTION")
+                    externalStorageTransaction?.rollback()
                     throw error
                 }
             }
@@ -461,6 +482,62 @@ nonisolated internal final class DataStoreMigration: StoreBound {
         case .persistSchemaMetadata:
             try store.setValue(newSchemaSet.ormSchema, forKey: "schema", connection: connection)
         }
+    }
+    
+    private func relocateExternalStorage(
+        entity: String,
+        attribute: String,
+        enabled: Bool,
+        connection: borrowing DatabaseConnection<Store>
+    ) throws -> [ExternalStoragePath] {
+        var paths = [ExternalStoragePath]()
+        if enabled {
+            let rows = try connection.query("SELECT \(quote(pk)), \(quote(attribute)) FROM \(quote(entity))")
+            for row in rows {
+                guard let rawKey = row[pk] else { continue }
+                let key = (rawKey as? String) ?? String(describing: rawKey)
+                let relativePath = "\(entity)/\(attribute)/\(key)"
+                paths.append(.init(
+                    relativePath: relativePath,
+                    component: relativePath,
+                    data: row[attribute] as? Data,
+                    storeType: .redirect
+                ))
+            }
+            let temporary = "\(attribute)_inline_old"
+            try connection.execute("ALTER TABLE \(quote(entity)) RENAME COLUMN \(quote(attribute)) TO \(quote(temporary))")
+            try connection.execute("ALTER TABLE \(quote(entity)) ADD COLUMN \(quote(attribute)) TEXT")
+            try connection.execute("ALTER TABLE \(quote(entity)) DROP COLUMN \(quote(temporary))")
+        } else {
+            let rows = try connection.query("SELECT \(quote(pk)) FROM \(quote(entity))")
+            var dataByKey = [String: Data]()
+            for row in rows {
+                guard let rawKey = row[pk] else { continue }
+                let key = (rawKey as? String) ?? String(describing: rawKey)
+                let relativePath = "\(entity)/\(attribute)/\(key)"
+                let url = store.configuration.externalStorageURL.appending(path: relativePath)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    dataByKey[key] = try Data(contentsOf: url)
+                }
+                paths.append(.init(
+                    relativePath: relativePath,
+                    component: relativePath,
+                    data: nil,
+                    storeType: .redirect
+                ))
+            }
+            let temporary = "\(attribute)_external_old"
+            try connection.execute("ALTER TABLE \(quote(entity)) RENAME COLUMN \(quote(attribute)) TO \(quote(temporary))")
+            try connection.execute("ALTER TABLE \(quote(entity)) ADD COLUMN \(quote(attribute)) BLOB")
+            try connection.execute("ALTER TABLE \(quote(entity)) DROP COLUMN \(quote(temporary))")
+            for (key, data) in dataByKey {
+                _ = try connection.query(
+                    "UPDATE \(quote(entity)) SET \(quote(attribute)) = ? WHERE \(quote(pk)) = ?",
+                    bindings: [data, key]
+                )
+            }
+        }
+        return paths
     }
     
     private func validate(
@@ -838,6 +915,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
         case renameAttribute(entity: String, from: String, to: String)
         case alterAttributeNullability(entity: String, name: String, isOptional: Bool)
         case alterAttributeType(entity: String, name: String)
+        case toggleExternalStorage(entity: String, attribute: String, enabled: Bool)
         case alterAttributeTransformable(entity: String, name: String)
         case addUniqueConstraint(entity: String, columns: [String])
         case dropUniqueConstraint(entity: String, columns: [String])
@@ -1586,12 +1664,13 @@ extension DataStoreMigration {
                 case .ephemeral:
                     break
                 case .externalStorage:
-                    if oldAttribute.options.contains(.externalStorage) != newAttribute.options.contains(.externalStorage) {
-                        issues.append(.init(
-                            severity: .custom,
-                            kind: .externalStorageSemanticsChanged,
-                            entityName: entityName,
-                            propertyName: newAttribute.name
+                    let oldExternal = oldAttribute.options.contains(.externalStorage)
+                    let newExternal = newAttribute.options.contains(.externalStorage)
+                    if oldExternal != newExternal {
+                        operations.append(.toggleExternalStorage(
+                            entity: entityName,
+                            attribute: newAttribute.name,
+                            enabled: newExternal
                         ))
                     }
                 case .preserveValueOnDeletion:
