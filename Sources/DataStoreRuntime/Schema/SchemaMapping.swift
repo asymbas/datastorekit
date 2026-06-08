@@ -89,14 +89,13 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                     SQLCompositeAttributeColumn(
                         name: compositeAttribute.name,
                         valueType: compositeAttribute.options.contains(.externalStorage)
-                        ? String.self
-                        : compositeAttribute.valueType,
+                        ? String.self : compositeAttribute.valueType,
                         constraints: [
-                            compositeAttribute.isOptional ? nil : .notNull,
+                            (compositeAttribute.isOptional || compositeAttribute.options.contains(.externalStorage))
+                            ? nil : .notNull,
                             compositeAttribute.isUnique ? .unique : nil,
                             compositeAttribute.defaultValue == nil
-                            ? nil
-                            : .defaultValue(compositeAttribute.defaultValue!)
+                            ? nil : .defaultValue(compositeAttribute.defaultValue!)
                         ]
                     ) { result in
                         guard case .success(let column) = result else {
@@ -127,14 +126,13 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
                     SQLAttributeColumn(
                         name: attribute.name,
                         valueType: attribute.options.contains(.externalStorage)
-                        ? String.self
-                        : attribute.valueType,
+                        ? String.self : attribute.valueType,
                         constraints: [
-                            attribute.isOptional ? nil : .notNull,
+                            (attribute.isOptional || attribute.options.contains(.externalStorage))
+                            ? nil : .notNull,
                             attribute.isUnique ? .unique : nil,
                             attribute.defaultValue == nil
-                            ? nil
-                            : .defaultValue(attribute.defaultValue!)
+                            ? nil : .defaultValue(attribute.defaultValue!)
                         ]
                     ) { result in
                         guard case .success(let column) = result else {
