@@ -139,10 +139,7 @@ extension DataStoreMigration {
     }
 }
 
-// TODO: Use enum associated values for classifying types.
-// TODO: Elevate some inferred to lightweight.
-
-internal final class DataStoreMigration: StoreBound {
+nonisolated internal final class DataStoreMigration: StoreBound {
     internal typealias Store = DatabaseStore
     internal unowned let store: Store
     internal let analysis: Classifier
@@ -151,7 +148,7 @@ internal final class DataStoreMigration: StoreBound {
     internal let newSchemaSet: SchemaSet
     private let shouldAutomaticallyMigrateOnSchemaChange: Bool
     
-    internal enum Error: Swift.Error, CustomStringConvertible {
+    nonisolated internal enum Error: Swift.Error, CustomStringConvertible {
         case malformedSQLResult
         case requiresCustomMigration
         case schemaMetadataDecodingFailed(underlying: any Swift.Error)
@@ -176,7 +173,9 @@ internal final class DataStoreMigration: StoreBound {
             case .missingTableDefinition(let entity):
                 return "No table definition was generated for entity: \(entity)"
             case .unsupportedAlteration(let detail):
-                return "Unsupported schema alteration: \(detail)"
+                return """
+                The schema change is not supported by this store and cannot be migrated automatically or with a custom migration: \(detail)
+                """
             }
         }
     }
@@ -417,7 +416,9 @@ internal final class DataStoreMigration: StoreBound {
                 try store.setValue(newSchemaSet.ormSchema, forKey: "schema")
             }
         case .unsupported:
-            throw Error.unsupportedAlteration(detail: "Plan classified as unsupported.")
+            throw Error.unsupportedAlteration(detail: Self.describe(issues: analysis.issues.filter {
+                $0.severity == .unsupported
+            }))
         }
     }
     
@@ -476,7 +477,7 @@ internal final class DataStoreMigration: StoreBound {
                 }
                 guard !existingSourceColumns.isEmpty else { continue }
                 guard existingSourceColumns.count == sourceColumns.count else {
-                    logger.debug("Skipping uniqueness validation: some source columns do not exist yet.", metadata: [
+                    logger.debug("Skipping uniqueness validation: Some source columns do not exist yet.", metadata: [
                         "entity": "\(entity)",
                         "source_columns": "\(sourceColumns)",
                         "destination_columns": "\(destinationColumns)",
@@ -541,8 +542,10 @@ internal final class DataStoreMigration: StoreBound {
                     )
                 }
             case .columnAllNull(let entity, let column):
-                guard try tableExists(entity, connection: connection) else { continue }
-                guard try columnExists(column, in: entity, connection: connection) else { continue }
+                guard try tableExists(entity, connection: connection),
+                      try columnExists(column, in: entity, connection: connection) else {
+                    continue
+                }
                 let rows = try connection.fetch(
                     """
                     SELECT 1 FROM \(quote(entity))
@@ -557,8 +560,10 @@ internal final class DataStoreMigration: StoreBound {
                     )
                 }
             case .columnUnused(let entity, let column, let isOptional):
-                guard try tableExists(entity, connection: connection) else { continue }
-                guard try columnExists(column, in: entity, connection: connection) else { continue }
+                guard try tableExists(entity, connection: connection),
+                      try columnExists(column, in: entity, connection: connection) else {
+                    continue
+                }
                 let rows: [[Any?]]
                 if isOptional {
                     rows = try connection.fetch(
@@ -620,7 +625,7 @@ internal final class DataStoreMigration: StoreBound {
         return result
     }
     
-    internal struct SchemaSet {
+    nonisolated internal struct SchemaSet {
         internal let ormSchema: Schema
         internal let sqlSchema: DatabaseSchema
         internal let sql: [String: String]
@@ -640,32 +645,32 @@ internal final class DataStoreMigration: StoreBound {
         }
     }
     
-    internal struct AuxiliaryObject: Sendable, Hashable {
+    nonisolated internal struct AuxiliaryObject: Hashable, Sendable {
         internal let table: String
         internal let name: String
         internal let kind: Kind
         internal let sql: String
         
-        internal enum Kind: String, Sendable, Hashable {
+        nonisolated internal enum Kind: String, Hashable, Sendable {
             case index
             case trigger
         }
     }
     
-    internal struct CustomMigrationContext {
+    nonisolated internal struct CustomMigrationContext {
         internal let oldSchema: SchemaSet
         internal let newSchema: SchemaSet
         internal let operations: [Operation]
     }
     
-    internal enum Style: Sendable {
+    nonisolated internal enum Style: Sendable {
         case compatible
         case inferred
         case custom
         case unsupported
     }
     
-    internal enum Step: Hashable, Sendable {
+    nonisolated internal enum Step: Hashable, Sendable {
         case validate([Validation])
         case sql([String])
         case rebuildTable(Rebuild)
@@ -673,11 +678,11 @@ internal final class DataStoreMigration: StoreBound {
         case persistSchemaMetadata
     }
     
-    internal struct Custom: Hashable, Sendable {
+    nonisolated internal struct Custom: Hashable, Sendable {
         internal let operations: [Operation]
     }
     
-    internal struct Rebuild: Hashable, Sendable {
+    nonisolated internal struct Rebuild: Hashable, Sendable {
         internal let table: String
         internal let temporaryTable: String
         internal let createSQL: String
@@ -687,7 +692,7 @@ internal final class DataStoreMigration: StoreBound {
         internal let auxiliarySQL: [String]
     }
     
-    internal enum Validation: Hashable, Sendable {
+    nonisolated internal enum Validation: Hashable, Sendable {
         case uniqueness(entity: String, sourceColumns: [String], destinationColumns: [String])
         case nonNull(entity: String, sourceColumn: String, destinationColumn: String)
         case foreignKey(entity: String, columns: [String], referencedTable: String, referencedColumns: [String])
@@ -697,18 +702,18 @@ internal final class DataStoreMigration: StoreBound {
         case typeConvertible(entity: String, column: String)
     }
     
-    internal enum Severity: Hashable, Sendable {
+    nonisolated internal enum Severity: Hashable, Sendable {
         case custom
         case unsupported
     }
     
-    internal struct Issue: Hashable, Sendable {
+    nonisolated internal struct Issue: Hashable, Sendable {
         internal let severity: Severity
         internal let kind: Kind
         internal let entityName: String
         internal let propertyName: String?
         
-        internal enum Kind: Hashable, Sendable {
+        nonisolated internal enum Kind: Hashable, Sendable {
             case ambiguousRename
             case incompatibleTypeChange
             case transformableRepresentationChanged
@@ -716,24 +721,23 @@ internal final class DataStoreMigration: StoreBound {
             case uniquenessRequiresValidation
             case nonOptionalWithoutDefault
             case externalStorageSemanticsChanged
-            case unsupportedHashModifier
             case unsupportedPropertyKindChange
         }
     }
     
-    internal struct Warning: Hashable, Sendable {
+    nonisolated internal struct Warning: Hashable, Sendable {
         internal let kind: Kind
         internal let entityName: String
         internal let propertyName: String?
         
-        internal enum Kind: Hashable, Sendable {
+        nonisolated internal enum Kind: Hashable, Sendable {
             case dataValidationRequired
             case destructiveChange
             case tableRebuildRequired
         }
     }
     
-    internal enum Operation: Equatable, Hashable {
+    nonisolated internal enum Operation: Hashable {
         case createEntity(name: String)
         case dropEntity(name: String)
         case renameEntity(from: String, to: String)
@@ -754,45 +758,30 @@ internal final class DataStoreMigration: StoreBound {
         
         internal var entityName: String {
             switch self {
-            case .createEntity(let name):
-                return name
-            case .dropEntity(let name):
-                return name
-            case .renameEntity(let from, _):
-                return from
-            case .addAttribute(let entity, _, _, _):
-                return entity
-            case .dropAttribute(let entity, _):
-                return entity
-            case .renameAttribute(let entity, _, _):
-                return entity
-            case .alterAttributeNullability(let entity, _, _):
-                return entity
-            case .alterAttributeType(let entity, _):
-                return entity
-            case .alterAttributeTransformable(let entity, _):
-                return entity
-            case .addUniqueConstraint(let entity, _):
-                return entity
-            case .dropUniqueConstraint(let entity, _):
-                return entity
-            case .addIndex(let entity, _):
-                return entity
-            case .dropIndex(let entity, _):
-                return entity
-            case .addRelationship(let entity, _):
-                return entity
-            case .dropRelationship(let entity, _):
-                return entity
-            case .renameRelationship(let entity, _, _):
-                return entity
-            case .alterRelationship(let entity, _):
-                return entity
+            case .createEntity(let name): name
+            case .dropEntity(let name): name
+            case .renameEntity(let from, _): from
+            case .addAttribute(let entity, _, _, _): entity
+            case .dropAttribute(let entity, _): entity
+            case .renameAttribute(let entity, _, _): entity
+            case .alterAttributeNullability(let entity, _, _): entity
+            case .alterAttributeType(let entity, _): entity
+            case .toggleExternalStorage(let entity, _, _): entity
+            case .alterAttributeTransformable(let entity, _): entity
+            case .addUniqueConstraint(let entity, _): entity
+            case .dropUniqueConstraint(let entity, _): entity
+            case .addIndex(let entity, _): entity
+            case .dropIndex(let entity, _): entity
+            case .addRelationship(let entity, _): entity
+            case .dropRelationship(let entity, _): entity
+            case .renameRelationship(let entity, _, _): entity
+            case .alterRelationship(let entity, _): entity
+            case .changeInheritance(let entity, _, _): entity
             }
         }
     }
     
-    internal struct Plan: Sendable {
+    nonisolated internal struct Plan: Sendable {
         internal let style: Style
         internal let steps: [Step]
         internal let requiresCustomHandler: Bool
@@ -812,7 +801,7 @@ internal final class DataStoreMigration: StoreBound {
         }
     }
     
-    internal struct Planner: Sendable {
+    nonisolated internal struct Planner: Sendable {
         internal let steps: [Step]
         internal let requiresCustomHandler: Bool
         
@@ -825,7 +814,9 @@ internal final class DataStoreMigration: StoreBound {
             warnings: [Warning]
         ) throws -> Self {
             guard style != .unsupported else {
-                throw DataStoreError.unsupportedFeature
+                throw Error.unsupportedAlteration(detail: DataStoreMigration.describe(issues: issues.filter {
+                    $0.severity == .unsupported
+                }))
             }
             logger.debug("Making \(style) migration steps: \(operations.count) operations")
             var steps = [Step]()
@@ -859,10 +850,17 @@ internal final class DataStoreMigration: StoreBound {
             }
             validations.append(contentsOf: entityValidations)
             for (entityName, entityOperations) in grouped {
-                validations.append(contentsOf: plannedValidations(for: entityOperations, old: old))
                 if entityOperations.contains(where: {
                     switch $0 {
-                    case .addRelationship, .dropRelationship, .renameRelationship, .alterRelationship: true
+                    case
+                            .addRelationship,
+                            .dropRelationship,
+                            .renameRelationship,
+                            .alterRelationship,
+                            .alterAttributeType,
+                            .alterAttributeTransformable,
+                            .changeInheritance
+                        : true
                     default: false
                     }
                 }) {
@@ -873,29 +871,23 @@ internal final class DataStoreMigration: StoreBound {
                     )
                     continue
                 }
+                validations.append(contentsOf: plannedValidations(for: entityOperations, old: old))
                 if entityOperations.contains(where: {
                         switch $0 {
                         case .addAttribute(_, _, let defaultValue, let isOptional):
                             if isOptional == false, defaultValue == nil { return true }
-                        case .dropAttribute:
-                            return true
-                        case .alterAttributeNullability:
-                            return true
-                        case .alterAttributeType:
-                            return true
-                        case .alterAttributeTransformable:
-                            return true
-                        case .addUniqueConstraint:
-                            return true
-                        case .dropUniqueConstraint:
-                            return true
-                        case .addRelationship:
-                            return true
-                        case .dropRelationship:
-                            return true
-                        case .renameRelationship:
-                            return true
-                        case .alterRelationship:
+                        case
+                                .dropAttribute,
+                                .alterAttributeNullability,
+                                .alterAttributeType,
+                                .alterAttributeTransformable,
+                                .addUniqueConstraint,
+                                .dropUniqueConstraint,
+                                .addRelationship,
+                                .dropRelationship,
+                                .renameRelationship,
+                                .alterRelationship
+                            :
                             return true
                         default:
                             break
@@ -985,15 +977,6 @@ internal final class DataStoreMigration: StoreBound {
                     if !isOptional, defaultValue == nil {
                         validations.append(.tableEmpty(entity: entity))
                     }
-                case .dropAttribute(let entity, let name):
-                    let isOptional = {
-                        guard let table = old.tablesByName[entity],
-                              let existingColumn = table.columns.first(where: { $0.name == name }) else {
-                            return true
-                        }
-                        return existingColumn.isOptional
-                    }()
-                    validations.append(.columnUnused(entity: entity, column: name, isOptional: isOptional))
                 case .alterAttributeType(let entity, let name):
                     let sourceColumn = renamedColumns[name] ?? name
                     validations.append(.columnAllNull(entity: entity, column: sourceColumn))
@@ -1049,7 +1032,12 @@ internal final class DataStoreMigration: StoreBound {
             return sql
         }
         
-        private static func rebuild(for entityName: String, old: SchemaSet, new: SchemaSet, operations: [Operation]) throws -> Rebuild? {
+        private static func rebuild(
+            for entityName: String,
+            old: SchemaSet,
+            new: SchemaSet,
+            operations: [Operation]
+        ) throws -> Rebuild? {
             guard let newDefinition = new.tablesByName[entityName] else {
                 return nil
             }
@@ -1124,7 +1112,7 @@ internal final class DataStoreMigration: StoreBound {
 }
 
 extension DataStoreMigration {
-    public struct Classifier: Sendable {
+    nonisolated public struct Classifier: Sendable {
         public let style: Style
         public let operations: [Operation]
         public let issues: [Issue]
@@ -1243,7 +1231,7 @@ extension DataStoreMigration {
         var changed: [Inner] { get set }
     }
     
-    internal struct SchemaDiff: Diffing {
+    nonisolated internal struct SchemaDiff: Diffing {
         internal var added: [Schema.Entity] = []
         internal var removed: [Schema.Entity] = []
         internal var changed: [EntityDiff] = []
@@ -1277,7 +1265,7 @@ extension DataStoreMigration {
         }
     }
     
-    internal struct EntityDiff: Diffing {
+    nonisolated internal struct EntityDiff: Diffing {
         internal var added: [any SchemaProperty] = []
         internal var removed: [any SchemaProperty] = []
         internal var changed: [any Diffing] = []
@@ -1317,7 +1305,7 @@ extension DataStoreMigration {
                         operations.append(.addAttribute(
                             entity: newEntity.name,
                             name: attribute.name,
-                            defaultValue: .init(any: attribute.defaultValue as Any),
+                            defaultValue: attribute.defaultValue.map { .init(any: $0) },
                             isOptional: attribute.isOptional
                         ))
                         if attribute.isUnique {
@@ -1329,9 +1317,8 @@ extension DataStoreMigration {
                             ))
                         }
                         if attribute.isOptional == false, attribute.defaultValue == nil {
-                            issues.append(.init(
-                                severity: .custom,
-                                kind: .nonOptionalWithoutDefault,
+                            warnings.append(.init(
+                                kind: .dataValidationRequired,
                                 entityName: newEntity.name,
                                 propertyName: attribute.name
                             ))
@@ -1351,7 +1338,7 @@ extension DataStoreMigration {
                 }
                 switch (oldProperty, newProperty) {
                 case (let oldAttribute as Schema.Attribute, let newAttribute as Schema.Attribute):
-                    if oldAttribute != newAttribute {
+                    if oldAttribute != newAttribute || Set(oldAttribute.options) != Set(newAttribute.options) {
                         let diff = PropertyDiff(old: oldAttribute, new: newAttribute, entityName: newEntity.name)
                         logger.info("Found attribute has changed in entity: \(newEntity.name).\(newAttribute.name)")
                         operations.append(contentsOf: diff.operations)
@@ -1402,7 +1389,7 @@ extension DataStoreMigration {
         }
     }
     
-    internal struct PropertyDiff<T>: Diffing where T: SchemaProperty {
+    nonisolated internal struct PropertyDiff<T>: Diffing where T: SchemaProperty {
         internal var added: [any SchemaProperty] = []
         internal var removed: [any SchemaProperty] = []
         internal var changed: [any SchemaProperty] = []
@@ -1416,12 +1403,6 @@ extension DataStoreMigration {
                 if newAttribute.isOptional == false {
                     warnings.append(.init(
                         kind: .dataValidationRequired,
-                        entityName: entityName,
-                        propertyName: newAttribute.name
-                    ))
-                    issues.append(.init(
-                        severity: .custom,
-                        kind: .nonOptionalWithoutDefault,
                         entityName: entityName,
                         propertyName: newAttribute.name
                     ))
@@ -1442,15 +1423,12 @@ extension DataStoreMigration {
                 } else {
                     operations.append(.dropUniqueConstraint(entity: entityName, columns: [newAttribute.name]))
                 }
-                logger.debug(
-                    "Property diff changed unique constraint.",
-                    metadata: [
-                        "old": "\(oldAttribute.name) = \(oldAttribute.isUnique)",
-                        "new": "\(newAttribute.name) = \(newAttribute.isUnique)"
-                    ]
-                )
+                logger.debug("Property diff changed unique constraint.", metadata: [
+                    "old": "\(oldAttribute.name) = \(oldAttribute.isUnique)",
+                    "new": "\(newAttribute.name) = \(newAttribute.isUnique)"
+                ])
             }
-            if ObjectIdentifier(oldAttribute.valueType) != ObjectIdentifier(newAttribute.valueType) {
+            if ObjectIdentifier(unwrapOptionalMetatype(oldAttribute.valueType)) != ObjectIdentifier(unwrapOptionalMetatype(newAttribute.valueType)) {
                 operations.append(.alterAttributeType(entity: entityName, name: newAttribute.name))
                 issues.append(.init(
                     severity: .custom,
@@ -1479,18 +1457,10 @@ extension DataStoreMigration {
                     propertyName: newAttribute.name
                 ))
             }
-            if oldAttribute.hashModifier != nil {
+            if oldAttribute.hashModifier != newAttribute.hashModifier {
                 issues.append(.init(
-                    severity: .unsupported,
-                    kind: .unsupportedHashModifier,
-                    entityName: entityName,
-                    propertyName: newAttribute.name
-                ))
-            }
-            if newAttribute.hashModifier != nil {
-                issues.append(.init(
-                    severity: .unsupported,
-                    kind: .unsupportedHashModifier,
+                    severity: .custom,
+                    kind: .hashModifierChanged,
                     entityName: entityName,
                     propertyName: newAttribute.name
                 ))
@@ -1559,18 +1529,10 @@ extension DataStoreMigration {
                     propertyName: newRelationship.name
                 ))
             }
-            if oldRelationship.hashModifier != nil {
+            if oldRelationship.hashModifier != newRelationship.hashModifier {
                 issues.append(.init(
-                    severity: .unsupported,
-                    kind: .unsupportedHashModifier,
-                    entityName: entityName,
-                    propertyName: newRelationship.name
-                ))
-            }
-            if newRelationship.hashModifier != nil {
-                issues.append(.init(
-                    severity: .unsupported,
-                    kind: .unsupportedHashModifier,
+                    severity: .custom,
+                    kind: .hashModifierChanged,
                     entityName: entityName,
                     propertyName: newRelationship.name
                 ))
