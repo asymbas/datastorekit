@@ -150,7 +150,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
     
     nonisolated internal enum Error: Swift.Error, CustomStringConvertible {
         case malformedSQLResult
-        case requiresCustomMigration
+        case requiresCustomMigration(detail: String)
         case schemaMetadataDecodingFailed(underlying: any Swift.Error)
         case foreignKeyConstraintFailure(violations: [[String: (any Sendable)?]])
         case validationFailed(Validation, detail: String?)
@@ -161,8 +161,11 @@ nonisolated internal final class DataStoreMigration: StoreBound {
             switch self {
             case .malformedSQLResult:
                 return "Encountered a malformed result while reading SQLite metadata."
-            case .requiresCustomMigration:
-                return "The migration requires a custom handler that was not provided."
+            case .requiresCustomMigration(let detail):
+                return """
+                The schema change cannot be migrated automatically and requires a custom migration.
+                Provide a SchemaMigrationPlan with a MigrationStage.custom stage covering: \(detail)
+                """
             case .schemaMetadataDecodingFailed(let underlyingError):
                 return "Failed to decode the persisted SwiftData.Schema: \(underlyingError)"
             case .foreignKeyConstraintFailure(let violations):
@@ -182,10 +185,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
     
     @discardableResult internal init?(
         store: Store,
-        custom: ((
-            CustomMigrationContext,
-            borrowing DatabaseConnection<Store>
-        ) throws -> Void)? = nil
+        custom: ((CustomMigrationContext, borrowing DatabaseConnection<Store>) throws -> Void)? = nil
     ) throws {
         self.store = store
         let newSchema = self.store.schema
@@ -386,7 +386,11 @@ nonisolated internal final class DataStoreMigration: StoreBound {
             return
         }
         if plan.requiresCustomHandler, custom == nil {
-            throw Error.requiresCustomMigration
+            let customIssues = analysis.issues.filter { $0.severity == .custom }
+            let detail = customIssues.isEmpty
+            ? Self.describe(operations: plan.customOperations)
+            : Self.describe(issues: customIssues)
+            throw Error.requiresCustomMigration(detail: detail)
         }
         switch plan.style {
         case .inferred, .custom:
@@ -446,7 +450,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
             }
         case .custom(let customStep):
             guard let custom else {
-                throw Error.requiresCustomMigration
+                throw Error.requiresCustomMigration(detail: Self.describe(operations: customStep.operations))
             }
             let context = CustomMigrationContext(
                 oldSchema: oldSchemaSet,
@@ -624,6 +628,92 @@ nonisolated internal final class DataStoreMigration: StoreBound {
         }
         return result
     }
+
+    nonisolated internal static func describe(issues: [Issue]) -> String {
+        let descriptions = issues.map { issue -> String in
+            let location = issue.propertyName.map { "\(issue.entityName).\($0)" } ?? issue.entityName
+            return "\(location) (\(describe(issue.kind)))"
+        }
+        return descriptions.isEmpty ? "an unspecified change" : descriptions.joined(separator: "; ")
+    }
+
+    nonisolated internal static func describe(operations: [Operation]) -> String {
+        let descriptions = descriptions(of: operations)
+        return descriptions.isEmpty ? "an unspecified change" : descriptions.joined(separator: "; ")
+    }
+
+    nonisolated internal static func descriptions(of operations: [Operation]) -> [String] {
+        operations.map(describe(operation:))
+    }
+
+    nonisolated private static func describe(_ kind: Issue.Kind) -> String {
+        switch kind {
+        case .ambiguousRename:
+            "an ambiguous rename that cannot be resolved automatically"
+        case .incompatibleTypeChange:
+            "an incompatible value type change"
+        case .transformableRepresentationChanged:
+            "a change to its transformable representation"
+        case .relationshipTopologyChanged:
+            "a relationship topology change"
+        case .uniquenessRequiresValidation:
+            "a uniqueness constraint that requires validation"
+        case .nonOptionalWithoutDefault:
+            "a non-optional value without a default"
+        case .externalStorageSemanticsChanged:
+            "a change to external storage semantics"
+        case .hashModifierChanged:
+            "a changed hash modifier, which requires relocating the property's data"
+        case .unsupportedPropertyKindChange:
+            "a change between an attribute and a relationship"
+        case .inheritanceHierarchyChanged:
+            "a change to its inheritance hierarchy, which requires relocating data between class tables"
+        }
+    }
+
+    nonisolated private static func describe(operation: Operation) -> String {
+        let location = operation.entityName
+        switch operation {
+        case .createEntity(let name):
+            return "create entity \(name)"
+        case .dropEntity(let name):
+            return "drop entity \(name)"
+        case .renameEntity(let from, let to):
+            return "rename entity \(from) to \(to)"
+        case .addAttribute(_, let name, _, _):
+            return "add attribute \(location).\(name)"
+        case .dropAttribute(_, let name):
+            return "drop attribute \(location).\(name)"
+        case .renameAttribute(_, let from, let to):
+            return "rename attribute \(location).\(from) to \(to)"
+        case .alterAttributeNullability(_, let name, _):
+            return "alter nullability of \(location).\(name)"
+        case .alterAttributeType(_, let name):
+            return "alter type of \(location).\(name)"
+        case .toggleExternalStorage(_, let attribute, let enabled):
+            return "\(enabled ? "enable" : "disable") external storage for \(location).\(attribute)"
+        case .alterAttributeTransformable(_, let name):
+            return "alter transformable representation of \(location).\(name)"
+        case .addUniqueConstraint(_, let columns):
+            return "add unique constraint on \(location)(\(columns.joined(separator: ", ")))"
+        case .dropUniqueConstraint(_, let columns):
+            return "drop unique constraint on \(location)(\(columns.joined(separator: ", ")))"
+        case .addIndex(_, let index):
+            return "add index \(index.name) on \(location)"
+        case .dropIndex(_, let index):
+            return "drop index \(index.name) on \(location)"
+        case .addRelationship(_, let name):
+            return "add relationship \(location).\(name)"
+        case .dropRelationship(_, let name):
+            return "drop relationship \(location).\(name)"
+        case .renameRelationship(_, let from, let to):
+            return "rename relationship \(location).\(from) to \(to)"
+        case .alterRelationship(_, let name):
+            return "alter relationship \(location).\(name)"
+        case .changeInheritance(let entity, let from, let to):
+            return "change inheritance of \(entity) from \(from ?? "none") to \(to ?? "none")"
+        }
+    }
     
     nonisolated internal struct SchemaSet {
         internal let ormSchema: Schema
@@ -785,6 +875,13 @@ nonisolated internal final class DataStoreMigration: StoreBound {
         internal let style: Style
         internal let steps: [Step]
         internal let requiresCustomHandler: Bool
+        
+        internal var customOperations: [Operation] {
+            steps.flatMap { step -> [Operation] in
+                if case .custom(let custom) = step { return custom.operations }
+                return []
+            }
+        }
         
         internal init(old: SchemaSet, new: SchemaSet, analysis: Classifier) throws {
             let result = try Planner.makeSteps(

@@ -162,7 +162,18 @@ public final class DatabaseStore: DataStore, Sendable {
             try connection.execute(InternalTable.createTable)
             try connection.execute(HistoryTable.createTable)
         }
-        try DataStoreMigration(store: self) { context, connection in }
+        let userMigration = configuration.customMigration
+        let adapter: ((DataStoreMigration.CustomMigrationContext, borrowing DatabaseConnection<DatabaseStore>) throws -> Void)? = userMigration.map { handler in
+            { context, connection in
+                let publicContext = DataStoreMigrationContext(
+                    oldSchema: context.oldSchema.ormSchema,
+                    newSchema: context.newSchema.ormSchema,
+                    pendingChanges: DataStoreMigration.descriptions(of: context.operations)
+                )
+                try handler(publicContext, connection)
+            }
+        }
+        try DataStoreMigration(store: self, custom: adapter)
         if history?.synchronizers.isEmpty == false {
             Task { @DatabaseActor in history?.scheduleSynchronizationIfNeeded() }
         }

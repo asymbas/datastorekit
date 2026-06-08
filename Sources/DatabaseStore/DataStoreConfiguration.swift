@@ -33,6 +33,7 @@ nonisolated private let shouldDisableLogging: Bool = {
     }
 }()
 
+// TODO: Try mapping SwiftData migration plan with SQL data store.
 // TODO: Rename `DatabaseConfiguration`.
 // FIXME: `DatabaseConfiguration` cannot be reused to open another `DatabaseStore`.
 
@@ -41,6 +42,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     /// Inherited from `DataStoreConfiguration.Store`.
     public typealias Store = DatabaseStore
     nonisolated private var storage: Storage
+    nonisolated public let customMigration: DataStoreMigrationHandler?
     
     nonisolated private mutating func ensureUniqueStorage() {
         if storage.container.load() != nil {
@@ -200,7 +202,8 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         mode: DataStoreDebugging = .default,
         cachePolicy: CachePolicy = .default,
         attachment: (any DataStoreDelegate)? = nil,
-        synchronizers: [any DataStoreSynchronizerConfiguration] = []
+        synchronizers: [any DataStoreSynchronizerConfiguration] = [],
+        customMigration: DataStoreMigrationHandler? = nil
     ) {
         let location: SQLite.StoreType = {
             guard case .file(let path) = location else {
@@ -326,7 +329,9 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                     guard table != InternalTable.tableName && table != HistoryTable.tableName else {
                         return
                     }
+                    #if DEBUG
                     logger.trace("Callback \(operation) \(database) \(table) \(rowID)")
+                    #endif
                 }
             )
         }
@@ -346,6 +351,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             container: nil,
             makeDatabaseQueue: makeDatabaseQueue
         )
+        self.customMigration = customMigration
         if configurations[.predicate] == nil {
             self.configurations[.predicate] = SQLPredicateTranslatorOptions([
                 .allowKeyPathVariantsForPropertyLookup,
@@ -394,7 +400,8 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         options: DataStoreOptions = [],
         attachment: (any DataStoreDelegate)? = nil,
         cloudKit: CloudKitDatabase? = nil,
-        synchronizers: [any DataStoreSynchronizerConfiguration] = [] // TODO: Update documentation.
+        synchronizers: [any DataStoreSynchronizerConfiguration] = [], // TODO: Update documentation.
+        customMigration: DataStoreMigrationHandler? = nil
     ) {
         let resolvedName: String = {
             if let name, !name.isEmpty { return name }
@@ -446,15 +453,14 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             schema: schema,
             migrationPlan: migrationPlan,
             options: options,
-            flags: allowsSave
-            ? [.readWrite, .create, .fullMutex]
-            : [.readOnly, .fullMutex],
+            flags: allowsSave ? [.readWrite, .create, .fullMutex] : [.readOnly, .fullMutex],
             location: .file(path: resolvedURL.path),
             externalStorageURL: externalStorageURL,
             allowsSave: allowsSave,
             size: size,
             attachment: attachment,
-            synchronizers: resolvedSynchronizers
+            synchronizers: resolvedSynchronizers,
+            customMigration: customMigration
         )
     }
     
@@ -621,12 +627,13 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         if FileManager.default.fileExists(atPath: storeURL.path) {
             do {
                 let connection = try Store.Handle(at: .file(path: storeURL.path), flags: .readOnly, role: .reader)
+//                _ = try execute(sql: "PRAGMA busy_timeout = 5000;")
                 let applicationID = try execute(sql: "PRAGMA application_id;")
                 let userVersion = try execute(sql: "PRAGMA user_version;")
-                logger.trace(
-                    "Validating store file.",
-                    metadata: ["applicationID": "\(applicationID)", "userVersion": "\(userVersion)"]
-                )
+                logger.trace("Validating store file.", metadata: [
+                    "applicationID": "\(applicationID)",
+                    "userVersion": "\(userVersion)"
+                ])
                 func execute(sql: String) throws -> Int32 {
                     let statement = try PreparedStatement(sql: sql, handle: connection)
                     var iterator = statement.rows.makeIterator()
@@ -660,8 +667,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     }
     
     nonisolated private static func transientBaseURL() -> URL {
-        URL.temporaryDirectory
-            .appending(path: "DataStoreKit", directoryHint: .isDirectory)
+        .temporaryDirectory.appending(path: "DataStoreKit", directoryHint: .isDirectory)
     }
     
     nonisolated private static func transientStoreURL(
