@@ -812,6 +812,8 @@ nonisolated internal final class DataStoreMigration: StoreBound {
             case nonOptionalWithoutDefault
             case externalStorageSemanticsChanged
             case unsupportedPropertyKindChange
+            case hashModifierChanged
+            case inheritanceHierarchyChanged
         }
     }
     
@@ -845,6 +847,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
         case dropRelationship(entity: String, name: String)
         case renameRelationship(entity: String, from: String, to: String)
         case alterRelationship(entity: String, name: String)
+        case changeInheritance(entity: String, from: String?, to: String?)
         
         internal var entityName: String {
             switch self {
@@ -1371,6 +1374,19 @@ extension DataStoreMigration {
         internal var warnings: OrderedSet<Warning> = []
         
         internal init(old oldEntity: Schema.Entity, new newEntity: Schema.Entity) throws {
+            if oldEntity.superentity?.name != newEntity.superentity?.name {
+                operations.append(.changeInheritance(
+                    entity: newEntity.name,
+                    from: oldEntity.superentity?.name,
+                    to: newEntity.superentity?.name
+                ))
+                issues.append(.init(
+                    severity: .custom,
+                    kind: .inheritanceHierarchyChanged,
+                    entityName: newEntity.name,
+                    propertyName: nil
+                ))
+            }
             let oldProperties = oldEntity.storedProperties
             let newProperties = newEntity.storedProperties
             var consumedOldPropertyNames = Set<String>()
