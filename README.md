@@ -150,9 +150,6 @@ In order to save changes manually while ensuring completeness, you can use the s
 
 ## Known Issues
 
-- **Required one-to-one relationships can form dependency cycles**<br>
-  Cyclic non-optional to-one relationships are currently not supported during a single insert pass. Newly inserted models that reference each other through a bidirectional non-optional one-to-one relationship can fail to save in the same operation, because DataStoreKit resolves required to-one dependencies before inserting a snapshot. A required to-one dependency blocks insertion when its related identifier is still uncommitted. When both sides require the other side to already exist, no valid insertion order can be established. As a result, both inserts may be repeatedly deferred until the save operation reaches its maximum retry count.<br>
-  - **Workaround:** Make one side optional during insertion.
 - **Tombstones cannot be instantiated**<br>
   SwiftData does not provide a way to create `HistoryTombstone` for preserved values.<br>
   - **Workaround:** Use the subscript on the `DatabaseHistoryDelete` instance rather than its `tombstone` property.

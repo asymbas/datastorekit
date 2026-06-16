@@ -653,8 +653,21 @@ public final class DatabaseStore: DataStore, Sendable {
         var connection = try queue.connection(.writer, for: request.editingState)
         #endif
         try connection.withTransaction(nil) {
+            try connection.execute("PRAGMA defer_foreign_keys = ON;")
             var inheritedIdentifiers = Set<UUID>()
             var inserted = Deque(request.inserted.map { Payload(snapshot: $0) })
+            for payload in inserted {
+                let temporaryIdentifier = payload.snapshot.persistentIdentifier
+                guard temporaryIdentifier.storeIdentifier == nil,
+                      remappedIdentifiers[temporaryIdentifier] == nil else {
+                    continue
+                }
+                remappedIdentifiers[temporaryIdentifier] = try .identifier(
+                    for: self.identifier,
+                    entityName: temporaryIdentifier.entityName,
+                    primaryKey: UUID().uuidString
+                )
+            }
             let maxInsertAttempts = 10
             while let insert = inserted.popFirst() {
                 var snapshot = insert.snapshot
