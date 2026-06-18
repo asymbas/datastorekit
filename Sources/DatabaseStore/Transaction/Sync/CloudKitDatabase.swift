@@ -34,8 +34,7 @@ extension DatabaseConfiguration {
         ) {
             self.containerIdentifier = containerIdentifier
             self.remoteAuthor = remoteAuthor
-            self.zoneName = zoneName
-            ?? "\((Bundle.main.bundleIdentifier ?? "Application")).DataStoreKit"
+            self.zoneName = zoneName ?? "DataStoreKit"
             self.databaseScope = databaseScope
             self.delegate = delegate ?? Replicator.DefaultSyncDelegate(
                 excludedEntities: [
@@ -50,9 +49,9 @@ extension DatabaseConfiguration {
         
         nonisolated public static func `private`(_ privateDatabaseName: String) -> Self {
             self.init(
-                containerIdentifier: nil,
+                containerIdentifier: privateDatabaseName,
                 remoteAuthor: "CloudKit",
-                zoneName: privateDatabaseName,
+                zoneName: "DataStoreKit",
                 databaseScope: .private,
                 delegate: nil
             )
