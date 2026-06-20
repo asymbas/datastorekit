@@ -43,3 +43,22 @@ where Snapshot: DataStoreSnapshot {
         self.snapshotsToReregister = snapshotsToReregister
     }
 }
+
+package final class SyncSaveChangesResult<Snapshot>: SaveChangesResult
+where Snapshot: DataStoreSnapshot {
+    public typealias SnapshotType = Snapshot
+    nonisolated public let storeIdentifier: String
+    nonisolated public let remappedIdentifiers: [PersistentIdentifier : PersistentIdentifier]
+    
+    nonisolated public let snapshotsToReregister: [PersistentIdentifier : Snapshot]
+    
+    nonisolated public init(
+        for storeIdentifier: String,
+        remappedIdentifiers: [PersistentIdentifier : PersistentIdentifier],
+        snapshotsToReregister: [PersistentIdentifier : Snapshot]
+    ) {
+        self.storeIdentifier = storeIdentifier
+        self.remappedIdentifiers = remappedIdentifiers
+        self.snapshotsToReregister = snapshotsToReregister
+    }
+}

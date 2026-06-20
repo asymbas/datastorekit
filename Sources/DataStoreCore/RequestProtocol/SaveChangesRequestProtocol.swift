@@ -42,3 +42,25 @@ where Snapshot: DataStoreSnapshot, EditingState: EditingStateProviding {
         self.deleted = deleted
     }
 }
+
+package struct SyncSaveChangesRequest<Snapshot, EditingState>: SaveChangesRequest
+where Snapshot: DataStoreSnapshot, EditingState: EditingStateProviding {
+    public typealias SnapshotType = Snapshot
+    public typealias EditingStateType = EditingState
+    nonisolated public var editingState: EditingState
+    nonisolated public var inserted: [Snapshot]
+    nonisolated public var updated: [Snapshot]
+    nonisolated public var deleted: [Snapshot]
+    
+    nonisolated public init(
+        editingState: EditingState,
+        inserted: [Snapshot],
+        updated: [Snapshot],
+        deleted: [Snapshot]
+    ) {
+        self.editingState = editingState
+        self.inserted = inserted
+        self.updated = updated
+        self.deleted = deleted
+    }
+}
