@@ -364,6 +364,46 @@ extension HistoryState {
         }
     }
     
+    internal func updateRemoteApplyStatus(
+        for id: String,
+        errorMessage: String?,
+        resolvedConflictsDelta: Int
+    ) {
+        guard var status = self.synchronizationStatusesByID[id] else {
+            return
+        }
+        status.lastRemoteApplyErrorMessage = errorMessage
+        if resolvedConflictsDelta > 0 {
+            status.resolvedIdentityConflicts += resolvedConflictsDelta
+        }
+        self.synchronizationStatusesByID[id] = status
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .dataStoreSynchronizationStatusDidChange,
+                object: self.store,
+                userInfo: ["id": id, "status": status]
+            )
+        }
+    }
+    
+    internal func updatePendingUnresolvedCount(for id: String, count: Int) {
+        guard var status = self.synchronizationStatusesByID[id] else {
+            return
+        }
+        guard status.pendingUnresolvedCount != count else {
+            return
+        }
+        status.pendingUnresolvedCount = count
+        self.synchronizationStatusesByID[id] = status
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .dataStoreSynchronizationStatusDidChange,
+                object: self.store,
+                userInfo: ["id": id, "status": status]
+            )
+        }
+    }
+    
     internal func updateCloudKitSyncStatus(phase: SynchronizationPhase, error: (any Swift.Error)? = nil) {
         guard let cloudKitSynchronizer = self.synchronizers.first(where: { $0 is DatabaseConfiguration.CloudKitDatabase.Replicator }) else {
             return

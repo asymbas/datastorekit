@@ -1088,6 +1088,34 @@ extension DatabaseStore {
         await synchronizationStatuses().first { $0.id == "cloudkit" }
     }
     
+    nonisolated public func reportRemoteApplyStatus(
+        for id: String,
+        errorMessage: String?,
+        resolvedConflictsDelta: Int
+    ) async {
+        await DatabaseActor.run {
+            self.history?.updateRemoteApplyStatus(
+                for: id,
+                errorMessage: errorMessage,
+                resolvedConflictsDelta: resolvedConflictsDelta
+            )
+        }
+    }
+    
+    nonisolated public func reportPendingUnresolvedCount(for id: String, count: Int) async {
+        await DatabaseActor.run { self.history?.updatePendingUnresolvedCount(for: id, count: count) }
+    }
+    
+    nonisolated public func republishLocalRecords() async throws {
+        guard let synchronizer = await self.history?.synchronizers.first(where: { $0 is Configuration.CloudKitDatabase.Replicator }) else {
+            return
+        }
+        guard let replicator = synchronizer as? Configuration.CloudKitDatabase.Replicator else {
+            fatalError("Unexpected synchronizer: \(synchronizer)")
+        }
+        try await replicator.republishLocalRecords()
+    }
+    
     nonisolated public func fetchChanges() async throws {
         guard let synchronizer = await self.history?.synchronizers.first(where: { $0 is Configuration.CloudKitDatabase.Replicator }) else {
             return
