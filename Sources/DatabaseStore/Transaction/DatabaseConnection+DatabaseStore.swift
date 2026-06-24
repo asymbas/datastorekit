@@ -232,6 +232,24 @@ extension DatabaseConnection where Store == DatabaseStore {
         )
     }
     
+    nonisolated public func upsert(_ snapshot: consuming Store.Snapshot) throws {
+        guard let transaction = self.transaction else {
+            preconditionFailure("Inserting backing data is only allowed during a transaction.")
+        }
+        let export = snapshot.export
+        try execute.upsertRow(
+            table: snapshot.entityName,
+            values: Dictionary(uniqueKeysWithValues: zip(export.columns, export.values))
+        )
+        try transaction.externalStorageTransaction.apply(export.externalStorageData)
+        transaction.informDidInsertRow(
+            for: snapshot.primaryKey,
+            in: snapshot.entityName,
+            columns: export.columns,
+            values: export.values
+        )
+    }
+    
     /// Updates the model's backing data into the data store.
     ///
     /// - Parameters:
