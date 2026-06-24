@@ -98,8 +98,13 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator.RecordMetadata {
 
 extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     internal func snapshot(for persistentIdentifier: PersistentIdentifier) throws -> Store.Snapshot? {
-        guard let entity = self.store.schema.entitiesByName[persistentIdentifier.entityName],
-              let type = Schema.type(for: entity) else {
+        guard var entity = self.store.schema.entitiesByName[persistentIdentifier.entityName] else {
+            throw SchemaError.entityNotRegistered
+        }
+        while let superentity = entity.superentity {
+            entity = superentity
+        }
+        guard let type = Schema.type(for: entity) else {
             throw SchemaError.entityNotRegistered
         }
         let primaryKey = self.store.manager.primaryKey(for: persistentIdentifier)
@@ -109,6 +114,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
             }
             logger.trace("Loaded current local snapshot.", metadata: [
                 "entity_name": "\(persistentIdentifier.entityName)",
+                "fetched_entity_name": "\(entity.name)",
                 "primary_key": "\(primaryKey)",
                 "snapshot_found": "\(snapshot != nil)"
             ])
@@ -116,6 +122,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         } catch {
             logger.trace("Failed to fetch current local snapshot: \(error)", metadata: [
                 "entity_name": "\(persistentIdentifier.entityName)",
+                "fetched_entity_name": "\(entity.name)",
                 "primary_key": "\(primaryKey)"
             ])
             throw error
@@ -137,15 +144,22 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         }
     }
     
-    internal func resolveRootRecordOwnership(for record: CKRecord) throws -> (entityName: String, primaryKey: String)? {
+    internal func resolveRootRecordOwnership(for record: CKRecord) throws -> (
+        entityName: String,
+        primaryKey: String
+    )? {
+        if let metadata = try loadRecordMetadata(recordName: record.recordID.recordName),
+           metadata.recordType == makeRecordType(metadata.entityName) {
+            return (entityName: metadata.entityName, primaryKey: metadata.primaryKey)
+        }
         switch record[pk] as? String {
         case let primaryKey?:
-            (
+            return (
                 entityName: makeEntityName(fromRecordType: record.recordType),
                 primaryKey: primaryKey
             )
         case nil:
-            try resolveRootRecordOwnership(for: record.recordID)
+            return try resolveRootRecordOwnership(for: record.recordID)
         }
     }
     
@@ -298,9 +312,16 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
 }
 
 extension DatabaseConfiguration.CloudKitDatabase.Replicator {
-    internal func provisionRootRecordName(recordType: String, entityName: String, primaryKey: String)
-    throws -> String {
-        if let metadata = try loadRecordMetadata(recordType: recordType, entityName: entityName, primaryKey: primaryKey) {
+    internal func provisionRootRecordName(
+        recordType: String,
+        entityName: String,
+        primaryKey: String
+    ) throws -> String {
+        if let metadata = try loadRecordMetadata(
+            recordType: recordType,
+            entityName: entityName,
+            primaryKey: primaryKey
+        ) {
             return metadata.recordName
         }
         let recordName = try makeCloudKitRecordName()
@@ -315,6 +336,33 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
             connection: connection
         )
         return recordName
+    }
+    
+    internal func provisionRelationshipRecordName(
+        destinationEntityName: String,
+        primaryKey: String
+    ) throws -> String {
+        let destinationIdentifier = try PersistentIdentifier.identifier(
+            for: store.identifier,
+            entityName: destinationEntityName,
+            primaryKey: primaryKey
+        )
+        if let destinationSnapshot = try snapshot(for: destinationIdentifier) {
+            return try provisionRootRecordName(
+                recordType: makeRecordType(destinationSnapshot.entityName),
+                entityName: destinationSnapshot.entityName,
+                primaryKey: primaryKey
+            )
+        }
+        logger.warning("Relationship destination row could not be loaded for record name provisioning.", metadata: [
+            "destination_entity_name": "\(destinationEntityName)",
+            "primary_key": "\(primaryKey)"
+        ])
+        return try provisionRootRecordName(
+            recordType: makeRecordType(destinationEntityName),
+            entityName: destinationEntityName,
+            primaryKey: primaryKey
+        )
     }
     
     internal func provisionReferenceRecordName(
@@ -382,7 +430,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         guard let row = rows.first else {
             return nil
         }
-        return RecordMetadata(positionalRow: row)
+        return .init(positionalRow: row)
     }
     
     internal func projectedRecords(for snapshot: Store.Snapshot) throws -> [CKRecord] {
@@ -409,9 +457,8 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
                 )
             },
             resolveRelationshipRecordName: { destinationEntityName, primaryKey in
-                try self.provisionRootRecordName(
-                    recordType: makeRecordType(destinationEntityName),
-                    entityName: destinationEntityName,
+                try self.provisionRelationshipRecordName(
+                    destinationEntityName: destinationEntityName,
                     primaryKey: primaryKey
                 )
             }
@@ -447,33 +494,6 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
 }
 
 extension DatabaseConfiguration.CloudKitDatabase.Replicator {
-    internal func persistSavedRecordMetadata(_ savedRecord: CKRecord) throws {
-        let connection = try store.queue.connection(.writer)
-        if let metadata = try loadRecordMetadata(recordName: savedRecord.recordID.recordName) {
-            try upsertRecordMetadata(
-                recordType: metadata.recordType,
-                recordName: metadata.recordName,
-                entityName: metadata.entityName,
-                primaryKey: metadata.primaryKey,
-                targetPrimaryKey: metadata.targetPrimaryKey,
-                systemFields: savedRecord.systemFieldsData(),
-                connection: connection
-            )
-            return
-        }
-        if let root = try resolveRootRecordOwnership(for: savedRecord) {
-            try upsertRecordMetadata(
-                recordType: savedRecord.recordType,
-                recordName: savedRecord.recordID.recordName,
-                entityName: root.entityName,
-                primaryKey: root.primaryKey,
-                targetPrimaryKey: nil,
-                systemFields: savedRecord.systemFieldsData(),
-                connection: connection
-            )
-        }
-    }
-    
     internal func upsertRecordMetadata(
         recordType: String,
         recordName: String,
@@ -518,56 +538,42 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         ).run()
     }
     
-    internal func upsertRecordMetadata(
-        recordType: String,
-        recordName: String,
-        entityName: String,
-        primaryKey: String,
-        systemFields: Data
+    internal func persistSavedRecordMetadata(
+        _ savedRecord: CKRecord,
+        remappedPrimaryKeys: [String: String] = [:]
     ) throws {
         let connection = try store.queue.connection(.writer)
-        try upsertRecordMetadata(
-            recordType: recordType,
-            recordName: recordName,
-            entityName: entityName,
-            primaryKey: primaryKey,
-            targetPrimaryKey: nil,
-            systemFields: systemFields,
-            connection: connection
-        )
+        if let metadata = try loadRecordMetadata(recordName: savedRecord.recordID.recordName) {
+            try upsertRecordMetadata(
+                recordType: metadata.recordType,
+                recordName: metadata.recordName,
+                entityName: metadata.entityName,
+                primaryKey: remappedPrimaryKeys[metadata.primaryKey] ?? metadata.primaryKey,
+                targetPrimaryKey: metadata.targetPrimaryKey.map { remappedPrimaryKeys[$0] ?? $0 },
+                systemFields: savedRecord.systemFieldsData(),
+                connection: connection
+            )
+            return
+        }
+        if let root = try resolveRootRecordOwnership(for: savedRecord) {
+            try upsertRecordMetadata(
+                recordType: savedRecord.recordType,
+                recordName: savedRecord.recordID.recordName,
+                entityName: root.entityName,
+                primaryKey: remappedPrimaryKeys[root.primaryKey] ?? root.primaryKey,
+                targetPrimaryKey: nil,
+                systemFields: savedRecord.systemFieldsData(),
+                connection: connection
+            )
+        }
     }
 }
 
 extension DatabaseConfiguration.CloudKitDatabase.Replicator {
-    internal func deleteRecordMetadata(recordType: String, entityName: String, primaryKey: String) throws {
-        let connection = try store.queue.connection(.writer)
-        try PreparedStatement(
-            sql: """
-            DELETE FROM \(RecordMetadataTable.tableName)
-            WHERE \(RecordMetadataTable.storeIdentifier.rawValue) = ?
-            AND \(RecordMetadataTable.entityName.rawValue) = ?
-            AND \(RecordMetadataTable.entityPrimaryKey.rawValue) = ?
-            AND \(RecordMetadataTable.recordType.rawValue) = ?
-            """,
-            bindings: [store.identifier, entityName, primaryKey, recordType],
-            handle: connection.handle
-        ).run()
-    }
-    
-    internal func deleteRootRecordMetadata(entityName: String, primaryKey: String) throws {
-        try deleteRecordMetadata(
-            recordType: makeRecordType(entityName),
-            entityName: entityName,
-            primaryKey: primaryKey
-        )
-    }
-    
-    internal func deleteRecordMetadata(recordName: String) throws {
-        let connection = try store.queue.connection(.writer)
-        try deleteRecordMetadata(recordName: recordName, connection: connection)
-    }
-    
-    internal func deleteRecordMetadata(recordName: String, connection: borrowing DatabaseConnection<Store>) throws {
+    internal func deleteRecordMetadata(
+        recordName: String,
+        connection: borrowing DatabaseConnection<Store>
+    ) throws {
         try PreparedStatement(
             sql: """
             DELETE FROM \(RecordMetadataTable.tableName)
@@ -597,8 +603,10 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         ).run()
     }
     
-    internal func removeAppliedDeletedRecordMetadata(_ recordID: CKRecord.ID) throws {
-        let connection = try store.queue.connection(.writer)
+    internal func removeAppliedDeletedRecordMetadata(
+        _ recordID: CKRecord.ID,
+        connection: borrowing DatabaseConnection<Store>
+    ) throws {
         if let ownership = try resolveRootRecordOwnership(for: recordID) {
             let relatedMetadata = try loadRelatedRecordMetadata(targetPrimaryKey: ownership.primaryKey)
             for metadata in relatedMetadata {

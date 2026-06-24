@@ -7,25 +7,33 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
+#if canImport(CloudKit)
+
 private import DataStoreRuntime
 private import DataStoreSQL
 private import DataStoreSupport
 private import Logging
 private import SQLSupport
 private import SwiftData
+internal import CloudKit
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.cloudkit")
 
-#if canImport(CloudKit)
+nonisolated internal struct UnresolvedRequiredRelationshipError: Error, Sendable {
+    internal let recordName: String
+    internal let propertyName: String
+}
 
-internal import CloudKit
-
-extension DatabaseSnapshot {
-    nonisolated internal init(
+nonisolated extension DatabaseSnapshot {
+    internal init(
         _ existingSnapshot: Self? = nil,
         record: CKRecord,
         store: Store,
-        resolveRelationshipPrimaryKey: (_ recordName: String, _ destinationEntityName: String) throws -> String?
+        resolveRelationshipPrimaryKey: (
+            _ recordName: String,
+            _ destinationEntityName: String,
+            _ propertyName: String
+        ) throws -> String?
     ) throws {
         guard let primaryKey = record[pk] as? String else {
             preconditionFailure("CKRecord primary key must be present.")
@@ -79,9 +87,17 @@ extension DatabaseSnapshot {
                 guard let recordName = value as? String else {
                     preconditionFailure("Relationship field value is the record name and must be a String.")
                 }
-                guard let resolvedPrimaryKey = try resolveRelationshipPrimaryKey(recordName, relationship.destination) else {
-                    logger.warning("Unresolved to-one relationship dependency: \(property) = \(recordName)")
-                    continue
+                guard let resolvedPrimaryKey = try resolveRelationshipPrimaryKey(recordName, relationship.destination, property.name) else {
+                    if property.isOptional {
+                        if let existingSnapshot {
+                            self.values[property.index] = existingSnapshot.values[property.index]
+                            logger.warning("Unresolved to-one relationship dependency retained existing value: \(property) = \(recordName)")
+                        } else {
+                            logger.warning("Unresolved to-one relationship dependency: \(property) = \(recordName)")
+                        }
+                        continue
+                    }
+                    throw UnresolvedRequiredRelationshipError(recordName: recordName, propertyName: property.name)
                 }
                 try setValue(relationship, resolvedPrimaryKey, at: property.index)
             case let relationship as Schema.Relationship:
@@ -98,7 +114,7 @@ extension DatabaseSnapshot {
         }
     }
     
-    nonisolated private func setValue(_ value: any Sendable, attribute: Schema.Attribute) throws -> any Sendable {
+    private func setValue(_ value: any Sendable, attribute: Schema.Attribute) throws -> any Sendable {
         let description = "\(entityName).\(attribute.name) as \(attribute.valueType).self"
         guard let valueType = unwrapOptionalMetatype(attribute.valueType) as? any DataStoreSnapshotValue.Type else {
             preconditionFailure("Attribute must conform to DataStoreSnapshotValue: \(description)")
@@ -144,8 +160,8 @@ extension DatabaseSnapshot {
     }
 }
 
-extension DatabaseSnapshot {
-    nonisolated internal func records(
+nonisolated extension DatabaseSnapshot {
+    internal func records(
         rootRecordName: String,
         systemFieldsData: Data?,
         zoneID: CKRecordZone.ID,
@@ -170,7 +186,7 @@ extension DatabaseSnapshot {
         ))
     }
     
-    nonisolated internal func createCloudKitRecord(
+    internal func createCloudKitRecord(
         for recordName: String,
         systemFieldsData: Data?,
         zoneID: CKRecordZone.ID,
@@ -213,7 +229,7 @@ extension DatabaseSnapshot {
                     let relatedPrimaryKey = store.manager.primaryKey(for: identifier)
                     let relatedRecordName = try resolveRelationshipRecordName(relationship.destination, relatedPrimaryKey)
                     record[property.name] = relatedRecordName as CKRecordValue
-                    logger.trace("CKRecord to-one relationship value set: \(property) = \(primaryKey)")
+                    logger.trace("CKRecord to-one relationship value set: \(property) = \(relatedRecordName)")
                 } else if relationship.isOptional {
                     record.setObject(nil, forKey: property.name)
                     logger.trace("CKRecord to-one relationship value set: \(property) = nil")
@@ -231,7 +247,7 @@ extension DatabaseSnapshot {
         return record
     }
     
-    nonisolated internal func createReferenceCloudKitRecords(
+    internal func createReferenceCloudKitRecords(
         zoneID: CKRecordZone.ID,
         store: Store,
         loadSystemFieldsData: (_ recordName: String) throws -> Data?,
@@ -286,7 +302,7 @@ extension DatabaseSnapshot {
         return records
     }
     
-    nonisolated private func getValue(
+    private func getValue(
         _ value: any Sendable,
         attribute: Schema.Attribute,
         externalStorageURL: URL

@@ -23,21 +23,21 @@ internal import SwiftData
 @preconcurrency internal import SwiftData
 #endif
 
-nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
+nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.cloudkit")
 
 #if canImport(CloudKit)
 
 internal import CloudKit
 
-internal extension CKRecord {
-    nonisolated func systemFieldsData() -> Data {
+nonisolated internal extension CKRecord {
+    func systemFieldsData() -> Data {
         let archiver = NSKeyedArchiver(requiringSecureCoding: true)
         encodeSystemFields(with: archiver)
         archiver.finishEncoding()
         return archiver.encodedData
     }
     
-    nonisolated static func fromSystemFields(_ data: Data) throws -> CKRecord {
+    static func fromSystemFields(_ data: Data) throws -> CKRecord {
         let unarchiver = try NSKeyedUnarchiver(forReadingFrom: data)
         unarchiver.requiresSecureCoding = true
         guard let record = CKRecord(coder: unarchiver) else {
@@ -49,15 +49,104 @@ internal extension CKRecord {
         unarchiver.finishDecoding()
         return record
     }
+    
+    func fullRecordData() throws -> Data {
+        try NSKeyedArchiver.archivedData(withRootObject: self, requiringSecureCoding: true)
+    }
+    
+    static func fromFullRecordData(_ data: Data) throws -> CKRecord {
+        guard let record = try NSKeyedUnarchiver.unarchivedObject(ofClass: CKRecord.self, from: data) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [],
+                debugDescription: "Unable to decode CKRecord archive."
+            ))
+        }
+        return record
+    }
 }
 
-extension DatabaseStore {
-    nonisolated internal var createCloudKitTablesSQL: [String] {
+nonisolated extension DatabaseStore {
+    internal var createCloudKitTablesSQL: [String] {
         [
             Configuration.CloudKitDatabase.StateTable.createTable,
             Configuration.CloudKitDatabase.RecordMetadataTable.createTable,
-            Configuration.CloudKitDatabase.RecordMetadataTable.createIndex
+            Configuration.CloudKitDatabase.RecordMetadataTable.createIndex,
+            Configuration.CloudKitDatabase.PendingReferenceTable.createTable,
+            Configuration.CloudKitDatabase.PendingRecordTable.createTable,
+            Configuration.CloudKitDatabase.PendingRecordTable.createIndex
         ]
+    }
+}
+
+extension DatabaseConfiguration.CloudKitDatabase {
+    nonisolated internal enum PendingReferenceTable: String, CustomStringConvertible {
+        internal static let tableName: String = "_CloudKitPendingReference"
+        case storeIdentifier = "store_identifier"
+        case awaitedRecordName = "awaited_record_name"
+        case entityName = "entity_name"
+        case entityPrimaryKey = "entity_pk"
+        case propertyName = "property_name"
+        
+        internal static var createTable: String {
+            """
+            CREATE TABLE IF NOT EXISTS \(Self.tableName) (
+                \(Self.storeIdentifier.rawValue) TEXT NOT NULL,
+                \(Self.awaitedRecordName.rawValue) TEXT NOT NULL,
+                \(Self.entityName.rawValue) TEXT NOT NULL,
+                \(Self.entityPrimaryKey.rawValue) TEXT NOT NULL,
+                \(Self.propertyName.rawValue) TEXT NOT NULL,
+                PRIMARY KEY (
+                    \(Self.storeIdentifier.rawValue),
+                    \(Self.awaitedRecordName.rawValue),
+                    \(Self.entityName.rawValue),
+                    \(Self.entityPrimaryKey.rawValue),
+                    \(Self.propertyName.rawValue)
+                )
+            )
+            """
+        }
+        
+        /// Inherited from `CustomStringConvertible.description`.
+        internal var description: String { rawValue }
+    }
+}
+
+extension DatabaseConfiguration.CloudKitDatabase {
+    nonisolated internal enum PendingRecordTable: String, CustomStringConvertible {
+        internal static let tableName: String = "_CloudKitPendingRecord"
+        internal static let indexName: String = "_CloudKit_PendingRecord_Awaited_Index"
+        case storeIdentifier = "store_identifier"
+        case recordName = "record_name"
+        case awaitedRecordName = "awaited_record_name"
+        case recordArchive = "record_archive"
+        
+        internal static var createTable: String {
+            """
+            CREATE TABLE IF NOT EXISTS \(Self.tableName) (
+                \(Self.storeIdentifier.rawValue) TEXT NOT NULL,
+                \(Self.recordName.rawValue) TEXT NOT NULL,
+                \(Self.awaitedRecordName.rawValue) TEXT NOT NULL,
+                \(Self.recordArchive.rawValue) BLOB NOT NULL,
+                PRIMARY KEY (
+                    \(Self.storeIdentifier.rawValue),
+                    \(Self.recordName.rawValue)
+                )
+            )
+            """
+        }
+        
+        nonisolated internal static var createIndex: String {
+            """
+            CREATE INDEX IF NOT EXISTS \(indexName)
+            ON \(Self.tableName) (
+                \(Self.storeIdentifier.rawValue),
+                \(Self.awaitedRecordName.rawValue)
+            )
+            """
+        }
+        
+        /// Inherited from `CustomStringConvertible.description`.
+        nonisolated internal var description: String { rawValue }
     }
 }
 

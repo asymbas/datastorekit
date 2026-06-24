@@ -15,17 +15,17 @@ public import DataStoreCore
 internal import CloudKit
 
 extension DatabaseConfiguration {
-    public struct CloudKitDatabase: DataStoreSynchronizerConfiguration {
+    nonisolated public struct CloudKitDatabase: DataStoreSynchronizerConfiguration {
         public typealias Synchronizer = Replicator
         public typealias Store = DatabaseStore
-        nonisolated public let id: String = "cloudkit"
-        nonisolated internal let containerIdentifier: String?
-        nonisolated public let remoteAuthor: String
-        nonisolated internal let zoneName: String
-        nonisolated internal let databaseScope: CKDatabase.Scope
-        nonisolated internal let delegate: any CloudKitDatabase.Replicator.Delegate
+        internal let containerIdentifier: String?
+        internal let zoneName: String
+        internal let databaseScope: CKDatabase.Scope
+        internal let delegate: any CloudKitDatabase.Replicator.Delegate
+        public let id: String = "cloudkit"
+        public let remoteAuthor: String
         
-        nonisolated internal init(
+        internal init(
             containerIdentifier: String?,
             remoteAuthor: String = "CloudKit",
             zoneName: String? = nil,
@@ -47,7 +47,7 @@ extension DatabaseConfiguration {
             )
         }
         
-        nonisolated public static func `private`(_ privateDatabaseName: String) -> Self {
+        public static func `private`(_ privateDatabaseName: String) -> Self {
             self.init(
                 containerIdentifier: privateDatabaseName,
                 remoteAuthor: "CloudKit",

@@ -153,7 +153,10 @@ public final class DatabaseStore: DataStore, Sendable {
             try connection.execute(HistoryTable.createTable)
         }
         let userMigration = configuration.customMigration
-        let adapter: ((DataStoreMigration.CustomMigrationContext, borrowing DatabaseConnection<DatabaseStore>) throws -> Void)? = userMigration.map { handler in
+        let adapter: ((
+            DataStoreMigration.CustomMigrationContext,
+            borrowing DatabaseConnection<DatabaseStore>
+        ) throws -> Void)? = userMigration.map { handler in
             { context, connection in
                 let publicContext = DataStoreMigrationContext(
                     oldSchema: context.oldSchema.ormSchema,
@@ -636,6 +639,10 @@ public final class DatabaseStore: DataStore, Sendable {
     nonisolated public final func save<Request, Result>(_ request: Request) throws -> Result
     where Request: SaveChangesRequest<Snapshot>, Result: SaveChangesResult<Snapshot> {
         attachment?.storeWillSave()
+        let isSyncRequest = Request.self is SyncSaveChangesRequest<
+            Request.SnapshotType,
+            Request.EditingStateType
+        >.Type
         let count = (request.inserted.count, request.updated.count, request.deleted.count)
         let metadata: Logger.Metadata = [
             "editing_state": "\(request.editingState.id)",
@@ -653,6 +660,7 @@ public final class DatabaseStore: DataStore, Sendable {
         var invalidatedIdentifiers: Set<PersistentIdentifier> = []
         var operation: [DataStoreOperation: [PersistentIdentifier]] = [:]
         var upsertedUpdatedIdentifiers: Set<PersistentIdentifier> = .init()
+        var supersededIdentifiers: [PersistentIdentifier: PersistentIdentifier] = [:]
         #if swift(>=6.2) && !SwiftPlaygrounds
         let connection = try queue.connection(.writer, for: request.editingState)
         #else
@@ -701,51 +709,9 @@ public final class DatabaseStore: DataStore, Sendable {
                     )
                     var export = snapshot.export
                     if !export.toOneDependencies.isEmpty {
-                        logger.debug("Insert has to-one dependencies: \(export.toOneDependencies)")
-                        for index in export.toOneDependencies {
-                            let pair = snapshot[index]
-                            guard let relatedIdentifier = pair.value as? PersistentIdentifier else {
-                                continue
-                            }
-                            if pair.property.metadata.isOptional {
-                                continue
-                            }
-                            if relatedIdentifier.storeIdentifier == nil,
-                               let destination = self.schema.entitiesByName[relatedIdentifier.entityName],
-                               let relationship = pair.property.metadata as? Schema.Relationship,
-                               let inverseName = relationship.inverseName,
-                               let inverseRelationship = destination.relationshipsByName[inverseName] {
-                                if !inverseRelationship.isOptional {
-                                    let resolvedRelatedIdentifier =
-                                    try remappedIdentifiers[relatedIdentifier]
-                                    ?? PersistentIdentifier.identifier(
-                                        for: self.identifier,
-                                        entityName: relatedIdentifier.entityName,
-                                        primaryKey: UUID().uuidString
-                                    )
-                                    remappedIdentifiers[relatedIdentifier] =
-                                    resolvedRelatedIdentifier
-                                    snapshot = snapshot.copy(
-                                        persistentIdentifier: snapshot.persistentIdentifier,
-                                        remappedIdentifiers: remappedIdentifiers
-                                    )
-                                    export = snapshot.export
-                                    logger.debug("Breaking dependency cycle for to-one relationship.", metadata: [
-                                        "destination_entity": "\(destination.name)",
-                                        "inverse_relationship": "\(inverseRelationship.name)",
-                                        "old_identifier": "\(relatedIdentifier)",
-                                        "new_identifier": "\(resolvedRelatedIdentifier)"
-                                    ])
-                                    if snapshots[resolvedRelatedIdentifier] == nil {
-                                        throw Snapshot.Error.referencesInvalidPersistentIdentifier
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if !export.toOneDependencies.isEmpty {
                         // All to-one relationships have a foreign key column.
                         // Do not continue until all related identifiers has been remapped.
+                        logger.debug("Insert has to-one dependencies: \(export.toOneDependencies)")
                         throw Snapshot.Error.referencesInvalidPersistentIdentifier
                     }
                     remappedIdentifiers[temporaryIdentifier] = permanentIdentifier
@@ -774,6 +740,10 @@ public final class DatabaseStore: DataStore, Sendable {
                             operation[.insert, default: []].append(snapshot.persistentIdentifier)
                             return snapshot
                         } onExisting: { existing, candidate in
+                            if let preallocatedIdentifier = remappedIdentifiers[temporaryIdentifier],
+                               preallocatedIdentifier != existing.persistentIdentifier {
+                                supersededIdentifiers[preallocatedIdentifier] = existing.persistentIdentifier
+                            }
                             remappedIdentifiers[temporaryIdentifier] = existing.persistentIdentifier
                             let candidate = candidate.copy(
                                 persistentIdentifier: existing.persistentIdentifier,
@@ -786,6 +756,10 @@ public final class DatabaseStore: DataStore, Sendable {
                             return candidate
                         } onConflict: { existing, candidate in
                             // TODO: Consider confirming that the entity is part of an inheritance chain.
+                            if let preallocatedIdentifier = remappedIdentifiers[temporaryIdentifier],
+                               preallocatedIdentifier != existing.persistentIdentifier {
+                                supersededIdentifiers[preallocatedIdentifier] = existing.persistentIdentifier
+                            }
                             remappedIdentifiers[temporaryIdentifier] = existing.persistentIdentifier
                             // An existing snapshot that uses inheritance can return with a different entity name.
                             let resolvedIdentifier = try PersistentIdentifier.identifier(
@@ -813,7 +787,11 @@ public final class DatabaseStore: DataStore, Sendable {
                         snapshot = candidate
                         export = snapshot.export
                     default:
-                        try connection.insert(snapshot)
+                        if isSyncRequest {
+                            try connection.upsert(snapshot)
+                        } else {
+                            try connection.insert(snapshot)
+                        }
                         operation[.insert, default: []].append(snapshot.persistentIdentifier)
                         logger.info("Inserted snapshot: \(snapshot.persistentIdentifier)")
                     }
@@ -841,6 +819,35 @@ public final class DatabaseStore: DataStore, Sendable {
                 if temporaryIdentifier.storeIdentifier != nil {
                     remappedIdentifiers[temporaryIdentifier] = nil
                     logger.trace("Cleaning up inherited identifier: \(temporaryIdentifier)")
+                }
+            }
+            if !supersededIdentifiers.isEmpty {
+                for (persistentIdentifier, insertedSnapshot) in snapshots {
+                    try connection.checkCancellation()
+                    let requiresRepair = insertedSnapshot.contains { pair in
+                        switch pair.value {
+                        case let relatedIdentifier as PersistentIdentifier:
+                            supersededIdentifiers[relatedIdentifier] != nil
+                        case let relatedIdentifiers as [PersistentIdentifier]:
+                            relatedIdentifiers.contains { supersededIdentifiers[$0] != nil }
+                        default:
+                            false
+                        }
+                    }
+                    guard requiresRepair else {
+                        continue
+                    }
+                    let repairedSnapshot = insertedSnapshot.copy(
+                        persistentIdentifier: persistentIdentifier,
+                        remappedIdentifiers: supersededIdentifiers
+                    )
+                    try connection.update(from: insertedSnapshot, to: repairedSnapshot)
+                    snapshots[persistentIdentifier] = repairedSnapshot
+                    logger.debug("Repaired references to superseded identifiers.", metadata: [
+                        "entity": "\(persistentIdentifier.entityName)",
+                        "primary_key": "\(repairedSnapshot.primaryKey)",
+                        "superseded_identifiers": "\(supersededIdentifiers)"
+                    ])
                 }
             }
             for (persistentIdentifier, indices) in dependencies {
@@ -1008,8 +1015,7 @@ public final class DatabaseStore: DataStore, Sendable {
             #endif
         }
         connection.context?.synchronize(snapshots: snapshots, invalidateIdentifiers: invalidatedIdentifiers)
-        if request.editingState.author != "CloudKit",
-           !remappedIdentifiers.isEmpty || !snapshotsToReregister.isEmpty || !snapshots.isEmpty {
+        if !isSyncRequest, !remappedIdentifiers.isEmpty || !snapshotsToReregister.isEmpty || !snapshots.isEmpty {
             Task { @DatabaseActor in self.history?.scheduleSynchronizationIfNeeded() }
         }
         logger.info("Saved \(remappedIdentifiers.count) new snapshots.", metadata: [

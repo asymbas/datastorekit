@@ -35,6 +35,10 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
         do {
             switch event {
             case .stateUpdate(let event):
+                guard hasFailedRemoteApply == false else {
+                    logger.notice("Skipped persisting sync engine state after failed remote apply.")
+                    return
+                }
                 try saveState(stateSerialization: event.stateSerialization, clearErrorCode: true)
             case .accountChange(let event):
                 guard isHandlingAccountChange == false else {
@@ -57,8 +61,23 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                     "event_modifications_count": "\(event.modifications.count)",
                     "event_deletions_count": "\(event.deletions.count)"
                 ])
-                try applyRemoteChanges(changed: event.modifications, deleted: event.deletions)
+                do {
+                    try applyRemoteChanges(changedRecords: event.modifications.map(\.record), deletedRecordIDs: event.deletions.map(\.recordID))
+                } catch {
+                    hasFailedRemoteApply = true
+                    await store.reportRemoteApplyStatus(for: self.id, errorMessage: error.localizedDescription, resolvedConflictsDelta: 0)
+                    throw error
+                }
                 try saveState(clearErrorCode: true)
+                let recoveredFromFailure = hasFailedRemoteApply
+                hasFailedRemoteApply = false
+                let resolvedConflictsDelta = pendingResolvedConflicts
+                pendingResolvedConflicts = 0
+                if recoveredFromFailure || resolvedConflictsDelta > 0 {
+                    await store.reportRemoteApplyStatus(for: self.id, errorMessage: nil, resolvedConflictsDelta: resolvedConflictsDelta)
+                }
+                let unresolvedCount = (try? pendingUnresolvedCount()) ?? 0
+                await store.reportPendingUnresolvedCount(for: self.id, count: unresolvedCount)
             case .didFetchRecordZoneChanges:
                 break
             case .didFetchChanges:
@@ -86,9 +105,11 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                         "record_name": "\(savedRecord.recordID.recordName)"
                     ])
                 }
+                
                 for deletedRecordID in event.deletedRecordIDs {
+                    let connection = try store.queue.connection(.writer, for: nil)
                     enqueuedChangesByRecordID[deletedRecordID] = nil
-                    try deleteRecordMetadata(recordName: deletedRecordID.recordName)
+                    try deleteRecordMetadata(recordName: deletedRecordID.recordName, connection: connection)
                     logger.trace("Removed metadata for deleted CloudKit record.", metadata: [
                         "record_name": "\(deletedRecordID.recordName)"
                     ])
@@ -151,7 +172,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                             "record_name": "\(recordID.recordName)",
                             "persistent_identifier": "\(persistentIdentifier)"
                         ])
-                        guard let _ = try snapshot(for: persistentIdentifier) else {
+                        guard try snapshot(for: persistentIdentifier) != nil else {
                             logger.trace("Skipped conflict resolution because the local snapshot was missing.", metadata: [
                                 "record_name": "\(recordID.recordName)",
                                 "persistent_identifier": "\(persistentIdentifier)"
@@ -164,18 +185,9 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                             ])
                             break
                         }
-                        let _ = try Store.Snapshot(
-                            record: serverRecord,
-                            store: store
-                        ) { recordName, destinationEntityName in
-                            try self.loadRecordMetadata(recordName: recordName)?.primaryKey
-                        }
-                        logger.trace("Loaded conflict snapshots for merge.", metadata: [
-                            "record_name": "\(recordID.recordName)",
-                            "persistent_identifier": "\(persistentIdentifier)"
-                        ])
+                        try persistSavedRecordMetadata(serverRecord)
                         newPendingRecordZoneChanges.append(.saveRecord(recordID))
-                        logger.trace("Re-enqueued root record after conflict merge.", metadata: [
+                        logger.trace("Re-enqueued root record after conflict resolution.", metadata: [
                             "record_name": "\(recordID.recordName)"
                         ])
                     case .zoneNotFound:
@@ -184,7 +196,8 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                         ])
                         newPendingDatabaseChanges.append(.saveZone(CKRecordZone(zoneID: recordID.zoneID)))
                         newPendingRecordZoneChanges.append(.saveRecord(recordID))
-                        try deleteRecordMetadata(recordName: recordID.recordName)
+                        let connection = try store.queue.connection(.writer, for: nil)
+                        try deleteRecordMetadata(recordName: recordID.recordName, connection: connection)
                         logger.trace("Re-enqueued zone save and record save after missing zone failure.", metadata: [
                             "record_name": "\(recordID.recordName)"
                         ])
@@ -193,7 +206,8 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                             "record_name": "\(recordID.recordName)"
                         ])
                         newPendingRecordZoneChanges.append(.saveRecord(recordID))
-                        try deleteRecordMetadata(recordName: recordID.recordName)
+                        let connection = try store.queue.connection(.writer, for: nil)
+                        try deleteRecordMetadata(recordName: recordID.recordName, connection: connection)
                         logger.trace("Re-enqueued record save after missing item failure.", metadata: [
                             "record_name": "\(recordID.recordName)"
                         ])
@@ -220,7 +234,8 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator: CKSyncEngineDelegat
                     switch error.code {
                     case .unknownItem, .zoneNotFound:
                         enqueuedChangesByRecordID[recordID] = nil
-                        try deleteRecordMetadata(recordName: recordID.recordName)
+                        let connection = try store.queue.connection(.writer, for: nil)
+                        try deleteRecordMetadata(recordName: recordID.recordName, connection: connection)
                         logger.trace("Resolved failed delete as already removed remotely.", metadata: [
                             "record_name": "\(recordID.recordName)"
                         ])
