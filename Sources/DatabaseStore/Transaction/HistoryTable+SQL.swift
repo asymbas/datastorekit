@@ -526,6 +526,7 @@ extension HistoryTable {
             ],
             handle: connection.handle
         ).run()
+        #if CUSTOM_DATABASE
         let lastSelectedRowSQL = """
             SELECT ts, pk FROM (
                 SELECT \(timestampKey) AS ts, \(pkKey) AS pk
@@ -543,6 +544,25 @@ extension HistoryTable {
             ORDER BY ts DESC, pk DESC
             LIMIT 1
             """
+        #else
+        let lastSelectedRowSQL = """
+            SELECT ts, pk FROM (
+                SELECT \(timestampKey) AS ts, \(pkKey) AS pk
+                FROM main.\(Self.tableName)
+                WHERE \(storeIdentifierKey) = ?
+                AND \(timestampKey) >= ?
+                AND \(timestampKey) < ?
+                AND (
+                    \(timestampKey) > ?
+                    OR (\(timestampKey) = ? AND \(pkKey) > ?)
+                )
+                ORDER BY \(timestampKey) ASC, \(pkKey) ASC
+                LIMIT ?
+            ) AS recent
+            ORDER BY ts DESC, pk DESC
+            LIMIT 1
+            """
+        #endif
         let last = try connection.query(
             lastSelectedRowSQL,
             bindings: [
