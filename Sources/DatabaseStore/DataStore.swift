@@ -78,21 +78,16 @@ public final class DatabaseStore: DataStore, Sendable {
                     case .custom(let fromVersion, let toVersion, let willMigrate, let didMigrate):
                         let fromSchema = Schema(versionedSchema: fromVersion)
                         let toSchema = Schema(versionedSchema: toVersion)
-                        logger.notice(
-                            "Performing custom migration #\(index): \(fromVersion)",
-                            metadata: ["from_names": "\(fromSchema.entities.map(\.name))"]
-                        )
-                        logger.notice(
-                            "Performing custom migration #\(index): \(toVersion)",
-                            metadata: ["to_names": "\(toSchema.entities.map(\.name))"]
-                        )
+                        logger.notice("Performing custom migration #\(index): \(fromVersion)", metadata: [
+                            "from_names": "\(fromSchema.entities.map(\.name))"
+                        ])
+                        logger.notice("Performing custom migration #\(index): \(toVersion)", metadata: [
+                            "to_names": "\(toSchema.entities.map(\.name))"
+                        ])
                         if let willMigrate {
                             let fromModelContainer = try ModelContainer(
                                 for: fromSchema,
-                                configurations: [DatabaseConfiguration(
-                                    name: configuration.name,
-                                    url: configuration.url
-                                )]
+                                configurations: [DatabaseConfiguration(name: configuration.name, url: configuration.url)]
                             )
                             let fromModelContext = ModelContext(fromModelContainer)
                             try willMigrate(fromModelContext)
@@ -100,20 +95,16 @@ public final class DatabaseStore: DataStore, Sendable {
                         if let didMigrate {
                             let toModelContainer = try ModelContainer(
                                 for: toSchema,
-                                configurations: [DatabaseConfiguration(
-                                    name: configuration.name,
-                                    url: configuration.url
-                                )]
+                                configurations: [DatabaseConfiguration(name: configuration.name, url: configuration.url)]
                             )
                             let toModelContext = ModelContext(toModelContainer)
                             try didMigrate(toModelContext)
                         }
                         schema = toSchema
                     case .lightweight(let fromVersion, let toVersion):
-                        logger.debug(
-                            "Performing lightweight migration #\(index).",
-                            metadata: ["from": "\(fromVersion)", "to": "\(toVersion)"]
-                        )
+                        logger.debug("Performing lightweight migration #\(index).", metadata: [
+                            "from": "\(fromVersion)", "to": "\(toVersion)"
+                        ])
                         let fromSchema = Schema(versionedSchema: fromVersion)
                         schema = fromSchema
                     @unknown default:
@@ -158,7 +149,6 @@ public final class DatabaseStore: DataStore, Sendable {
             }
             try connection.execute("PRAGMA journal_mode = WAL;")
             try connection.execute("PRAGMA foreign_keys = ON;")
-            try connection.execute("PRAGMA defer_foreign_keys = ON;")
             try connection.execute(InternalTable.createTable)
             try connection.execute(HistoryTable.createTable)
         }
@@ -216,7 +206,7 @@ public final class DatabaseStore: DataStore, Sendable {
             #if DEBUG
             if Request.self is DataStoreFetchRequest<Model>.Type,
                let requestedIdentifiers = translation.requestedIdentifiers {
-                logger.debug("SwiftData requested identifiers Request<\(Model.self)> on \(entityName) entity: \(requestedIdentifiers)")
+                logger.trace("SwiftData requested identifiers Request<\(Model.self)> on \(entityName) entity: \(requestedIdentifiers)")
             }
             #endif
             if shouldCheckCancellation { try Task.checkCancellation() }
@@ -502,12 +492,8 @@ public final class DatabaseStore: DataStore, Sendable {
         registry: SnapshotRegistry? = nil
     ) throws -> [PersistentIdentifier: Snapshot] {
         let ownerPrimaryKeys = values.compactMap { $0[0] as? String }
-        let ownerPersistentIdentifiers = try ownerPrimaryKeys.compactMap { primaryKey in
-            try PersistentIdentifier.identifier(
-                for: self.identifier,
-                entityName: entityName,
-                primaryKey: primaryKey
-            )
+        let ownerPersistentIdentifiers: [PersistentIdentifier] = try ownerPrimaryKeys.compactMap { primaryKey in
+            try .identifier(for: self.identifier, entityName: entityName, primaryKey: primaryKey)
         }
         let ownerIndexByPrimaryKey = Dictionary(uniqueKeysWithValues: ownerPrimaryKeys
             .enumerated()
@@ -618,6 +604,26 @@ public final class DatabaseStore: DataStore, Sendable {
         try Task.checkCancellation()
         return await manager.registry(for: request.editingState)?.preload(result, for: request)
     }
+    
+    /// Inherited from `DataStore.cachedSnapshots(for:editingState:)`.
+    nonisolated public final func cachedSnapshots(
+        for persistentIdentifiers: [PersistentIdentifier],
+        editingState: EditingState
+    ) throws -> [PersistentIdentifier: Snapshot] {
+        #if DEBUG
+        if configuration.options.contains(._internal) {
+            // TODO: No known case where SwiftData calls this method.
+            fatalError("\(#function) - called")
+        }
+        #endif
+        if let registry = self.manager.registry(for: editingState) {
+            return registry.snapshots(for: persistentIdentifiers)
+        } else {
+            return [:]
+        }
+    }
+    
+    // TODO: In custom database engine, use UUIDv7 primary key directly.
     
     /// Inherited from `DataStore.save(_:)`.
     ///
@@ -747,7 +753,7 @@ public final class DatabaseStore: DataStore, Sendable {
                        inheritedIdentifiers.insert(insert.id).inserted,
                        let entity = self.schema.entitiesByName[snapshot.entityName],
                        let superentity = entity.superentity {
-                        var superentitySnapshots = [Snapshot]()
+                        var superentitySnapshots: [Snapshot] = []
                         try snapshot.recursiveExportChain(
                             on: superentity,
                             indices: export.inheritedDependencies,
@@ -792,7 +798,11 @@ public final class DatabaseStore: DataStore, Sendable {
                                 remappedIdentifiers: remappedIdentifiers
                             )
                             try connection.update(from: existing, to: candidate)
-                            logger.info("Upserted snapshot on conflict: \(candidate.persistentIdentifier)")
+                            logger.notice("Upserted snapshot on conflict.", metadata: [
+                                "entity": "\(existing.entityName)",
+                                "incoming_pk": "\(snapshot.primaryKey)",
+                                "existing_pk": "\(existing.primaryKey)"
+                            ])
                             upsertedUpdatedIdentifiers.insert(candidate.persistentIdentifier)
                             operation[.update, default: []].append(candidate.persistentIdentifier)
                             return candidate
@@ -849,7 +859,6 @@ public final class DatabaseStore: DataStore, Sendable {
                     comparingTo: nil,
                     indices: indices,
                     shouldAddOnly: isUpsertUpdate,
-                    graph: connection.context?.graph,
                     connection: connection
                 )
                 invalidatedIdentifiers.formUnion(results.unlinked)
@@ -932,7 +941,7 @@ public final class DatabaseStore: DataStore, Sendable {
                     )
                     invalidatedIdentifiers.formUnion(results.unlinked)
                     invalidatedIdentifiers.formUnion(results.cascaded)
-                    for _ in results.unlinked {}
+                    for _ in results.unlinked {} // TODO: Find original task.
                     for cascadedIdentifier in results.cascaded {
                         guard queuedDeletedIdentifiers.insert(cascadedIdentifier).inserted,
                               schema.entitiesByName[cascadedIdentifier.entityName] != nil else {
@@ -1009,13 +1018,15 @@ public final class DatabaseStore: DataStore, Sendable {
             "remapped_identifiers": "\(remappedIdentifiers.count)",
             "snapshots_to_reregister": "\(snapshotsToReregister.count)"
         ])
-        let operationCopy = operation
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(
-                name: .dataStoreDidSave,
-                object: nil,
-                userInfo: ["operation": operationCopy]
-            )
+        do {
+            let operation = copy operation
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .dataStoreDidSave,
+                    object: nil,
+                    userInfo: ["operation": operation]
+                )
+            }
         }
         return Result(
             for: self.identifier,
@@ -1046,6 +1057,8 @@ public final class DatabaseStore: DataStore, Sendable {
         nonisolated internal var snapshot: Snapshot
     }
 }
+
+// MARK: Synchronization
 
 extension DatabaseStore {
     nonisolated public func synchronizationStatus(for id: String) async -> SynchronizationStatus? {
@@ -1114,6 +1127,8 @@ extension DatabaseStore {
     #endif
 }
 
+// MARK: Lifecycle
+
 extension DatabaseStore {
     /// Inherited from `DataStore.initializeState(for:)`.
     ///
@@ -1140,25 +1155,9 @@ extension DatabaseStore {
         manager.invalidateState(for: editingState)
         DataStoreAggregate.invalidateState(for: editingState)
     }
-    
-    /// Inherited from `DataStore.cachedSnapshots(for:editingState:)`.
-    nonisolated public final func cachedSnapshots(
-        for persistentIdentifiers: [PersistentIdentifier],
-        editingState: EditingState
-    ) throws -> [PersistentIdentifier: Snapshot] {
-        #if DEBUG
-        if configuration.options.contains(._internal) {
-            // TODO: No known case where SwiftData calls this method.
-            fatalError("\(#function) - called")
-        }
-        #endif
-        if let registry = self.manager.registry(for: editingState) {
-            return registry.snapshots(for: persistentIdentifiers)
-        } else {
-            return [:]
-        }
-    }
 }
+
+// MARK: Internal Table
 
 extension DatabaseStore {
     /// Returns the value associated with the specified key from the data store's internal table.

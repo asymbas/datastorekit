@@ -14,13 +14,15 @@ public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.bootstrap")
 
-#if false
+#if DEBUG
+
 extension Schema.Entity {
+    @available(*, unavailable)
     nonisolated public var metatype: any PersistentModel.Type {
-        let mirror = Mirror(reflecting: self)
-        return mirror.descendant("_objectType") as! any PersistentModel.Type
+        Mirror(reflecting: self).descendant("_objectType") as! any PersistentModel.Type
     }
 }
+
 #endif
 
 /// Returns the model's type through introspection.

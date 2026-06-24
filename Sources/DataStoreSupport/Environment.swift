@@ -9,6 +9,14 @@
 
 private import Foundation
 
+nonisolated package let shouldDisableLogging: Bool = {
+    if let value = ProcessInfo.processInfo.environment["DATASTOREKIT_DISABLE_LOGGING"]?.lowercased() {
+        Set(["1", "true", "yes"]).contains(value)
+    } else {
+        false
+    }
+}()
+
 nonisolated package func getEnvironmentValue(for key: String) -> String? {
     if let value = ProcessInfo.processInfo.environment[key] {
         return value

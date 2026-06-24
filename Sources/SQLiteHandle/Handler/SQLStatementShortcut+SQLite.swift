@@ -547,11 +547,14 @@ extension SQLStatementShortcut where Handle == SQLite {
             .filter { $0 != pk }
             .map { "\(quote($0)) = excluded.\(quote($0))" }
             .joined(separator: ", ")
+        let conflictResolution = updates.isEmpty
+        ? "DO NOTHING"
+        : "DO UPDATE SET \(updates)"
         try PreparedStatement(
             sql: #"""
             INSERT INTO "\#(table)" (\#(columns))
             VALUES (\#(placeholders))
-            ON CONFLICT (\#(pk)) DO UPDATE SET \#(updates)
+            ON CONFLICT (\#(pk)) \#(conflictResolution)
             """#,
             bindings: keys.map { SQLValue(any: values[$0] ?? NSNull()) },
             handle: handle

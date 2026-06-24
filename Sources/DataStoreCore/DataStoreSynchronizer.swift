@@ -11,17 +11,17 @@ internal import DataStoreSupport
 public import Foundation
 public import SwiftData
 
-public protocol DataStoreSynchronizer<Store>: Sendable {
+nonisolated public protocol DataStoreSynchronizer<Store>: Sendable {
     associatedtype Store: DataStore & HistoryProviding
     associatedtype SyncConfiguration: DataStoreSynchronizerConfiguration<Store>
-    nonisolated var id: String { get }
+    var id: String { get }
     nonisolated var remoteAuthor: String { get }
     nonisolated var lastProcessedToken: Store.HistoryType.TokenType? { get }
     func prepare() async throws
     func sync(transactions: [Store.HistoryType]) async throws
 }
 
-public protocol DataStoreSynchronizerConfiguration<Store>: Sendable {
+nonisolated public protocol DataStoreSynchronizerConfiguration<Store>: Sendable {
     associatedtype Store: DataStore & HistoryProviding where Synchronizer.Store == Store
     associatedtype Synchronizer: DataStoreSynchronizer<Store>
     var id: String { get }
@@ -29,39 +29,48 @@ public protocol DataStoreSynchronizerConfiguration<Store>: Sendable {
     func makeSynchronizer(store: Store) -> any DataStoreSynchronizer<Store>
 }
 
-package struct SynchronizationState: Sendable {
-    nonisolated package var task: Task<Void, Never>?
-    nonisolated package var isPending: Bool
+nonisolated package struct SynchronizationState: Sendable {
+    package var task: Task<Void, Never>?
+    package var isPending: Bool
     
-    nonisolated package init(task: Task<Void, Never>? = nil, isPending: Bool = false) {
+    package init(task: Task<Void, Never>? = nil, isPending: Bool = false) {
         self.task = task
         self.isPending = isPending
     }
 }
 
-public struct SynchronizationStatus: Sendable {
-    nonisolated public let id: String
-    nonisolated public var phase: SynchronizationPhase
-    nonisolated public var isPending: Bool
-    nonisolated public var lastSyncDate: Date?
-    nonisolated public var lastError: (any Swift.Error)?
+nonisolated public struct SynchronizationStatus: Sendable {
+    public let id: String
+    public var phase: SynchronizationPhase
+    public var isPending: Bool
+    public var lastSyncDate: Date?
+    public var lastError: (any Swift.Error)?
+    public var lastRemoteApplyErrorMessage: String?
+    public var resolvedIdentityConflicts: Int
+    public var pendingUnresolvedCount: Int
     
-    nonisolated package init(
+    package init(
         id: String,
         phase: SynchronizationPhase = .idle,
         isPending: Bool = false,
         lastSyncDate: Date? = nil,
-        lastError: (any Swift.Error)? = nil
+        lastError: (any Swift.Error)? = nil,
+        lastRemoteApplyErrorMessage: String? = nil,
+        resolvedIdentityConflicts: Int = 0,
+        pendingUnresolvedCount: Int = 0
     ) {
         self.id = id
         self.phase = phase
         self.isPending = isPending
         self.lastSyncDate = lastSyncDate
         self.lastError = lastError
+        self.lastRemoteApplyErrorMessage = lastRemoteApplyErrorMessage
+        self.resolvedIdentityConflicts = resolvedIdentityConflicts
+        self.pendingUnresolvedCount = pendingUnresolvedCount
     }
 }
 
-public enum SynchronizationPhase: String, Sendable {
+nonisolated public enum SynchronizationPhase: String, Sendable {
     case idle
     case scheduled
     case preparing

@@ -140,9 +140,8 @@ extension TypeRegistry {
         Self.register(metatype as! AnyClass, typeName: qualifiedTypeName, mangledTypeName: _mangledTypeName(T.self)!)
     }
     
-    /// Upserts by type, replacing any existing records that collide by `type`,
-    /// `qualifiedTypeName`, or `mangledTypeName`. Multiple entries may share a
-    /// non-unique simple `typeName`.
+    /// Upserts by type, replacing any existing records that collide by `type`, `qualifiedTypeName`, or `mangledTypeName`.
+    /// Multiple entries may share a non-unique simple `typeName`.
     nonisolated public static func register(
         _ type: AnyClass,
         typeName: String,

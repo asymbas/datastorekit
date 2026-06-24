@@ -25,14 +25,6 @@ public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
-nonisolated private let shouldDisableLogging: Bool = {
-    if let value = ProcessInfo.processInfo.environment["DATASTOREKIT_DISABLE_LOGGING"]?.lowercased() {
-        Set(["1", "true", "yes"]).contains(value)
-    } else {
-        false
-    }
-}()
-
 // TODO: Try mapping SwiftData migration plan with SQL data store.
 // TODO: Rename `DatabaseConfiguration`.
 // FIXME: `DatabaseConfiguration` cannot be reused to open another `DatabaseStore`.

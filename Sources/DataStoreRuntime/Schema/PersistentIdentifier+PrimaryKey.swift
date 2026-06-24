@@ -9,11 +9,11 @@
 
 private import Foundation
 private import Synchronization
-package import SwiftData
+public import SwiftData
 
 #if DEBUG
-extension PersistentIdentifier: @retroactive CustomStringConvertible {
-    nonisolated package var description: String {
+extension PersistentIdentifier: @retroactive CustomDebugStringConvertible {
+    nonisolated public var debugDescription: String {
         "\(storeIdentifier ?? "nil") \(entityName) \(primaryKey())"
     }
 }
@@ -24,7 +24,7 @@ extension PersistentIdentifier: @retroactive CustomStringConvertible {
 nonisolated private let encoder: Mutex<JSONEncoder> = .init(.init())
 
 extension PersistentIdentifier {
-    nonisolated package func primaryKey<T>(as type: T.Type = String.self) -> T
+    nonisolated public func primaryKey<T>(as type: T.Type = String.self) -> T
     where T: LosslessStringConvertible & Sendable {
         encoder.withLock { encoder in
             do {
