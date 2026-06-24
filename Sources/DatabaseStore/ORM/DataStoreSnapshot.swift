@@ -16,7 +16,8 @@ package import Foundation
 internal import Logging
 public import DataStoreSQL
 public import DataStoreSupport
-public import DataStoreRuntime
+
+@_spi(Internal) public import DataStoreRuntime
 
 #if swift(>=6.2)
 public import SwiftData
@@ -1365,15 +1366,23 @@ extension DatabaseSnapshot {
 //            "Destination mismatch: \(relationship.destination) != \(reference[1].destinationTable)"
 //        )
         let foreignKey = connection.primaryKey(for: relatedIdentifier)
-        _ = try connection.query(
-            """
-            INSERT OR IGNORE INTO "\(reference[0].destinationTable)" (
-                "\(reference[0].rhsColumn)",
-                "\(reference[1].lhsColumn)"
-            ) VALUES (?, ?)
-            """,
-            bindings: primaryKey, foreignKey
-        )
+        do {
+            _ = try connection.query(
+                """
+                INSERT OR IGNORE INTO "\(reference[0].destinationTable)" (
+                    "\(reference[0].rhsColumn)",
+                    "\(reference[1].lhsColumn)"
+                ) VALUES (?, ?)
+                """,
+                bindings: primaryKey, foreignKey
+            )
+        } catch {
+            logger.error("Skipped many-to-many link after constraint failure: \(error)", metadata: [
+                "target": "\(reference[0].destinationTable)",
+                "affected_column_primary_key": "\(reference[0].rhsColumn) = \(primaryKey)",
+                "affected_column_foreign_key": "\(reference[1].lhsColumn) = \(foreignKey)"
+            ])
+        }
         #if DEBUG
         let rows = try fetchManyToManyReference(
             self.primaryKey,

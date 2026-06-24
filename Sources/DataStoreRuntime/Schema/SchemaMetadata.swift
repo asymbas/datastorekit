@@ -12,8 +12,8 @@ private import DataStoreSQL
 private import Foundation
 private import Logging
 private import SQLiteHandle
-package import DataStoreSupport
-package import SwiftData
+public import DataStoreSupport
+public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.bootstrap")
 
@@ -43,7 +43,8 @@ nonisolated package func makePropertyMetadataDictionaryInversion<T>(schema: Sche
 
 // TODO: Creating an entity without a schema is incomplete.
 
-nonisolated package func makeSchemaMetadata<Model, Result>(
+@_spi(Bootstrap)
+nonisolated public func makeSchemaMetadata<Model, Result>(
     _ schema: Schema?,
     for type: Model.Type,
     into result: consuming Result,
@@ -112,7 +113,19 @@ nonisolated package func makeSchemaMetadata<Model, Result>(
                     defaultValue: compositeAttribute.defaultValue,
                     hashModifier: compositeAttribute.hashModifier
                 )
-                newCompositeAttribute.properties = compositeAttribute.properties
+                var newAttributes: [Schema.Attribute] = []
+                for attribute in compositeAttribute.properties {
+                    let newAttribute = Schema.Attribute(
+                        name: attribute.name,
+                        originalName: attribute.originalName,
+                        options: attribute.options,
+                        valueType: attribute.valueType,
+                        defaultValue: attribute.defaultValue,
+                        hashModifier: attribute.hashModifier
+                    )
+                    newAttributes.append(newAttribute)
+                }
+                newCompositeAttribute.properties = newAttributes
                 entity.storedProperties.append(newCompositeAttribute)
             case let attribute as Schema.Attribute:
                 let newAttribute = Schema.Attribute(

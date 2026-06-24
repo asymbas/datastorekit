@@ -13,10 +13,11 @@ private import Foundation
 private import Logging
 private import Synchronization
 internal import Collections
-internal import DataStoreRuntime
 internal import DataStoreSQL
 internal import SQLiteHandle
 internal import SQLiteStatement
+
+@_spi(Bootstrap) internal import DataStoreRuntime
 
 #if swift(>=6.2)
 internal import SwiftData
@@ -197,7 +198,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
         store.configuration.options.contains(.disableLightweightSchemaMigrations) == false
         let oldSchema: Schema?
         do {
-            oldSchema = try Self.loadPersistedSchema(from: store) // try store.getValue(forKey: "schema", as: Schema.self)
+            oldSchema = try Self.loadPersistedSchema(from: store)
         } catch {
             logger.warning(
                 "Failed to decode persisted SwiftData.Schema. Treating store as fresh.",
@@ -212,12 +213,20 @@ nonisolated internal final class DataStoreMigration: StoreBound {
             return nil
         }
         let (oldDatabaseSchema, storedStatements, oldAuxiliaryObjectsByTable) = try store.queue.reader { connection in
+            #if CUSTOM_DATABASE
+            let tableRows: [[any Sendable]] = try connection.query("SELECT name FROM _tables")
+                .compactMap { row in
+                    guard let name = row["name"] as? String else { return nil }
+                    return [name, "CREATE TABLE \(quote(name))"]
+                }
+            #else
             let tableRows = try connection.fetch(
                 """
                 SELECT "name", "sql" FROM sqlite_schema 
                 WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
                 """
             )
+            #endif
             var definitions = [any TableDefinition]()
             var oldIndexDefinitions = [any IndexDefinition]()
             var storedStatements = [String: String]()
@@ -317,6 +326,29 @@ nonisolated internal final class DataStoreMigration: StoreBound {
                 }
                 definitions.append(SQLTable(name: tableName, constraints: tableConstraints, columns: { columns }))
             }
+            #if CUSTOM_DATABASE
+            // workaround
+            let auxiliaryRows: [[any Sendable]] = try connection.query(
+                """
+                SELECT name, table_name, indexed_columns, is_unique
+                FROM _schema WHERE kind = 'index'
+                """
+            ).compactMap { row in
+                guard let name = row["name"] as? String,
+                      !name.hasPrefix("sqlite_autoindex_"),
+                      let tableName = row["table_name"] as? String else {
+                    return nil
+                }
+                let indexedColumns = (row["indexed_columns"] as? String) ?? ""
+                let columnList = indexedColumns
+                    .split(separator: ",")
+                    .map { quote(String($0)) }
+                    .joined(separator: ", ")
+                let isUnique = ((row["is_unique"] as? Int64) ?? 0) != 0
+                let sql = "CREATE \(isUnique ? "UNIQUE " : "")INDEX \(quote(name)) ON \(quote(tableName)) (\(columnList))"
+                return [tableName, "index", name, sql]
+            }
+            #else
             let auxiliaryRows = try connection.fetch(
                 """
                 SELECT "tbl_name", "type", "name", "sql"
@@ -327,6 +359,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
                 ORDER BY "tbl_name", "type", "name"
                 """
             )
+            #endif
             var byTable = [String: [AuxiliaryObject]]()
             for auxiliaryRow in auxiliaryRows {
                 guard let tableName = auxiliaryRow[0] as? String,
@@ -540,10 +573,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
         return paths
     }
     
-    private func validate(
-        _ validations: [Validation],
-        connection: borrowing DatabaseConnection<Store>
-    ) throws {
+    private func validate(_ validations: [Validation], connection: borrowing DatabaseConnection<Store>) throws {
         for validation in validations {
             switch validation {
             case .uniqueness(let entity, let sourceColumns, let destinationColumns):
@@ -677,6 +707,15 @@ nonisolated internal final class DataStoreMigration: StoreBound {
         connection: borrowing DatabaseConnection<Store>
     ) throws -> Bool {
         let escaped = tableName.replacingOccurrences(of: "'", with: "''")
+        #if CUSTOM_DATABASE
+        let rows = try connection.fetch(
+            """
+            SELECT name FROM _tables
+            WHERE name = '\(escaped)'
+            LIMIT 1
+            """
+        )
+        #else
         let rows = try connection.fetch(
             """
             SELECT 1 FROM sqlite_master
@@ -684,6 +723,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
             LIMIT 1
             """
         )
+        #endif
         return rows.isEmpty == false
     }
     

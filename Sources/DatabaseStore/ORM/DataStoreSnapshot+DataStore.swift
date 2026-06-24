@@ -293,8 +293,9 @@ extension DatabaseSnapshot {
                     let value: any DataStoreSnapshotValue
                     if let graph = registry?.graph,
                        let cachedTargets = graph.cachedReferencesIfPresent(for: persistentIdentifier, at: property.name) {
-                        value = try ensureRelationshipValue(cachedTargets, in: relationship)
-                        logger.trace("Resolved excluded properties using graph: \(property) = \(cachedTargets)")
+                        let canonicalTargets = canonicalizedRelationshipTargets(cachedTargets, declaredDestination: relationship.destination, connection: connection)
+                        value = try ensureRelationshipValue(canonicalTargets, in: relationship)
+                        logger.trace("Resolved excluded properties using graph: \(property) = \(canonicalTargets)")
                     } else {
                         value = try fetchExternalReferences(for: persistentIdentifier, in: property, connection: connection)
                         if let graph = registry?.graph,

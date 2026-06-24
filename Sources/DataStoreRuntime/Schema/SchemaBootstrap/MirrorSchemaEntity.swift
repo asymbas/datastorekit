@@ -67,3 +67,24 @@ nonisolated public func reflectEntity(_ entity: Schema.Entity)
     }
     return type
 }
+
+nonisolated internal func objectType(of entity: Schema.Entity)
+-> (any (PersistentModel & SendableMetatype).Type)? {
+    for child in Mirror(reflecting: entity).children where child.label == "_objectType" {
+        if let type = child.value as? any (PersistentModel & SendableMetatype).Type {
+            return type
+        }
+    }
+    return nil
+}
+
+nonisolated internal func mangledType(of entity: Schema.Entity)
+-> (any (PersistentModel & SendableMetatype).Type)? {
+    for child in Mirror(reflecting: entity).children where child.label == "_mangledName" {
+        if let name = child.value as? String,
+           let type = _typeByName(name) as? any (PersistentModel & SendableMetatype).Type {
+            return type
+        }
+    }
+    return nil
+}

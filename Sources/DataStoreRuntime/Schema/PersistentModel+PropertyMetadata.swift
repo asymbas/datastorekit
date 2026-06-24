@@ -15,6 +15,8 @@ public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.bootstrap")
 
+// TODO: Cache composite attribute property metadata.
+
 nonisolated private let storage: Mutex<[ObjectIdentifier: [AnyKeyPath & Sendable: PropertyMetadata]]> = .init([:])
 
 extension PersistentModel where Self: SendableMetatype {
@@ -124,7 +126,8 @@ extension PersistentModel where Self: AnyObject {
         }
     }
     
-    nonisolated package static func addKeyPathVariantToPropertyMetadata(
+    @_spi(Bootstrap)
+    nonisolated public static func addKeyPathVariantToPropertyMetadata(
         _ variant: AnyKeyPath & Sendable,
         canonical canonicalKeyPath: AnyKeyPath & Sendable
     ) {
@@ -144,14 +147,16 @@ extension PersistentModel where Self: AnyObject {
         }
     }
     
-    nonisolated package static func appendPropertyMetadata(_ property: PropertyMetadata) {
+    @_spi(Bootstrap)
+    nonisolated public static func appendPropertyMetadata(_ property: PropertyMetadata) {
         var snapshotCopy = Self.databaseSchemaMetadata
         snapshotCopy.append(property)
         Self.overwritePropertyMetadata(consume snapshotCopy)
         logger.debug("Appended a new PropertyMetadata: \(property)")
     }
     
-    nonisolated package static func overwritePropertyMetadata(_ newProperties: [PropertyMetadata]) {
+    @_spi(Bootstrap)
+    nonisolated public static func overwritePropertyMetadata(_ newProperties: [PropertyMetadata]) {
         _overwriteSnapshot(newProperties, in: Self.self)
     }
     

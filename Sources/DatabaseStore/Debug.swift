@@ -36,8 +36,8 @@ nonisolated internal func assertSaveChangesResult(
     remappedIdentifiers: [PersistentIdentifier: PersistentIdentifier]
 ) {
     assert(
-        remappedIdentifiers.keys.allSatisfy { temporaryIdentifier in
-            temporaryIdentifier.storeIdentifier == nil &&
+        remappedIdentifiers.allSatisfy { temporaryIdentifier, mappedIdentifier in
+            (temporaryIdentifier.storeIdentifier == nil || temporaryIdentifier != mappedIdentifier) &&
             request.inserted.contains { snapshot in
                 snapshot.persistentIdentifier == temporaryIdentifier
             }

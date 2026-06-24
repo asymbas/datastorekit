@@ -1308,6 +1308,7 @@ where Wrapped: SQLPredicateExpression,
             case .text:
                 sql = "'$.' || json_quote(\(cast(key.clause, as: .text)))"
             default:
+                // Custom database engine requires aliasing `FROM (SELECT \(key.clause) AS key) AS key_source`.
                 sql = """
                     (
                         SELECT CASE
@@ -1369,6 +1370,7 @@ where Wrapped: SQLPredicateExpression, Key: SQLPredicateExpression {
             case .text:
                 sql = "'$.' || json_quote(\(cast(key.clause, as: .text)))"
             default:
+                // Custom database engine requires aliasing `FROM (SELECT \(key.clause) AS key) AS key_source`.
                 sql = """
                     (
                         SELECT CASE

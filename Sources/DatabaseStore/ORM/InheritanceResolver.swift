@@ -174,11 +174,19 @@ extension InheritanceResolver {
                 """
             )
         }
+        #if CUSTOM_DATABASE
+        let sql = """
+            SELECT entity
+            FROM (\(clauses.joined(separator: "\nUNION ALL "))) AS resolved
+            ORDER BY depth DESC LIMIT 1
+            """
+        #else
         let sql = """
             SELECT entity
             FROM (\(clauses.joined(separator: "\nUNION ALL ")))
             ORDER BY depth DESC LIMIT 1
             """
+        #endif
         var bindings = [any Sendable]()
         bindings.reserveCapacity(descendants.count)
         for _ in 0..<descendants.count {
@@ -272,11 +280,19 @@ extension InheritanceResolver {
                 """
             )
         }
+        #if CUSTOM_DATABASE
+        let sql = """
+            SELECT pk, entity, MAX(depth)
+            FROM (\(clauses.joined(separator: "\nUNION ALL "))) AS resolved
+            GROUP BY pk
+            """
+        #else
         let sql = """
             SELECT pk, entity, MAX(depth)
             FROM (\(clauses.joined(separator: "\nUNION ALL ")))
             GROUP BY pk
             """
+        #endif
         var bindings = [any Sendable]()
         bindings.reserveCapacity(primaryKeys.count * descendants.count)
         for _ in 0..<descendants.count {

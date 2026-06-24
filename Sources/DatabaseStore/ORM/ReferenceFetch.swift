@@ -41,6 +41,29 @@ T.Element: DataStoreSnapshotValue {
     return SQLNull()
 }
 
+nonisolated package func canonicalizedRelationshipTargets(
+    _ targets: [PersistentIdentifier],
+    declaredDestination: String,
+    connection: borrowing DatabaseConnection<DatabaseStore>
+) -> [PersistentIdentifier] {
+    guard targets.count > 1 else { return targets }
+    var indexByPrimaryKey = [String: Int](minimumCapacity: targets.count)
+    var result = [PersistentIdentifier]()
+    result.reserveCapacity(targets.count)
+    for target in targets {
+        let primaryKey: String = connection.primaryKey(for: target)
+        if let existingIndex = indexByPrimaryKey[primaryKey] {
+            if result[existingIndex].entityName == declaredDestination, target.entityName != declaredDestination {
+                result[existingIndex] = target
+            }
+        } else {
+            indexByPrimaryKey[primaryKey] = result.count
+            result.append(target)
+        }
+    }
+    return result
+}
+
 /// Fetches rows that requires an intermediary table for a many-to-many relationship.
 nonisolated package func fetchManyToManyReference<Result>(
     _ primaryKey: String,
@@ -120,8 +143,9 @@ nonisolated package func fetchExternalReferences(
     let description = "\(persistentIdentifier.entityName).\(property)"
     if let graph = connection.context?.graph,
        let cachedTargets = graph.cachedReferencesIfPresent(for: persistentIdentifier, at: property.name) {
-        logger.debug("Using cached references: \(description) -> \(cachedTargets)")
-        return try ensureRelationshipValue(cachedTargets, in: relationship)
+        let canonicalTargets = canonicalizedRelationshipTargets(cachedTargets, declaredDestination: relationship.destination, connection: connection)
+        logger.debug("Using cached references: \(description) -> \(canonicalTargets)")
+        return try ensureRelationshipValue(canonicalTargets, in: relationship)
     }
     let primaryKey = connection.primaryKey(for: persistentIdentifier)
     let relationshipAlias = "relationship"
@@ -141,10 +165,10 @@ nonisolated package func fetchExternalReferences(
         }
     case let reference? where relationship.isToOneRelationship:
         results = try connection.query {
-            "SELECT \(quote(reference[0].destinationColumn)) AS \(quote(relationshipAlias))"
+            "SELECT \(quote(reference[0].sourceColumn)) AS \(quote(relationshipAlias))"
             From(reference[0].sourceTable)
-            Where(.equals(column: reference[0].sourceColumn, value: primaryKey))
-            if relationship.isToOneRelationship { Limit(1) }
+            Where(.equals(column: reference[0].destinationColumn, value: primaryKey))
+            Limit(1)
         }
     default:
         preconditionFailure("Invalid table reference and relationship combination.")

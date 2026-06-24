@@ -16,6 +16,8 @@ public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.bootstrap")
 
+// FIXME: Set a runtime-wide identifier per schema.
+
 extension Schema {
     // Resolves the scenario where a store is copied between packages and the encoded schema references types mangled under a different module identity.
     
