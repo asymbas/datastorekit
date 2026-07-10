@@ -39,8 +39,8 @@ extension DatabaseStore: HistoryProviding {
         connection: borrowing DatabaseConnection
     ) throws -> [HistoryType] {
         #if DEBUG
-        let translator = SQLHistoryTranslator<HistoryType>()
-        _ = try translator.translate(descriptor)
+        var translator = SQLHistoryTranslator<HistoryType>()
+        let translation = try translator.translate(descriptor)
         let start = Date()
         let logThisCall = shouldLogHistoryFetch(
             limit: descriptor.fetchLimit,
