@@ -14,7 +14,6 @@ private import SQLiteStatement
 private import Synchronization
 package import DataStoreRuntime
 public import DataStoreCore
-public import DataStoreSQL
 public import DataStoreSupport
 public import SQLiteHandle
 

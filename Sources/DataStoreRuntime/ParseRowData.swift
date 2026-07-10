@@ -7,6 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
+private import DataStoreCore
 private import DataStoreSQL
 private import Foundation
 private import Logging

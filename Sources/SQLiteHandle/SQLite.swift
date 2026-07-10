@@ -10,7 +10,7 @@
 private import Logging
 private import SQLite3
 private import Synchronization
-public import DataStoreSQL
+public import DataStoreCore
 public import Foundation
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.sqlite")

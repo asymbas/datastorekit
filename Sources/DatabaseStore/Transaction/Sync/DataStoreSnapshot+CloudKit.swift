@@ -10,7 +10,6 @@
 #if canImport(CloudKit)
 
 private import DataStoreRuntime
-private import DataStoreSQL
 private import DataStoreSupport
 private import Logging
 private import SQLSupport

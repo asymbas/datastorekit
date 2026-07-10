@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-private import DataStoreSQL
+private import DataStoreCore
 private import SQLite3
 
 extension SQLError {

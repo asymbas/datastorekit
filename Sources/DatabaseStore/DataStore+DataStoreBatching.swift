@@ -9,7 +9,6 @@
 
 private import DataStoreCore
 private import DataStoreRuntime
-private import DataStoreSQL
 private import Foundation
 private import Logging
 public import DataStoreSupport

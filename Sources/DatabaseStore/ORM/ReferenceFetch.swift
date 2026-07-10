@@ -10,8 +10,8 @@
 private import DataStoreSupport
 private import Logging
 private import SQLiteStatement
+internal import DataStoreCore
 package import DataStoreRuntime
-package import DataStoreSQL
 package import SQLiteHandle
 package import SwiftData
 

@@ -13,7 +13,6 @@ private import Foundation
 private import Logging
 private import Synchronization
 internal import Collections
-internal import DataStoreSQL
 internal import SQLiteHandle
 internal import SQLiteStatement
 

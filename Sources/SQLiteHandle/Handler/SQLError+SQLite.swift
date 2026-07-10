@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-package import DataStoreSQL
+package import SQLSupport
 
 extension SQLError {
     nonisolated package init(

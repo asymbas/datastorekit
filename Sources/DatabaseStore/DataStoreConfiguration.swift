@@ -11,7 +11,6 @@ private import DataStoreRuntime
 private import Logging
 private import Synchronization
 private import SQLiteStatement
-internal import DataStoreSQL
 internal import SQLiteHandle
 public import DataStoreCore
 public import DataStoreSupport

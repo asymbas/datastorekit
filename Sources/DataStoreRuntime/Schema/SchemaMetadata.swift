@@ -8,7 +8,6 @@
 //
 
 private import DataStoreCore
-private import DataStoreSQL
 private import Foundation
 private import Logging
 private import SQLiteHandle

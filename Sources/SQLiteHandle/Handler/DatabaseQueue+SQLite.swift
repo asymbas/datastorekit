@@ -10,7 +10,6 @@
 #if false
 
 public import DataStoreCore
-public import DataStoreSQL
 
 extension DatabaseQueue where Store.Handle == SQLite {
     nonisolated public convenience init(

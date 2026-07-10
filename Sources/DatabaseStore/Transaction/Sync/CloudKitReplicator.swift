@@ -14,7 +14,6 @@ private import SQLiteHandle
 private import SQLSupport
 private import Synchronization
 internal import DataStoreRuntime
-internal import DataStoreSQL
 public import DataStoreCore
 
 #if swift(>=6.2)

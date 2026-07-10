@@ -9,7 +9,7 @@
 
 private import Logging
 internal import SQLiteHandle
-internal import DataStoreSQL
+internal import DataStoreCore
 internal import Foundation
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.transaction")

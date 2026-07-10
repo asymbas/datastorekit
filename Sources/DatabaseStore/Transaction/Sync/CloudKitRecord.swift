@@ -15,7 +15,6 @@ private import Logging
 internal import SQLiteHandle
 internal import SQLSupport
 private import Synchronization
-internal import DataStoreSQL
 
 #if swift(>=6.2)
 internal import SwiftData
