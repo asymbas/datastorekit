@@ -8,13 +8,12 @@
 //
 
 private import DataStoreCore
-private import SQLiteHandle
+package import SQLiteHandle
 private import SQLiteStatement
-private import SQLSupport
+internal import SQLSupport
 private import Synchronization
 package import Foundation
 internal import Logging
-public import DataStoreSQL
 public import DataStoreSupport
 
 @_spi(Internal) public import DataStoreRuntime
@@ -27,7 +26,7 @@ public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
-extension DatabaseSnapshot: StoreBound {
+extension DatabaseSnapshot {
     public typealias Store = DatabaseStore
 }
 
@@ -1008,7 +1007,7 @@ extension DatabaseSnapshot {
         indices: [Int],
         shouldAddOnly: Bool,
         graph: ReferenceGraph? = nil,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws -> (linked: Set<PersistentIdentifier>, unlinked: Set<PersistentIdentifier>) {
         var linkedIdentifiers = Set<PersistentIdentifier>()
         var unlinkedIdentifiers = Set<PersistentIdentifier>()
@@ -1022,7 +1021,7 @@ extension DatabaseSnapshot {
                 guard let relationship = property.metadata as? Schema.Relationship else {
                     preconditionFailure("Property should have been a relationship: \(property)")
                 }
-                if let graph = graph ?? connection.context?.graph,
+                if let graph = graph ?? connection.registry?.graph,
                    let cachedTargets = graph.cachedReferencesIfPresent(for: persistentIdentifier, at: property.name) {
                     if relationship.isToOneRelationship {
                         oldValue = cachedTargets.first ?? SQLNull()
@@ -1060,7 +1059,7 @@ extension DatabaseSnapshot {
         comparingTo oldValue: any DataStoreSnapshotValue,
         in property: consuming PropertyMetadata,
         shouldAddOnly: Bool,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws -> (linked: Set<PersistentIdentifier>, unlinked: Set<PersistentIdentifier>) {
         let description = "\(persistentIdentifier) - \(entityName).\(property.name)"
         guard let relationship = property.metadata as? Schema.Relationship else {
@@ -1240,7 +1239,7 @@ extension DatabaseSnapshot {
     ///   The references that were unlinked or cascaded (deleted).
     nonisolated package mutating func reconcileExternalReferencesBeforeDelete(
         indices: [Int],
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws -> (unlinked: Set<PersistentIdentifier>, cascaded: Set<PersistentIdentifier>) {
         var unlinkedIdentifiers = Set<PersistentIdentifier>()
         var cascadedIdentifiers = Set<PersistentIdentifier>()
@@ -1348,7 +1347,7 @@ extension DatabaseSnapshot {
     nonisolated internal func linkManyToManyReference(
         _ relatedIdentifier: PersistentIdentifier,
         in property: PropertyMetadata,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws {
 //        guard let relationship = property.metadata as? Schema.Relationship else {
 //            preconditionFailure("The property must be a relationship: \(property)")
@@ -1400,7 +1399,7 @@ extension DatabaseSnapshot {
     nonisolated internal func unlinkManyToManyReference(
         _ relatedIdentifier: PersistentIdentifier,
         in property: PropertyMetadata,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws {
 //        guard let relationship = property.metadata as? Schema.Relationship else {
 //            preconditionFailure("The property must be a relationship: \(property)")
@@ -1443,7 +1442,7 @@ extension DatabaseSnapshot {
     nonisolated internal func linkToManyReference(
         _ relatedIdentifier: PersistentIdentifier,
         in property: PropertyMetadata,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws {
         guard let relationship = property.metadata as? Schema.Relationship else {
             preconditionFailure("The property must be a relationship: \(property)")
@@ -1487,7 +1486,7 @@ extension DatabaseSnapshot {
     nonisolated internal func unlinkToManyReference(
         _ relatedIdentifier: PersistentIdentifier,
         in property: PropertyMetadata,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws {
         guard let relationship = property.metadata as? Schema.Relationship else {
             preconditionFailure("The property must be a relationship: \(property)")
@@ -1547,7 +1546,7 @@ extension DatabaseSnapshot {
     nonisolated internal func linkToOneReference(
         _ relatedIdentifier: PersistentIdentifier,
         in property: PropertyMetadata,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws {
         guard let relationship = property.metadata as? Schema.Relationship else {
             preconditionFailure("The property must be a relationship: \(property)")
@@ -1584,7 +1583,7 @@ extension DatabaseSnapshot {
     nonisolated internal func unlinkToOneReference(
         _ relatedIdentifier: PersistentIdentifier,
         in property: PropertyMetadata,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws {
         guard let relationship = property.metadata as? Schema.Relationship else {
             preconditionFailure("The property must be a relationship: \(property)")
@@ -1642,7 +1641,7 @@ extension DatabaseSnapshot {
     
     nonisolated internal func fetchReference(
         in property: PropertyMetadata,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws -> any DataStoreSnapshotValue {
         let description = "\(persistentIdentifier) - \(entityName).\(property.name)"
         guard let storeIdentifier = self.persistentIdentifier.storeIdentifier else {
@@ -1725,7 +1724,7 @@ extension DatabaseSnapshot {
     nonisolated package static func fetchSuperentities(
         for identifier: PersistentIdentifier,
         entityName: String,
-        connection: borrowing DatabaseConnection<Store>,
+        connection:  borrowing DatabaseConnection,
         chain: inout [PersistentIdentifier]
     ) throws {
         chain.append(identifier)
@@ -1764,7 +1763,7 @@ extension DatabaseSnapshot {
     nonisolated package static func fetchSuperentitySnapshots(
         for identifier: PersistentIdentifier,
         on entity: Schema.Entity,
-        connection: borrowing DatabaseConnection<Store>,
+        connection:  borrowing DatabaseConnection,
         relatedSnapshots: inout [PersistentIdentifier: Self]
     ) throws -> (rootEntity: Schema.Entity, rootPersistentIdentifier: PersistentIdentifier) {
         guard let superentity = entity.superentity else {
@@ -1820,7 +1819,7 @@ extension DatabaseSnapshot {
     nonisolated package static func fetchInheritanceDependencies(
         for persistentIdentifier: PersistentIdentifier,
         on entity: Schema.Entity,
-        connection: borrowing DatabaseConnection<Store>,
+        connection:  borrowing DatabaseConnection,
         direction: FetchHierarchyDirection = .both,
         excludeExistingValues: Bool = true
     ) throws -> [String: any DataStoreSnapshotValue] {
@@ -1891,7 +1890,7 @@ extension DatabaseSnapshot {
         from entity: Schema.Entity,
         upTo excludedAncestor: Schema.Entity,
         type: any (PersistentModel & SendableMetatype).Type,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws -> [(property: PropertyMetadata, value: any Sendable)] {
         let chain = Self.collectClassTableInheritanceHierarchy(from: entity, upTo: excludedAncestor)
         guard !chain.isEmpty, let root = chain.first else {
@@ -2372,7 +2371,7 @@ extension DatabaseSnapshot {
     nonisolated package func assertRowExists(
         for primaryKey: String,
         table: String,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws {
         let rows = try connection.query(
             "SELECT 1 FROM \(quote(table)) WHERE \(quote(pk)) = ? LIMIT 1",
@@ -2388,7 +2387,7 @@ extension DatabaseSnapshot {
     
     nonisolated package func assertRelationshipValid(
         in property: PropertyMetadata,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws {
         guard let relationship = property.metadata as? Schema.Relationship else {
             preconditionFailure("The property must be a relationship: \(property)")

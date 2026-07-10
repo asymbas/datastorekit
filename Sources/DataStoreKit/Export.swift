@@ -10,7 +10,11 @@
 @_exported public import _DatabaseStore
 @_exported public import DataStoreCore
 @_exported public import DataStoreRuntime
-@_exported public import DataStoreSQL
+//@_exported public import DataStoreSQL
 @_exported public import DataStoreSupport
-@_exported public import SQLiteHandle
+
 @_exported public import SwiftData
+
+#if canImport(SQLiteHandle)
+@_exported public import SQLiteHandle
+#endif

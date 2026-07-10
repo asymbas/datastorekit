@@ -9,11 +9,10 @@
 
 private import Logging
 package import SQLiteStatement
-public import DataStoreSQL
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.sqlite")
 
-extension DatabaseConnection where Store.Handle == SQLite {
+extension DatabaseConnection {
     /// The most recent SQLite error for this connection.
     nonisolated public var error: any Swift.Error {
         handle.error
@@ -51,7 +50,7 @@ extension DatabaseConnection where Store.Handle == SQLite {
     
     /// Executes an SQL statement and returns the underlying SQLite result.
     @discardableResult nonisolated public func execute(_ sql: String)
-    throws -> Store.Handle.Result {
+    throws -> SQLite.Result {
         try handle.execute(sql)
     }
     
@@ -97,7 +96,7 @@ extension DatabaseConnection where Store.Handle == SQLite {
     }
 }
 
-extension DatabaseConnection where Store.Handle == SQLite {
+extension DatabaseConnection {
     nonisolated package func fetch(_ statement: SQL)
     throws -> [[any Sendable]] {
         try handle.fetch(statement.sql, bindings: statement.bindings)
@@ -119,7 +118,7 @@ extension DatabaseConnection where Store.Handle == SQLite {
     }
 }
 
-extension DatabaseConnection where Store.Handle == SQLite {
+extension DatabaseConnection {
     nonisolated public func checkCancellation() throws {
         if Task.isCancelled {
             handle.interrupt()
@@ -129,7 +128,7 @@ extension DatabaseConnection where Store.Handle == SQLite {
     }
     
     nonisolated public nonmutating func withTransaction(
-        _ transactionMode: Store.Handle.TransactionMode?,
+        _ transactionMode: SQLite.TransactionMode?,
         _ operation: () throws -> Void
     ) throws {
         try transaction(transactionMode)
@@ -145,7 +144,7 @@ extension DatabaseConnection where Store.Handle == SQLite {
     }
     
     nonisolated package mutating func _withTransaction(
-        _ transactionMode: Store.Handle.TransactionMode?,
+        _ transactionMode: SQLite.TransactionMode?,
         _ operation: (inout sending Self) throws -> Void
     ) throws {
         try transaction(transactionMode)
@@ -172,7 +171,7 @@ extension DatabaseConnection where Store.Handle == SQLite {
         try withTransaction(.exclusive, operation)
     }
     
-    nonisolated public func transaction(_ transactionMode: Store.Handle.TransactionMode? = nil) throws {
+    nonisolated public func transaction(_ transactionMode: SQLite.TransactionMode? = nil) throws {
         guard let editingState = self.editingState else {
             throw Self.Error.noEditingStateProvided
         }

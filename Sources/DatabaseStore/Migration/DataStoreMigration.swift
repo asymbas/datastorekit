@@ -140,7 +140,7 @@ extension DataStoreMigration {
     }
 }
 
-nonisolated internal final class DataStoreMigration: StoreBound {
+nonisolated internal final class DataStoreMigration {
     internal typealias Store = DatabaseStore
     internal unowned let store: Store
     internal let analysis: Classifier
@@ -186,7 +186,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
     
     @discardableResult internal init?(
         store: Store,
-        custom: ((CustomMigrationContext, borrowing DatabaseConnection<Store>) throws -> Void)? = nil
+        custom: ((CustomMigrationContext,  borrowing DatabaseConnection) throws -> Void)? = nil
     ) throws {
         self.store = store
         let newSchema = self.store.schema
@@ -405,7 +405,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
         }
     }
     
-    internal func apply(custom: ((CustomMigrationContext, borrowing DatabaseConnection<Store>) throws -> Void)? = nil) throws {
+    internal func apply(custom: ((CustomMigrationContext,  borrowing DatabaseConnection) throws -> Void)? = nil) throws {
         logger.debug("Applying plan", metadata: [
             "analysis.issues.count": "\(analysis.issues.count)",
             "analysis.operations.count": "\(analysis.operations.count)",
@@ -482,8 +482,8 @@ nonisolated internal final class DataStoreMigration: StoreBound {
     
     private func execute(
         _ step: Step,
-        connection: borrowing DatabaseConnection<Store>,
-        custom: ((CustomMigrationContext, borrowing DatabaseConnection<Store>) throws -> Void)?
+        connection:  borrowing DatabaseConnection,
+        custom: ((CustomMigrationContext,  borrowing DatabaseConnection) throws -> Void)?
     ) throws {
         switch step {
         case .validate(let validations):
@@ -521,7 +521,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
         entity: String,
         attribute: String,
         enabled: Bool,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws -> [ExternalStoragePath] {
         var paths = [ExternalStoragePath]()
         if enabled {
@@ -573,7 +573,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
         return paths
     }
     
-    private func validate(_ validations: [Validation], connection: borrowing DatabaseConnection<Store>) throws {
+    private func validate(_ validations: [Validation], connection:  borrowing DatabaseConnection) throws {
         for validation in validations {
             switch validation {
             case .uniqueness(let entity, let sourceColumns, let destinationColumns):
@@ -704,7 +704,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
     
     private func tableExists(
         _ tableName: String,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws -> Bool {
         let escaped = tableName.replacingOccurrences(of: "'", with: "''")
         #if CUSTOM_DATABASE
@@ -730,7 +730,7 @@ nonisolated internal final class DataStoreMigration: StoreBound {
     private func columnExists(
         _ columnName: String,
         in tableName: String,
-        connection: borrowing DatabaseConnection<Store>
+        connection:  borrowing DatabaseConnection
     ) throws -> Bool {
         let rows = try connection.query("PRAGMA table_info(\(quote(tableName)));")
         return rows.contains { $0["name"] as? String == columnName }

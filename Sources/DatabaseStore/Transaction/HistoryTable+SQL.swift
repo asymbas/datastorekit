@@ -9,9 +9,8 @@
 
 private import DataStoreRuntime
 private import Logging
-private import SQLiteHandle
+package import SQLiteHandle
 private import SQLSupport
-package import DataStoreSQL
 package import Foundation
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.transaction")
@@ -19,7 +18,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
 extension HistoryTable {
     nonisolated package static func counts(
         in storeIdentifier: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) -> (rows: Int64, transactions: Int64) {
         let rowAlias = "row_count"
         let transactionAlias = "transaction_count"
@@ -61,7 +60,7 @@ extension HistoryTable {
     
     nonisolated private func withAttachedHistoryArchive<Result>(
         at archiveURL: URL,
-        connection: borrowing DatabaseConnection<DatabaseStore>,
+        connection: borrowing DatabaseConnection,
         _ body: (String) throws -> Result
     ) throws -> Result {
         let archiveName = try HistoryTable.archiveDatabaseName(for: archiveURL)
@@ -74,7 +73,7 @@ extension HistoryTable {
 extension HistoryTable {
     nonisolated package static func maintainHistory(
         in storeIdentifier: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>,
+        connection: borrowing DatabaseConnection,
         calendar: Calendar = .current,
         now: Date = .now,
         ttl: DateComponents = Self.defaultHistoryTTL(),
@@ -106,7 +105,7 @@ extension HistoryTable {
     
     nonisolated package static func maintainHistory(
         in storeIdentifier: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>,
+        connection: borrowing DatabaseConnection,
         calendar: Calendar = .current,
         now: Date = .init(),
         ttlDays: Int,
@@ -133,7 +132,7 @@ extension HistoryTable {
     nonisolated package static func purgeExpiredTransactions(
         olderThan components: DateComponents = Self.defaultHistoryTTL(),
         in storeIdentifier: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>,
+        connection: borrowing DatabaseConnection,
         calendar: Calendar = .current,
         now: Date = .init(),
         requireArchivedCopyBeforeDelete: Bool = true,
@@ -174,7 +173,7 @@ extension HistoryTable {
     nonisolated package static func purgeExpiredTransactions(
         olderThan days: Int = 30,
         in storeIdentifier: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>,
+        connection: borrowing DatabaseConnection,
         calendar: Calendar = .current,
         now: Date = .now,
         requireArchivedCopyBeforeDelete: Bool = true,
@@ -200,7 +199,7 @@ extension HistoryTable {
     nonisolated private static func deleteExpiredTransactions(
         cutoffTimestamp: Int64,
         in storeIdentifier: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws {
         try PreparedStatement(
             sql: """
@@ -216,7 +215,7 @@ extension HistoryTable {
     nonisolated private static func purgeArchivedExpiredTransactions(
         cutoffTimestamp: Int64,
         in storeIdentifier: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>,
+        connection: borrowing DatabaseConnection,
         calendar: Calendar
     ) throws {
         let yearExpression = "CAST(strftime('%Y', \(Self.timestamp.rawValue) / 1000000, 'unixepoch') AS INTEGER)"
@@ -342,7 +341,7 @@ private struct HistoryArchiveCursor: Sendable {
 extension HistoryTable {
     nonisolated package static func archiveTransactions(
         in storeIdentifier: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>,
+        connection: borrowing DatabaseConnection,
         calendar: Calendar = .current,
         now: Date = .init(),
         ttl: DateComponents = Self.defaultHistoryTTL(),
@@ -390,7 +389,7 @@ extension HistoryTable {
     nonisolated package static func archiveCutoffDate(
         for year: Int,
         in storeIdentifier: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws -> Date? {
         guard let cursor = try readArchiveCursor(
             year: year,
@@ -404,7 +403,7 @@ extension HistoryTable {
         _ year: Int,
         mainURL: URL,
         storeIdentifier: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>,
+        connection: borrowing DatabaseConnection,
         calendar: Calendar,
         nowTimestamp: Int64,
         cutoffTimestamp: Int64,
@@ -469,7 +468,7 @@ extension HistoryTable {
         year: Int,
         storeIdentifier: String,
         archiveName: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>,
+        connection: borrowing DatabaseConnection,
         yearStartTimestamp: Int64,
         upperBoundTimestamp: Int64,
         batchSize: Int,
@@ -639,13 +638,13 @@ extension HistoryTable {
     }
     
     nonisolated private static func ensureArchiveStateTable(
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws {
         try PreparedStatement(sql: ArchiveTable.createTable, handle: connection.handle).run()
     }
     
     nonisolated private static func ensureArchiveHistoryTable(
-        connection: borrowing DatabaseConnection<DatabaseStore>,
+        connection: borrowing DatabaseConnection,
         archiveName: String
     ) throws {
         try PreparedStatement(
@@ -657,7 +656,7 @@ extension HistoryTable {
     nonisolated private static func readArchiveCursor(
         year: Int,
         storeIdentifier: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws -> HistoryArchiveCursor? {
         let rows: [[String: Any]]
         do {
@@ -694,7 +693,7 @@ extension HistoryTable {
         year: Int,
         storeIdentifier: String,
         cursor: HistoryArchiveCursor,
-        connection: borrowing DatabaseConnection<DatabaseStore>,
+        connection: borrowing DatabaseConnection,
         nowTimestamp: Int64
     ) throws {
         try ensureArchiveStateTable(connection: connection)

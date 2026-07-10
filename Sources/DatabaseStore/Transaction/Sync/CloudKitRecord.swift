@@ -12,8 +12,8 @@ private import DataStoreRuntime
 private import DataStoreSupport
 private import Foundation
 private import Logging
-private import SQLiteHandle
-private import SQLSupport
+internal import SQLiteHandle
+internal import SQLSupport
 private import Synchronization
 internal import DataStoreSQL
 
@@ -501,7 +501,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         primaryKey: String,
         targetPrimaryKey: String?,
         systemFields: Data?,
-        connection: borrowing DatabaseConnection<Store>
+        connection: borrowing DatabaseConnection
     ) throws {
         try PreparedStatement(
             sql: """
@@ -572,7 +572,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
 extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     internal func deleteRecordMetadata(
         recordName: String,
-        connection: borrowing DatabaseConnection<Store>
+        connection: borrowing DatabaseConnection
     ) throws {
         try PreparedStatement(
             sql: """
@@ -589,7 +589,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     internal func deleteOwnedRecordMetadata(
         entityName: String,
         primaryKey: String,
-        connection: borrowing DatabaseConnection<Store>
+        connection: borrowing DatabaseConnection
     ) throws {
         try PreparedStatement(
             sql: """
@@ -605,7 +605,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     
     internal func removeAppliedDeletedRecordMetadata(
         _ recordID: CKRecord.ID,
-        connection: borrowing DatabaseConnection<Store>
+        connection: borrowing DatabaseConnection
     ) throws {
         if let ownership = try resolveRootRecordOwnership(for: recordID) {
             let relatedMetadata = try loadRelatedRecordMetadata(targetPrimaryKey: ownership.primaryKey)

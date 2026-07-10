@@ -17,7 +17,7 @@ public import DataStoreSQL
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.sqlite")
 
-extension SQLStatementShortcut where Handle == SQLite {
+extension SQLStatementShortcut {
     nonisolated public consuming func fetchRow(
         for primaryKey: some Sendable,
         at column: String = "pk",

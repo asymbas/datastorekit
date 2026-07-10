@@ -10,6 +10,7 @@
 private import DataStoreSQL
 private import Foundation
 private import Logging
+private import SQLSupport
 package import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")

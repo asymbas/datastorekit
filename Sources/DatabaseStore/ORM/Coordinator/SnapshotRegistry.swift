@@ -9,10 +9,10 @@
 
 private import DataStoreSupport
 private import Logging
-internal import DataStoreCore
+public import DataStoreCore
 internal import Dispatch
 internal import Synchronization
-public import DataStoreSQL
+internal import SQLSupport
 public import Foundation
 public import SwiftData
 
@@ -31,7 +31,7 @@ internal struct DataStoreFetchResultMap: Identifiable, Sendable {
 }
 
 /// A cached object with a lifecycle bound to a `ModelContext` via a linked `EditingState`.
-public final class SnapshotRegistry: DatabaseContext, DataStoreSnapshotProvider {
+public final class SnapshotRegistry: DatabaseContext {
     public typealias Snapshot = DatabaseSnapshot
     nonisolated private let manager: ModelManager
     /// Inherited from `Identifiable.id`.

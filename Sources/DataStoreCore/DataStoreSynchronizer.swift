@@ -11,7 +11,7 @@ internal import DataStoreSupport
 public import Foundation
 public import SwiftData
 
-nonisolated public protocol DataStoreSynchronizer<Store>: Sendable {
+public protocol DataStoreSynchronizer<Store>: Sendable {
     associatedtype Store: DataStore & HistoryProviding
     associatedtype SyncConfiguration: DataStoreSynchronizerConfiguration<Store>
     var id: String { get }

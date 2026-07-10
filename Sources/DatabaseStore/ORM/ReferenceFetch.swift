@@ -44,14 +44,14 @@ T.Element: DataStoreSnapshotValue {
 nonisolated package func canonicalizedRelationshipTargets(
     _ targets: [PersistentIdentifier],
     declaredDestination: String,
-    connection: borrowing DatabaseConnection<DatabaseStore>
+    checkForPrimaryKey: (@Sendable (PersistentIdentifier) -> any LosslessStringConvertible)?
 ) -> [PersistentIdentifier] {
     guard targets.count > 1 else { return targets }
     var indexByPrimaryKey = [String: Int](minimumCapacity: targets.count)
     var result = [PersistentIdentifier]()
     result.reserveCapacity(targets.count)
     for target in targets {
-        let primaryKey: String = connection.primaryKey(for: target)
+        let primaryKey: String = checkForPrimaryKey?(target).description ?? target.primaryKey()
         if let existingIndex = indexByPrimaryKey[primaryKey] {
             if result[existingIndex].entityName == declaredDestination, target.entityName != declaredDestination {
                 result[existingIndex] = target
@@ -70,7 +70,7 @@ nonisolated package func fetchManyToManyReference<Result>(
     _ foreignKey: String,
     for property: PropertyMetadata,
     into initial: Result,
-    connection: borrowing DatabaseConnection<DatabaseStore>,
+    connection: borrowing DatabaseConnection,
     body: @escaping @Sendable (inout Result, ResultRows.Element) -> Void
 ) throws -> Result where Result: Collection {
     let reference = property.reference.unsafelyUnwrapped
@@ -91,7 +91,7 @@ nonisolated package func fetchToManyReference<Result>(
     _ childForeignKey: String,
     for property: PropertyMetadata,
     into initial: Result,
-    connection: borrowing DatabaseConnection<DatabaseStore>,
+    connection: borrowing DatabaseConnection,
     body: @escaping @Sendable (inout Result, ResultRows.Element) -> Void
 ) throws -> Result where Result: Collection {
     let reference = property.reference.unsafelyUnwrapped
@@ -112,7 +112,7 @@ nonisolated package func fetchToOneReference<Result>(
     _ parentForeignKey: String,
     for property: PropertyMetadata,
     into initial: Result,
-    connection: borrowing DatabaseConnection<DatabaseStore>,
+    connection: borrowing DatabaseConnection,
     body: @escaping @Sendable (inout Result, ResultRows.Element) -> Void
 ) throws -> Result where Result: Collection {
     let reference = property.reference.unsafelyUnwrapped
@@ -132,7 +132,7 @@ nonisolated package func fetchToOneReference<Result>(
 nonisolated package func fetchExternalReferences(
     for persistentIdentifier: PersistentIdentifier,
     in property: PropertyMetadata,
-    connection: borrowing DatabaseConnection<DatabaseStore>
+    connection: borrowing DatabaseConnection
 ) throws -> any DataStoreSnapshotValue {
     guard let relationship = property.metadata as? Schema.Relationship else {
         preconditionFailure("Property should have been a relationship: \(property)")
@@ -141,9 +141,12 @@ nonisolated package func fetchExternalReferences(
         preconditionFailure("References cannot be fetched for a temporary identifier.")
     }
     let description = "\(persistentIdentifier.entityName).\(property)"
-    if let graph = connection.context?.graph,
+    if let graph = connection.registry?.graph,
        let cachedTargets = graph.cachedReferencesIfPresent(for: persistentIdentifier, at: property.name) {
-        let canonicalTargets = canonicalizedRelationshipTargets(cachedTargets, declaredDestination: relationship.destination, connection: connection)
+        let context = connection.context
+        let canonicalTargets = canonicalizedRelationshipTargets(cachedTargets, declaredDestination: relationship.destination) { persistentIdentifier in
+            context?.primaryKey(for: persistentIdentifier, as: String.self) ?? persistentIdentifier.primaryKey()
+        }
         logger.debug("Using cached references: \(description) -> \(canonicalTargets)")
         return try ensureRelationshipValue(canonicalTargets, in: relationship)
     }
@@ -185,7 +188,7 @@ nonisolated package func fetchExternalReferences(
             : relatedIdentifier
         }
     }
-    if let graph = connection.context?.graph {
+    if let graph = connection.registry?.graph {
         graph.setReferences(for: persistentIdentifier, at: property.name, to: relatedIdentifiers)
     }
     logger.trace("Fetched external references: \(description)", metadata: ["results": "\(relatedIdentifiers)"])
@@ -195,7 +198,7 @@ nonisolated package func fetchExternalReferences(
 nonisolated package func fetchExternalRows(
     for persistentIdentifier: PersistentIdentifier,
     in property: PropertyMetadata,
-    connection: borrowing DatabaseConnection<DatabaseStore>
+    connection: borrowing DatabaseConnection
 ) throws -> any Sendable {
     guard let relationship = property.metadata as? Schema.Relationship else {
         preconditionFailure("Property should have been a relationship: \(property)")
@@ -262,7 +265,7 @@ nonisolated package func fetchExternalRows(
 nonisolated package func fetchExternalRowsBatched(
     for ownerPrimaryKeys: [String],
     in property: PropertyMetadata,
-    connection: borrowing DatabaseConnection<DatabaseStore>,
+    connection: borrowing DatabaseConnection,
     chunkSize: Int = 400
 ) throws -> [String: [[any Sendable]]] {
     guard !ownerPrimaryKeys.isEmpty else { return [:] }
@@ -338,7 +341,7 @@ nonisolated package func fetchExternalReferenceKeysBatched(
     ownerPersistentIdentifiers: [PersistentIdentifier],
     ownerIndexByPrimaryKey: [String: Int],
     in property: PropertyMetadata,
-    connection: borrowing DatabaseConnection<DatabaseStore>,
+    connection: borrowing DatabaseConnection,
     chunkSize: Int = 400
 ) throws -> [PersistentIdentifier: [PersistentIdentifier]] {
     guard !ownerPrimaryKeys.isEmpty else { return [:] }
@@ -458,7 +461,7 @@ nonisolated package func fetchRowsByPrimaryKeys(
     entityName: String,
     columns: [String],
     primaryKeys: [String],
-    connection: borrowing DatabaseConnection<DatabaseStore>,
+    connection: borrowing DatabaseConnection,
     chunkSize: Int = 400
 ) throws -> [[any Sendable]] {
     guard !primaryKeys.isEmpty else { return [] }

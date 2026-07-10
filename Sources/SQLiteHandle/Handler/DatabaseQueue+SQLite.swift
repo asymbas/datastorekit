@@ -7,6 +7,8 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
+#if false
+
 public import DataStoreCore
 public import DataStoreSQL
 
@@ -71,3 +73,5 @@ extension DatabaseQueue where Store.Handle == SQLite {
         )
     }
 }
+
+#endif

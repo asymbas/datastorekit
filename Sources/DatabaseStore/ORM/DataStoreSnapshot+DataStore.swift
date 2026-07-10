@@ -11,11 +11,10 @@ private import Collections
 private import DataStoreCore
 private import DataStoreSupport
 private import Logging
-private import SQLiteHandle
+public import SQLiteHandle
 private import SQLSupport
 private import Synchronization
 public import DataStoreRuntime
-public import DataStoreSQL
 public import Foundation
 
 #if swift(>=6.2)
@@ -66,15 +65,15 @@ extension DatabaseSnapshot {
     }
     
     nonisolated internal init(
-        queue: DatabaseQueue<Store>,
+        queue: DatabaseQueue,
         properties: consuming ArraySlice<PropertyMetadata>,
         values: consuming ArraySlice<any Sendable>,
         relatedSnapshots: inout [PersistentIdentifier: Self]
     ) throws {
-        guard let storeIdentifier = queue.attachment?.store?.identifier else {
+        guard let storeIdentifier = queue.manager?.store?.identifier else {
             preconditionFailure("A DatabaseQueue must always be attached to a DatabaseStore.")
         }
-        guard let configuration = queue.attachment?.configuration else {
+        guard let configuration = queue.manager?.configuration else {
             preconditionFailure("A DatabaseQueue must always have a DatabaseConfiguration.")
         }
         self = try Self(
@@ -90,7 +89,7 @@ extension DatabaseSnapshot {
     nonisolated public init(
         storeIdentifier: String,
         configuration: DatabaseConfiguration,
-        queue: DatabaseQueue<Store>,
+        queue: DatabaseQueue,
         registry: SnapshotRegistry? = nil,
         schema: Schema? = nil,
         properties: consuming ArraySlice<PropertyMetadata>,
@@ -112,7 +111,7 @@ extension DatabaseSnapshot {
     nonisolated public init(
         storeIdentifier: String,
         configuration: DatabaseConfiguration,
-        connection: borrowing DatabaseConnection<Store>,
+        connection: borrowing DatabaseConnection,
         registry: SnapshotRegistry? = nil,
         schema: Schema? = nil,
         properties: consuming ArraySlice<PropertyMetadata>,
@@ -293,7 +292,10 @@ extension DatabaseSnapshot {
                     let value: any DataStoreSnapshotValue
                     if let graph = registry?.graph,
                        let cachedTargets = graph.cachedReferencesIfPresent(for: persistentIdentifier, at: property.name) {
-                        let canonicalTargets = canonicalizedRelationshipTargets(cachedTargets, declaredDestination: relationship.destination, connection: connection)
+                        let context = connection.context
+                        let canonicalTargets = canonicalizedRelationshipTargets(cachedTargets, declaredDestination: relationship.destination) { persistentIdentifier in
+                            context?.primaryKey(for: persistentIdentifier, as: String.self) ?? persistentIdentifier.primaryKey()
+                        }
                         value = try ensureRelationshipValue(canonicalTargets, in: relationship)
                         logger.trace("Resolved excluded properties using graph: \(property) = \(canonicalTargets)")
                     } else {

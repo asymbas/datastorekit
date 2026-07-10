@@ -9,12 +9,12 @@
 
 private import DataStoreSupport
 private import Logging
-public import DataStoreSQL
+internal import SQLSupport
 public import SQLiteHandle
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
-extension DatabaseConnection where Store.Handle == SQLite {
+extension DatabaseConnection {
     nonisolated public func checkConstraintDiagnostics(_ error: any Swift.Error) -> [ConstraintViolation] {
         var violations = [ConstraintViolation]()
         do {

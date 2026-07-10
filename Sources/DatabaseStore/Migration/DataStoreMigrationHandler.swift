@@ -7,7 +7,7 @@
 //  SPDX-License-Identifier: Apache-2.0
 //
 
-public import DataStoreSQL
+public import SQLiteHandle
 public import SwiftData
 
 nonisolated public struct DataStoreMigrationContext: Sendable {
@@ -17,4 +17,4 @@ nonisolated public struct DataStoreMigrationContext: Sendable {
 }
 
 public typealias DataStoreMigrationHandler =
-@Sendable (DataStoreMigrationContext, borrowing DatabaseConnection<DatabaseStore>) throws -> Void
+@Sendable (DataStoreMigrationContext, borrowing DatabaseConnection) throws -> Void

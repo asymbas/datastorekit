@@ -325,7 +325,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
     private func ensureRequiredColumnsExist(
         table: String,
         columns: [(String, String)],
-        connection: borrowing DatabaseConnection<Store>
+        connection: borrowing DatabaseConnection
     ) throws {
         logger.trace("Ensuring required table columns exist.", metadata: [
             "table_name": "\(table)",
@@ -347,7 +347,7 @@ extension DatabaseConfiguration.CloudKitDatabase.Replicator {
         }
     }
     
-    private func ensureStateRowExists(connection: borrowing DatabaseConnection<Store>) throws {
+    private func ensureStateRowExists(connection: borrowing DatabaseConnection) throws {
         let rowExists = (try connection.query(
             """
             SELECT 1

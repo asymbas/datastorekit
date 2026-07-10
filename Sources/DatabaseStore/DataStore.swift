@@ -32,13 +32,6 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit"
 
 // TODO: Remove use of generics.
 
-extension DatabaseStore: DatabaseProtocol {
-    public typealias Handle = SQLite
-    public typealias Attachment = ModelManager
-    public typealias Context = SnapshotRegistry
-    public typealias Transaction = TransactionObject
-}
-
 /// A data store that uses SQL as its persistence layer.
 public final class DatabaseStore: DataStore, Sendable {
     /// Inherited from `DataStore.Configuration`.
@@ -52,7 +45,7 @@ public final class DatabaseStore: DataStore, Sendable {
     /// Inherited from `DataStore.schema`.
     nonisolated public final let schema: Schema
     /// The connection pools for reader and writers.
-    nonisolated public final let queue: DatabaseQueue<DatabaseStore>
+    nonisolated public final let queue: DatabaseQueue
     /// Manages and caches snapshots belonging to each `ModelContext`.
     nonisolated public final let manager: ModelManager
     
@@ -155,7 +148,7 @@ public final class DatabaseStore: DataStore, Sendable {
         let userMigration = configuration.customMigration
         let adapter: ((
             DataStoreMigration.CustomMigrationContext,
-            borrowing DatabaseConnection<DatabaseStore>
+            borrowing DatabaseConnection
         ) throws -> Void)? = userMigration.map { handler in
             { context, connection in
                 let publicContext = DataStoreMigrationContext(
@@ -889,7 +882,7 @@ public final class DatabaseStore: DataStore, Sendable {
                         remappedIdentifiers: remappedIdentifiers
                     )
                 }
-                let cachedSnapshot = connection.context?.snapshot(for: snapshot.persistentIdentifier)
+                let cachedSnapshot = connection.registry?.snapshot(for: snapshot.persistentIdentifier)
                 let export = snapshot.export
                 let inheritedSnapshots = try connection.inheritedSnapshots(for: snapshot)
                 try connection.update(from: cachedSnapshot, to: snapshot)
@@ -915,7 +908,7 @@ public final class DatabaseStore: DataStore, Sendable {
                     persistentIdentifier: snapshot.persistentIdentifier,
                     remappedIdentifiers: remappedIdentifiers
                 )
-                let cachedSnapshot = connection.context?.snapshot(for: snapshot.persistentIdentifier)
+                let cachedSnapshot = connection.registry?.snapshot(for: snapshot.persistentIdentifier)
                 let results = try snapshot.reconcileExternalReferences(
                     comparingTo: cachedSnapshot?.copy(
                         persistentIdentifier: cachedSnapshot!.persistentIdentifier,
@@ -1014,7 +1007,7 @@ public final class DatabaseStore: DataStore, Sendable {
             }
             #endif
         }
-        connection.context?.synchronize(snapshots: snapshots, invalidateIdentifiers: invalidatedIdentifiers)
+        connection.registry?.synchronize(snapshots: snapshots, invalidateIdentifiers: invalidatedIdentifiers)
         if !isSyncRequest, !remappedIdentifiers.isEmpty || !snapshotsToReregister.isEmpty || !snapshots.isEmpty {
             Task { @DatabaseActor in self.history?.scheduleSynchronizationIfNeeded() }
         }
@@ -1054,7 +1047,7 @@ public final class DatabaseStore: DataStore, Sendable {
         guard let storeURL = self.configuration.url else {
             return
         }
-        try Handle.remove(storeURL: storeURL)
+        try SQLite.remove(storeURL: storeURL)
     }
     
     private struct Payload {
@@ -1218,7 +1211,7 @@ extension DatabaseStore {
     nonisolated public final func getValue<T>(
         forKey key: String,
         as type: T.Type,
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws -> T? where T: DataStoreSnapshotValue {
         guard let result = try connection.fetch(
             """
@@ -1256,7 +1249,7 @@ extension DatabaseStore {
     nonisolated public final func setValue<T>(
         _ value: T,
         forKey key: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws where T: DataStoreSnapshotValue {
         try connection.execute.insert(
             into: InternalTable.tableName,
@@ -1286,7 +1279,7 @@ extension DatabaseStore {
     ///   - connection: A writer database connection.
     nonisolated public final func removeValue(
         forKey key: String,
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws {
         try connection.execute.delete(
             from: InternalTable.tableName,

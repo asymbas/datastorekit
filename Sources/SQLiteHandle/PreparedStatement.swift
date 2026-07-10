@@ -11,20 +11,19 @@ private import DataStoreCore
 private import Logging
 private import SQLite3
 private import SQLiteStatement
-private import SQLSupport
 private import Synchronization
 private import System
-public import DataStoreSQL
+public import SQLSupport
 public import Foundation
 
 extension PreparedStatement {
-    nonisolated public init<T: DatabaseProtocol>(
+    nonisolated public init(
         sql: String,
         bindings: [any Sendable],
         byteCount: Int32 = -1,
         prepareFlags: PrepareFlags = [],
-        connection: consuming DatabaseConnection<T>
-    ) throws(SQLError) where T.Handle == SQLite {
+        connection: consuming DatabaseConnection
+    ) throws(SQLError) {
         let handle = connection.release()
         #if swift(>=6.2) && !SwiftPlaygrounds
         try self.init(

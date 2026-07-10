@@ -8,21 +8,20 @@
 //
 
 private import SQLiteHandle
-private import SQLSupport
 internal import Collections
 internal import Logging
 internal import Synchronization
 public import DataStoreCore
-public import DataStoreSQL
+internal import SQLSupport
 public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.coordinator")
 
 // TODO: Rename `ModelManager`.
 
-public final class ModelManager: DatabaseAttachment, DataStoreSnapshotProvider {
-    public typealias Context = SnapshotRegistry
+public final class ModelManager: DatabaseAttachment {
     public typealias Snapshot = DatabaseSnapshot
+    public typealias Context = SnapshotRegistry
     nonisolated private let storage: Mutex<[PersistentIdentifier: DatabaseBackingData]> = .init([:])
     nonisolated private let entityCacheRevisions: Mutex<[String: UInt64]> = .init([:])
     nonisolated internal let globalCacheRevision: Atomic<UInt64> = .init(0)
@@ -76,7 +75,7 @@ public final class ModelManager: DatabaseAttachment, DataStoreSnapshotProvider {
 
 extension ModelManager {
     /// Inherited from `DatabaseAttachment.makeObjectContext(editingState:)`.
-    nonisolated public func makeObjectContext(editingState: some EditingStateProviding) -> Context? {
+    nonisolated public func makeObjectContext(editingState: some EditingStateProviding) -> (any DatabaseContext)? {
         registry(for: editingState)
     }
     

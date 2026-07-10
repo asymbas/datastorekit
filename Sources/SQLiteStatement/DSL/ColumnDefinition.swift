@@ -9,7 +9,6 @@
 
 private import Collections
 private import DataStoreSupport
-package import DataStoreSQL
 package import SQLSupport
 
 package protocol ColumnDefinition: SQLFragment {

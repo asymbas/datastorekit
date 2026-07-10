@@ -10,7 +10,7 @@
 private import DataStoreRuntime
 private import Logging
 private import Synchronization
-internal import DataStoreSQL
+internal import SQLiteHandle
 internal import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.coordinator")
@@ -126,7 +126,7 @@ extension InheritanceResolver {
     ///   The resolved persistent identifier that has a concrete entity name, which may be identical to the given one.
     nonisolated internal func resolvePersistentIdentifier(
         for persistentIdentifier: PersistentIdentifier,
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws -> PersistentIdentifier {
         if let resolvedPersistentIdentifier = resolvedPersistentIdentifier(for: persistentIdentifier) {
             return resolvedPersistentIdentifier
@@ -159,7 +159,7 @@ extension InheritanceResolver {
     nonisolated internal func fetchConcreteEntity(
         for persistentIdentifier: PersistentIdentifier,
         on entity: Schema.Entity,
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws -> Schema.Entity {
         let descendants = self.descendants(ofEntityNamed: entity.name)
         guard !descendants.isEmpty else { return entity }
@@ -206,7 +206,7 @@ extension InheritanceResolver {
         entityName: String,
         subentities: [Schema.Entity],
         persistentIdentifiers: [PersistentIdentifier],
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws {
         let descendants = subentities.map {
             Descendant(name: $0.name, depth: absoluteDepth(ofEntityNamed: $0.name))
@@ -223,7 +223,7 @@ extension InheritanceResolver {
         destination: String,
         subentities: [Schema.Entity],
         persistentIdentifiers: [PersistentIdentifier],
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws {
         try prepare(
             entityName: destination,
@@ -236,7 +236,7 @@ extension InheritanceResolver {
     nonisolated internal func prepare(
         entity: Schema.Entity,
         persistentIdentifiers: [PersistentIdentifier],
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws {
         try prepare(
             entityName: entity.name,
@@ -250,7 +250,7 @@ extension InheritanceResolver {
         entityName: String,
         descendants: [Descendant],
         persistentIdentifiers: [PersistentIdentifier],
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws {
         guard !persistentIdentifiers.isEmpty, !descendants.isEmpty else { return }
         guard let storeIdentifier = connection.storeIdentifier else {
@@ -329,7 +329,7 @@ extension InheritanceResolver {
     nonisolated internal func fetchConcreteEntity(
         for persistentIdentifier: PersistentIdentifier,
         on entity: Schema.Entity,
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws -> Schema.Entity {
         for subentity in entity.subentities {
             let rows = try connection.query(
@@ -350,7 +350,7 @@ extension InheritanceResolver {
         entityName: String,
         subentities: [Schema.Entity],
         persistentIdentifiers: [PersistentIdentifier],
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws {
         guard !persistentIdentifiers.isEmpty, !subentities.isEmpty else { return }
         guard let storeIdentifier = connection.storeIdentifier else {
@@ -404,7 +404,7 @@ extension InheritanceResolver {
     nonisolated internal func prepare(
         entity: Schema.Entity,
         persistentIdentifiers: [PersistentIdentifier],
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws {
         guard !persistentIdentifiers.isEmpty else { return }
         guard let storeIdentifier = connection.storeIdentifier else {

@@ -14,7 +14,6 @@ private import Logging
 private import SwiftData
 private import Synchronization
 public import DataStoreCore
-public import DataStoreSQL
 public import Foundation
 public import SQLiteHandle
 
@@ -22,7 +21,7 @@ nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.
 
 public final class TransactionObject: DatabaseTransaction {
     public typealias Store = DatabaseStore
-    public typealias Handle = DatabaseStore.Handle
+    public typealias Handle = SQLite
     #if swift(>=6.2.3) && !SwiftPlaygrounds
     nonisolated public weak let handle: Handle?
     #else

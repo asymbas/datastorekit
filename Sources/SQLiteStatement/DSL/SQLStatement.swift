@@ -8,7 +8,6 @@
 //
 
 private import DataStoreSupport
-package import DataStoreSQL
 package import Foundation
 public import SQLSupport
 

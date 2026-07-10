@@ -10,7 +10,7 @@
 private import SQLiteHandle
 private import Synchronization
 internal import Collections
-internal import DataStoreSQL
+internal import SQLSupport
 internal import SQLiteStatement
 public import DataStoreCore
 public import DataStoreSupport

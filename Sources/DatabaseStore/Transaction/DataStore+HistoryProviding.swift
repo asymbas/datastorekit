@@ -9,11 +9,10 @@
 
 private import DataStoreCore
 private import Logging
-private import SQLiteHandle
+public import SQLiteHandle
 private import SQLSupport
 private import DataStoreRuntime
 private import Synchronization
-public import DataStoreSQL
 public import DataStoreSupport
 public import Foundation
 public import SwiftData
@@ -37,7 +36,7 @@ extension DatabaseStore: HistoryProviding {
     
     nonisolated public func fetchHistory(
         _ descriptor: HistoryDescriptor<HistoryType>,
-        connection: borrowing DatabaseConnection<DatabaseStore>
+        connection: borrowing DatabaseConnection
     ) throws -> [HistoryType] {
         #if DEBUG
         let translator = SQLHistoryTranslator<HistoryType>()

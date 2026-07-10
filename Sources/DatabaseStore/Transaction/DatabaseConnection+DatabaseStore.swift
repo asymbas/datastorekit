@@ -12,25 +12,39 @@ private import DataStoreRuntime
 private import DataStoreSupport
 private import Foundation
 private import Logging
-private import SQLiteHandle
+public import SQLiteHandle
 private import Synchronization
-public import DataStoreSQL
+internal import SQLSupport
 public import SwiftData
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit")
 
-extension DatabaseConnection where Store == DatabaseStore {
+extension DatabaseQueue {
+    nonisolated internal var manager: ModelManager? {
+        attachment as? ModelManager
+    }
+}
+
+extension DatabaseConnection {
+    nonisolated internal var manager: ModelManager? {
+        attachment as? ModelManager
+    }
+    
+    nonisolated internal var registry: SnapshotRegistry? {
+        context as? SnapshotRegistry
+    }
+    
     /// Tracks relationships between models by their `PersistentIdentifier`.
     nonisolated internal var graph: ReferenceGraph? {
-        context?.graph ?? attachment?.graph
+        registry?.graph ?? manager?.graph
     }
     
     nonisolated internal var schema: Schema? {
-        attachment?.schema
+        manager?.schema
     }
     
     nonisolated internal var storeIdentifier: String? {
-        attachment?.store?.identifier
+        manager?.store?.identifier
     }
     
     nonisolated internal func resolveEntity(
@@ -65,12 +79,12 @@ extension DatabaseConnection where Store == DatabaseStore {
     nonisolated package func resolvePersistentIdentifier(for persistentIdentifier: PersistentIdentifier)
     throws -> PersistentIdentifier {
         #if DEBUG
-        guard let attachment = self.attachment else {
+        guard let modelManager = self.manager else {
             preconditionFailure()
         }
-        return try attachment.inheritance.resolvePersistentIdentifier(for: persistentIdentifier, connection: self)
+        return try modelManager.inheritance.resolvePersistentIdentifier(for: persistentIdentifier, connection: self)
         #else
-        return try attachment!.inheritance.resolvePersistentIdentifier(for: persistentIdentifier, connection: self)
+        return try modelManager!.inheritance.resolvePersistentIdentifier(for: persistentIdentifier, connection: self)
         #endif
     }
     
@@ -108,7 +122,7 @@ extension DatabaseConnection where Store == DatabaseStore {
     
 }
 
-extension DatabaseConnection where Store == DatabaseStore {
+extension DatabaseConnection {
     /// Fetches snapshots for the given model type, optionally filtered by SQL predicates.
     ///
     /// - Parameters:
@@ -122,11 +136,11 @@ extension DatabaseConnection where Store == DatabaseStore {
         properties keyPaths: [PartialKeyPath<Model> & Sendable] = [],
         predicate sql: String...,
         bindings: [any Sendable] = []
-    ) throws -> [Store.Snapshot] where Model: PersistentModel {
+    ) throws -> [DatabaseSnapshot] where Model: PersistentModel {
         guard let storeIdentifier = self.storeIdentifier else {
             preconditionFailure()
         }
-        guard let configuration = self.attachment?.configuration else {
+        guard let configuration = self.manager?.configuration else {
             preconditionFailure()
         }
         let entityName = Schema.entityName(for: Model.self)
@@ -152,9 +166,9 @@ extension DatabaseConnection where Store == DatabaseStore {
             """,
             bindings: bindings
         )
-        var relatedSnapshots = [PersistentIdentifier: Store.Snapshot]()
+        var relatedSnapshots = [PersistentIdentifier: DatabaseSnapshot]()
         let snapshots = try result.map { row in
-            try Store.Snapshot(
+            try DatabaseSnapshot(
                 storeIdentifier: storeIdentifier,
                 configuration: configuration,
                 connection: self,
@@ -181,7 +195,7 @@ extension DatabaseConnection where Store == DatabaseStore {
         for primaryKey: String,
         as type: Model.Type,
         properties keyPaths: [PartialKeyPath<Model> & Sendable] = []
-    ) throws -> Store.Snapshot? where Model: PersistentModel {
+    ) throws -> DatabaseSnapshot? where Model: PersistentModel {
         try fetch(type, properties: keyPaths, predicate: "WHERE \(quote(pk)) = ?", "LIMIT 1", bindings: [primaryKey]).first
     }
     
@@ -194,11 +208,11 @@ extension DatabaseConnection where Store == DatabaseStore {
     nonisolated public func fetch<Model>(
         for primaryKey: String,
         as type: Model.Type
-    ) throws -> Store.Snapshot? where Model: PersistentModel {
+    ) throws -> DatabaseSnapshot? where Model: PersistentModel {
         try fetch(for: primaryKey, as: type, properties: [])
     }
     
-    nonisolated public func fetch(for persistentIdentifier: PersistentIdentifier) throws -> Store.Snapshot? {
+    nonisolated public func fetch(for persistentIdentifier: PersistentIdentifier) throws -> DatabaseSnapshot? {
         guard let entity = self.schema?.entitiesByName[persistentIdentifier.entityName],
               let type = Schema.type(for: entity) else {
             preconditionFailure()
@@ -209,11 +223,11 @@ extension DatabaseConnection where Store == DatabaseStore {
 
 // TODO: Immediately handle to-many references in non-transaction mutations.
 
-extension DatabaseConnection where Store == DatabaseStore {
+extension DatabaseConnection {
     /// Inserts the model's backing data into the data store.
     /// - Parameter snapshot: The model snapshot.
-    nonisolated public func insert(_ snapshot: consuming Store.Snapshot, orReplace: Bool = false) throws {
-        guard let transaction = self.transaction else {
+    nonisolated public func insert(_ snapshot: consuming DatabaseSnapshot, orReplace: Bool = false) throws {
+        guard let transaction = self.transaction as? TransactionObject else {
             preconditionFailure("Inserting backing data is only allowed during a transaction.")
         }
         let export = snapshot.export
@@ -232,8 +246,8 @@ extension DatabaseConnection where Store == DatabaseStore {
         )
     }
     
-    nonisolated public func upsert(_ snapshot: consuming Store.Snapshot) throws {
-        guard let transaction = self.transaction else {
+    nonisolated public func upsert(_ snapshot: consuming DatabaseSnapshot) throws {
+        guard let transaction = self.transaction as? TransactionObject else {
             preconditionFailure("Inserting backing data is only allowed during a transaction.")
         }
         let export = snapshot.export
@@ -256,16 +270,16 @@ extension DatabaseConnection where Store == DatabaseStore {
     ///   - oldSnapshot: The previous model snapshot.
     ///   - newSnapshot: The current model snapshot.
     nonisolated public func update(
-        from oldSnapshot: consuming Store.Snapshot? = nil,
-        to newSnapshot: consuming Store.Snapshot
+        from oldSnapshot: consuming DatabaseSnapshot? = nil,
+        to newSnapshot: consuming DatabaseSnapshot
     ) throws {
         let entityName = newSnapshot.entityName
         let primaryKey = newSnapshot.primaryKey
-        let oldSnapshot: Store.Snapshot? = oldSnapshot ?? {
+        let oldSnapshot: DatabaseSnapshot? = oldSnapshot ?? {
             guard self.attachment != nil else {
                 return nil
             }
-            if let snapshot = self.context?.snapshot(for: newSnapshot.persistentIdentifier) {
+            if let snapshot = self.registry?.snapshot(for: newSnapshot.persistentIdentifier) {
                 return snapshot
             }
             do {
@@ -294,10 +308,10 @@ extension DatabaseConnection where Store == DatabaseStore {
     }
     
     nonisolated private func updateRow(
-        from oldSnapshot: consuming Store.Snapshot? = nil,
-        to newSnapshot: consuming Store.Snapshot
+        from oldSnapshot: consuming DatabaseSnapshot? = nil,
+        to newSnapshot: consuming DatabaseSnapshot
     ) throws {
-        guard let transaction = self.transaction else {
+        guard let transaction = self.transaction as? TransactionObject else {
             preconditionFailure("Updating backing data is only allowed during a transaction.")
         }
         let entityName = newSnapshot.entityName
@@ -345,7 +359,7 @@ extension DatabaseConnection where Store == DatabaseStore {
     
     /// Deletes the model's backing data from the data store.
     /// - Parameter snapshot: The model snapshot.
-    nonisolated public func delete(_ snapshot: consuming Store.Snapshot) throws {
+    nonisolated public func delete(_ snapshot: consuming DatabaseSnapshot) throws {
         let inheritedSnapshots = try inheritedSnapshots(for: snapshot)
         try deleteRow(snapshot)
         for inheritedSnapshot in inheritedSnapshots {
@@ -353,8 +367,8 @@ extension DatabaseConnection where Store == DatabaseStore {
         }
     }
     
-    nonisolated private func deleteRow(_ snapshot: consuming Store.Snapshot) throws {
-        guard let transaction = self.transaction else {
+    nonisolated private func deleteRow(_ snapshot: consuming DatabaseSnapshot) throws {
+        guard let transaction = self.transaction as? TransactionObject else {
             preconditionFailure("Deleting backing data is only allowed during a transaction.")
         }
         let entityName = snapshot.entityName
@@ -371,7 +385,7 @@ extension DatabaseConnection where Store == DatabaseStore {
     }
     
     nonisolated public consuming func upsert(
-        _ snapshot: consuming Store.Snapshot,
+        _ snapshot: consuming DatabaseSnapshot,
         uniquenessConstraints: [[String]]
     ) throws {
         let temporaryIdentifier = snapshot.persistentIdentifier
@@ -412,10 +426,10 @@ extension DatabaseConnection where Store == DatabaseStore {
     }
     
     nonisolated public nonmutating func fetchByUniqueness<Result>(
-        _ snapshot: Store.Snapshot,
+        _ snapshot: DatabaseSnapshot,
         uniquenessConstraints: [[String]]? = nil,
-        onNone: ((Store.Snapshot) throws -> Result)?,
-        onConflict: (_ existing: Store.Snapshot, _ candidate: Store.Snapshot) throws -> Result
+        onNone: ((DatabaseSnapshot) throws -> Result)?,
+        onConflict: (_ existing: DatabaseSnapshot, _ candidate: DatabaseSnapshot) throws -> Result
     ) throws -> Result? {
         try fetchByUniqueness(
             snapshot,
@@ -427,17 +441,17 @@ extension DatabaseConnection where Store == DatabaseStore {
     }
     
     nonisolated public nonmutating func fetchByUniqueness<Result>(
-        _ snapshot: Store.Snapshot,
+        _ snapshot: DatabaseSnapshot,
         uniquenessConstraints: [[String]]? = nil,
-        onNone: ((Store.Snapshot) throws -> Result)?,
-        onExisting: (_ existing: Store.Snapshot, _ candidate: Store.Snapshot) throws -> Result,
-        onConflict: (_ existing: Store.Snapshot, _ candidate: Store.Snapshot) throws -> Result
+        onNone: ((DatabaseSnapshot) throws -> Result)?,
+        onExisting: (_ existing: DatabaseSnapshot, _ candidate: DatabaseSnapshot) throws -> Result,
+        onConflict: (_ existing: DatabaseSnapshot, _ candidate: DatabaseSnapshot) throws -> Result
     ) throws -> Result? {
         let permanentIdentifier = snapshot.persistentIdentifier
         var snapshot = snapshot
         let export = snapshot.export
-        guard let configuration = self.attachment?.configuration else {
-            preconditionFailure("\(Store.Attachment.self) must have a configuration.")
+        guard let configuration = self.manager?.configuration else {
+            preconditionFailure("\(ModelManager.self) must have a configuration.")
         }
         guard let queue = self.queue else {
             preconditionFailure("The queue was unexpectedly nil.")
@@ -481,8 +495,8 @@ extension DatabaseConnection where Store == DatabaseStore {
                         "diff": "\(snapshot.primaryKey) != \(existingPrimaryKey)"
                     ])
                     // Inheriting values then overwriting.
-                    var relatedSnapshots = [PersistentIdentifier: Store.Snapshot]()
-                    let existingSnapshot = try Store.Snapshot(
+                    var relatedSnapshots = [PersistentIdentifier: DatabaseSnapshot]()
+                    let existingSnapshot = try DatabaseSnapshot(
                         queue: queue,
                         properties: [.discriminator(for: snapshot.type)] + snapshot.properties[...],
                         values: (existingRow ?? [])[...],
@@ -506,7 +520,7 @@ extension DatabaseConnection where Store == DatabaseStore {
         }
     }
     
-    nonisolated public mutating func match(snapshot: consuming Store.Snapshot) throws -> Store.Snapshot? {
+    nonisolated public mutating func match(snapshot: consuming DatabaseSnapshot) throws -> DatabaseSnapshot? {
         var remappedIdentifiers = self.remappedIdentifiers
         let result = try fetchByUniqueness(snapshot, onNone: nil) { existing, candidate in
             remappedIdentifiers[candidate.persistentIdentifier] = existing.persistentIdentifier
@@ -517,8 +531,8 @@ extension DatabaseConnection where Store == DatabaseStore {
     }
 }
 
-extension DatabaseConnection where Store == DatabaseStore {
-    nonisolated package func inheritedSnapshots(for snapshot: Store.Snapshot) throws -> [Store.Snapshot] {
+extension DatabaseConnection {
+    nonisolated package func inheritedSnapshots(for snapshot: DatabaseSnapshot) throws -> [DatabaseSnapshot] {
         guard let entity = self.schema?.entitiesByName[snapshot.entityName],
               let superentity = entity.superentity else {
             return []
@@ -526,7 +540,7 @@ extension DatabaseConnection where Store == DatabaseStore {
         var snapshot = snapshot
         let indices = snapshot.export.inheritedDependencies
         guard !indices.isEmpty else { return [] }
-        var inheritedSnapshots = [Store.Snapshot]()
+        var inheritedSnapshots = [DatabaseSnapshot]()
         try snapshot.recursiveExportChain(
             on: superentity,
             indices: indices,

@@ -8,13 +8,13 @@
 //
 
 private import Logging
-private import SQLiteHandle
+internal import SQLiteHandle
 internal import DataStoreSQL
 internal import Foundation
 
 nonisolated private let logger: Logger = .init(label: "com.asymbas.datastorekit.transaction")
 
-extension DatabaseConnection where Store.Handle: DatabaseStore.Handle {
+extension DatabaseConnection {
     nonisolated internal func mainDatabaseURL() throws -> URL? {
         for row in try query("PRAGMA database_list") {
             if (row["name"] as? String) == "main" {

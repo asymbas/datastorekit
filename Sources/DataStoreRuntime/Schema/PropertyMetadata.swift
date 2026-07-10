@@ -12,7 +12,7 @@ private import DataStoreSupport
 private import Logging
 private import SQLiteHandle
 private import Synchronization
-public import DataStoreSQL
+public import SQLSupport
 
 @preconcurrency public import SwiftData
 

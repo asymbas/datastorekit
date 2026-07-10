@@ -46,7 +46,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
     }
     
     nonisolated internal var makeDatabaseQueue:
-    @Sendable (Store.Attachment?) throws -> DatabaseQueue<Store> {
+    @Sendable (ModelManager?) throws -> DatabaseQueue {
         storage.makeDatabaseQueue
     }
     
@@ -263,7 +263,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         }
         let options = consume options
         let makeDatabaseQueue:
-        @Sendable (Store.Attachment?) throws -> DatabaseQueue<Store> = { attachment in
+        @Sendable (ModelManager?) throws -> DatabaseQueue = { attachment in
             try DatabaseQueue(
                 at: location,
                 flags: flags,
@@ -602,7 +602,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
                 throw CocoaError(.fileWriteNoPermission)
             }
             if FileManager.default.fileExists(atPath: storeURL.path) {
-                try Store.Handle.remove(storeURL: storeURL)
+                try SQLite.remove(storeURL: storeURL)
                 logger.notice(
                     "Database deleted on initialization.",
                     metadata: ["url": .stringConvertible(storeURL)]
@@ -618,7 +618,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         }
         if FileManager.default.fileExists(atPath: storeURL.path) {
             do {
-                let connection = try Store.Handle(at: .file(path: storeURL.path), flags: .readOnly, role: .reader)
+                let connection = try SQLite(at: .file(path: storeURL.path), flags: .readOnly, role: .reader)
 //                _ = try execute(sql: "PRAGMA busy_timeout = 5000;")
                 let applicationID = try execute(sql: "PRAGMA application_id;")
                 let userVersion = try execute(sql: "PRAGMA user_version;")
@@ -702,7 +702,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
         nonisolated fileprivate final let synchronizers: Mutex<[any DataStoreSynchronizerConfiguration]>
         nonisolated fileprivate final let container: AtomicLazyReference<DataStoreContainer>
         nonisolated fileprivate final let makeDatabaseQueue: @Sendable
-        (Store.Attachment?) throws -> DatabaseQueue<Store>
+        (ModelManager?) throws -> DatabaseQueue
         
         nonisolated fileprivate init(
             name: String,
@@ -719,7 +719,7 @@ public struct DatabaseConfiguration: DataStoreConfiguration, Sendable {
             synchronizers: [any DataStoreSynchronizerConfiguration],
             container: DataStoreContainer?,
             makeDatabaseQueue: @escaping @Sendable
-            (Store.Attachment?) throws -> DatabaseQueue<Store>
+            (ModelManager?) throws -> DatabaseQueue
         ) {
             self.name = .init(name)
             self.schema = .init()
