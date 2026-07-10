@@ -53,7 +53,6 @@ let package = Package(
             name: "DataStoreRuntime",
             dependencies: [
                 "DataStoreCore",
-                "DataStoreSQL",
                 "DataStoreSupport",
                 "SQLiteHandle",
                 "SQLiteStatement",
@@ -73,16 +72,6 @@ let package = Package(
             swiftSettings: [.unsafeFlags(["-package-name", "DataStoreKit"])]
         ),
         .target(
-            name: "DataStoreSQL",
-            dependencies: [
-                "DataStoreCore",
-                "DataStoreSupport",
-                .product(name: "Logging", package: "swift-log")
-            ],
-            path: "Sources/DataStoreSQL",
-            swiftSettings: [.unsafeFlags(["-package-name", "DataStoreKit"])]
-        ),
-        .target(
             name: "DataStoreSupport",
             dependencies: [
                 .product(name: "Logging", package: "swift-log")
@@ -94,7 +83,6 @@ let package = Package(
             name: "SQLiteHandle",
             dependencies: [
                 "DataStoreCore",
-                "DataStoreSQL",
                 "DataStoreSupport",
                 "SQLiteStatement",
                 "SQLSupport",
@@ -106,7 +94,6 @@ let package = Package(
         .target(
             name: "SQLiteStatement",
             dependencies: [
-                "DataStoreSQL",
                 "DataStoreSupport",
                 "SQLSupport",
                 .product(name: "Collections", package: "swift-collections"),
